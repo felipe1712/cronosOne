@@ -32,35 +32,19 @@ En tu panel de DNS (Cloudflare, GoDaddy, Namecheap, etc.):
 
 ## 3. Paso 2: Base de Datos PostgreSQL Separada
 
-Entra al servidor por SSH y conéctate al PostgreSQL ya existente:
+Ejecuta estos comandos directamente en la terminal de tu servidor (no necesitas entrar al prompt interactivo de psql):
 
 ```bash
-sudo -u postgres psql
-```
+# 1. Crear la base de datos exclusiva para ExposureIQ
+sudo -u postgres psql -c "CREATE DATABASE exposureiq_db;"
 
-Ejecuta los siguientes comandos para crear la base de datos exclusiva:
-
-```sql
--- 1. Crear base de datos aislada
-CREATE DATABASE exposureiq_db;
-
--- 2. Conectarse a la nueva base
-\c exposureiq_db;
-
--- 3. Habilitar extensión criptográfica
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
--- 4. Salir
-\q
-```
-
-Aplica las migraciones iniciales y datos semilla:
-
-```bash
+# 2. Aplicar migraciones iniciales y datos semilla (crea tablas, índices y activa pgcrypto)
 cd /opt/CronosOne/backend/migrations
-psql -U postgres -d exposureiq_db -f 20260908000001_init_schema.sql
-psql -U postgres -d exposureiq_db -f 20260908000002_seed_data.sql
+sudo -u postgres psql -d exposureiq_db -f 20260908000001_init_schema.sql
+sudo -u postgres psql -d exposureiq_db -f 20260908000002_seed_data.sql
 ```
+
+> **Nota:** La migración `01_init_schema.sql` ya incluye la habilitación automática de la extensión `pgcrypto`.
 
 ---
 
