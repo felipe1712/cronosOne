@@ -1,0 +1,47 @@
+# Node / Frontend
+node_modules/
+.next/
+out/
+build/
+.npm
+*.tsbuildinfo
+
+# Rust / Backend
+target/
+**/*.rs.bk
+
+# Python / Workers
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Environment files with secrets (keep examples)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.local
+!.env.example
+!.env.local.example
+
+# Uploads and temporary data
+backend/uploads/*
+!backend/uploads/.gitkeep
+uploads/
+*.log
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo

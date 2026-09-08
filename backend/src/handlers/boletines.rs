@@ -1,0 +1,234 @@
+use axum::{
+    extract::{Extension, Multipart, Path, Query, State},
+    http::StatusCode,
+    response::IntoResponse,
+    Json,
+};
+use chrono::{NaiveDate, Utc};
+use serde::Deserialize;
+use serde_json::json;
+use std::{fs, path::PathBuf, sync::Arc};
+use tokio::io::AsyncWriteExt;
+use tracing::{error, info};
+use uuid::Uuid;
+
+use crate::{
+    config::Config,
+    db::DbPool,
+    middleware::auth::AuthContext,
+    models::{Boletin, BoletinDetailResponse, Seccion, SintesisGenerada},
+};
+
+#[derive(Debug, Deserialize)]
+pub struct ListQuery {
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
+pub async fn list_boletines(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+    Query(query): Query<ListQuery>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let limit = query.limit.unwrap_or(20);
+    let offset = query.offset.unwrap_or(0);
+
+    let boletines = sqlx::query_as::<_, Boletin>(
+        "SELECT id, fecha_boletin, nombre_archivo, ruta_archivo, subido_por, estado, 
+                total_paginas, error_mensaje, creado_en, actualizado_en
+         FROM boletines
+         ORDER BY fecha_boletin DESC, creado_en DESC
+         LIMIT $1 OFFSET $2",
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error al obtener boletines: {}", e)})),
+        )
+    })?;
+
+    Ok((StatusCode::OK, Json(boletines)))
+}
+
+pub async fn get_boletin(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+    Path(id): Path<Uuid>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let boletin = sqlx::query_as::<_, Boletin>(
+        "SELECT id, fecha_boletin, nombre_archivo, ruta_archivo, subido_por, estado, 
+                total_paginas, error_mensaje, creado_en, actualizado_en
+         FROM boletines WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error al consultar boletín: {}", e)})),
+        )
+    })?
+    .ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "Boletín no encontrado"})),
+        )
+    })?;
+
+    let sintesis = sqlx::query_as::<_, SintesisGenerada>(
+        "SELECT id, boletin_id, texto, temas, modelo_usado, tokens_usados, creado_en
+         FROM sintesis_generadas WHERE boletin_id = $1
+         ORDER BY creado_en DESC LIMIT 1",
+    )
+    .bind(id)
+    .fetch_optional(&pool)
+    .await
+    .unwrap_or(None);
+
+    let secciones = sqlx::query_as::<_, Seccion>(
+        "SELECT id, boletin_id, orden, tema, pagina_inicio, pagina_fin, contenido, creado_en
+         FROM secciones WHERE boletin_id = $1
+         ORDER BY orden ASC",
+    )
+    .bind(id)
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+
+    let response = BoletinDetailResponse {
+        boletin,
+        sintesis,
+        secciones,
+    };
+
+    Ok((StatusCode::OK, Json(response)))
+}
+
+pub async fn upload_boletin(
+    Extension(auth_ctx): Extension<AuthContext>,
+    State((pool, config)): State<(DbPool, Arc<Config>)>,
+    mut multipart: Multipart,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let mut file_name = String::new();
+    let mut file_bytes: Vec<u8> = Vec::new();
+    let mut fecha_boletin: Option<NaiveDate> = None;
+
+    while let Some(field) = multipart.next_field().await.map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": format!("Error leyendo multipart: {}", e)})),
+        )
+    })? {
+        let name = field.name().unwrap_or("").to_string();
+
+        if name == "fecha" {
+            let text = field.text().await.unwrap_or_default();
+            if let Ok(d) = NaiveDate::parse_from_str(&text, "%Y-%m-%d") {
+                fecha_boletin = Some(d);
+            }
+        } else if name == "file" || name == "archivo" {
+            file_name = field
+                .file_name()
+                .unwrap_or("boletin_coparmex.pdf")
+                .to_string();
+            file_bytes = field.bytes().await.map_err(|e| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({"error": format!("Error descargando archivo: {}", e)})),
+                )
+            })?.to_vec();
+        }
+    }
+
+    if file_bytes.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "No se recibió ningún archivo PDF"})),
+        ));
+    }
+
+    if !file_name.to_lowercase().ends_with(".pdf") {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "El archivo debe tener formato .pdf"})),
+        ));
+    }
+
+    let fecha = fecha_boletin.unwrap_or_else(|| Utc::now().date_naive());
+    let boletin_id = Uuid::new_v4();
+
+    // Crear directorio si no existe
+    let upload_dir = PathBuf::from(&config.upload_dir);
+    if let Err(e) = fs::create_dir_all(&upload_dir) {
+        error!("Error creando directorio de subidas: {}", e);
+    }
+
+    let safe_file_name = format!("{}_{}", boletin_id, file_name);
+    let target_path = upload_dir.join(&safe_file_name);
+    let target_path_str = target_path.to_string_lossy().to_string();
+
+    let mut file = tokio::fs::File::create(&target_path)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("Error guardando archivo en disco: {}", e)})),
+            )
+        })?;
+
+    file.write_all(&file_bytes).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error escribiendo datos de archivo: {}", e)})),
+        )
+    })?;
+
+    // Registrar en PostgreSQL
+    let boletin = sqlx::query_as::<_, Boletin>(
+        "INSERT INTO boletines (id, fecha_boletin, nombre_archivo, ruta_archivo, subido_por, estado)
+         VALUES ($1, $2, $3, $4, $5, 'pendiente_ocr')
+         RETURNING id, fecha_boletin, nombre_archivo, ruta_archivo, subido_por, estado, 
+                   total_paginas, error_mensaje, creado_en, actualizado_en",
+    )
+    .bind(boletin_id)
+    .bind(fecha)
+    .bind(&file_name)
+    .bind(&target_path_str)
+    .bind(auth_ctx.user_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error insertando en base de datos: {}", e)})),
+        )
+    })?;
+
+    // Disparar llamada asíncrona al worker Python en background
+    let worker_url = format!("{}/api/process-boletin", config.worker_base_url);
+    let client = reqwest::Client::new();
+    let b_id_str = boletin_id.to_string();
+    let f_path = target_path_str.clone();
+
+    tokio::spawn(async move {
+        info!("Notificando a worker Python de nuevo boletín {}", b_id_str);
+        let payload = json!({
+            "boletin_id": b_id_str,
+            "ruta_archivo": f_path
+        });
+        if let Err(e) = client.post(&worker_url).json(&payload).send().await {
+            error!("No se pudo contactar al worker Python: {}", e);
+        }
+    });
+
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "mensaje": "Boletín subido exitosamente y encolado para OCR",
+            "boletin": boletin
+        })),
+    ))
+}

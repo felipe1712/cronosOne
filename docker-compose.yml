@@ -1,0 +1,91 @@
+version: '3.8'
+
+services:
+  # Base de datos PostgreSQL dedicada para ExposureIQ
+  postgres:
+    image: postgres:16-alpine
+    container_name: exposureiq-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: exposureiq_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgrespassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/migrations/20260908000001_init_schema.sql:/docker-entrypoint-initdb.d/01_init.sql
+      - ./backend/migrations/20260908000002_seed_data.sql:/docker-entrypoint-initdb.d/02_seed.sql
+    networks:
+      - exposureiq-net
+
+  # API Principal en Rust (Axum + SQLx)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: exposureiq-backend
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8080
+      DATABASE_URL: postgres://postgres:postgrespassword@postgres:5432/exposureiq_db?sslmode=disable
+      WORKER_BASE_URL: http://workers:8001
+      WAHA_BASE_URL: http://host.docker.internal:3000
+      WAHA_SESSION: default
+      DIRECTOR_WHATSAPP_PHONE: "5215512345678"
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+    volumes:
+      - uploads_data:/app/uploads
+    networks:
+      - exposureiq-net
+
+  # Workers Python (Surya OCR Client, Síntesis Claude LLM, Motor OSINT)
+  workers:
+    build:
+      context: ./workers
+      dockerfile: Dockerfile
+    container_name: exposureiq-workers
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8001
+      DATABASE_URL: postgres://postgres:postgrespassword@postgres:5432/exposureiq_db
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      SURYA_OCR_URL: http://host.docker.internal:5000/ocr
+      DIRECTOR_WHATSAPP_PHONE: "5215512345678"
+    ports:
+      - "8001:8001"
+    depends_on:
+      - postgres
+    volumes:
+      - uploads_data:/app/uploads
+    networks:
+      - exposureiq-net
+
+  # Frontend Next.js 15 (Plantilla Trezo)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: exposureiq-frontend
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8080/api
+    ports:
+      - "3001:3000"
+    depends_on:
+      - backend
+    networks:
+      - exposureiq-net
+
+volumes:
+  postgres_data:
+  uploads_data:
+
+networks:
+  exposureiq-net:
+    driver: bridge

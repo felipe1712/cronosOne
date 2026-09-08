@@ -1,0 +1,141 @@
+{
+  "name": "ExposureIQ — Polling & Envio WhatsApp WAHA",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 3
+            }
+          ]
+        }
+      },
+      "id": "1",
+      "name": "Cron Polling (Cada 3 min)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:8080/api/mensajes/pendientes?limit=1&auto_lock=true",
+        "options": {}
+      },
+      "id": "2",
+      "name": "Consultar Mensajes Pendientes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [320, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-not-empty",
+              "leftValue": "={{ $json.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "3",
+      "name": "¿Hay Mensajes?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [540, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:3000/api/sendText",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chatId\": \"{{ $json[0].destinatario }}@c.us\",\n  \"text\": {{ JSON.stringify($json[0].texto) }},\n  \"session\": \"default\"\n}",
+        "options": {}
+      },
+      "id": "4",
+      "name": "Enviar WhatsApp vía WAHA",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [780, 240]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://localhost:8080/api/mensajes/{{ $('Consultar Mensajes Pendientes').item.json[0].id }}/confirmar",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"estado\": \"confirmado\"\n}",
+        "options": {}
+      },
+      "id": "5",
+      "name": "Confirmar Entrega en Backend",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1020, 240]
+    }
+  ],
+  "connections": {
+    "Cron Polling (Cada 3 min)": {
+      "main": [
+        [
+          {
+            "node": "Consultar Mensajes Pendientes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar Mensajes Pendientes": {
+      "main": [
+        [
+          {
+            "node": "¿Hay Mensajes?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Hay Mensajes?": {
+      "main": [
+        [
+          {
+            "node": "Enviar WhatsApp vía WAHA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar WhatsApp vía WAHA": {
+      "main": [
+        [
+          {
+            "node": "Confirmar Entrega en Backend",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
