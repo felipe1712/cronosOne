@@ -721,7 +721,7 @@ export default function BoletinesPage() {
                     >
                       <Typography
                         component="div"
-                        dangerouslySetHtml={{ __html: formatWhatsAppText(editedText) }}
+                        dangerouslySetInnerHTML={{ __html: formatWhatsAppText(editedText) }}
                         sx={{
                           fontSize: "0.88rem",
                           lineHeight: 1.5,
