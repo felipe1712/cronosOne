@@ -14,6 +14,6 @@ CREATE TABLE IF NOT EXISTS configuraciones_sistema (
 -- Configuración por defecto de Claude
 INSERT INTO configuraciones_sistema (clave, valor, descripcion, categoria)
 VALUES 
-    ('CLAUDE_MODEL', 'claude-3-5-sonnet-20241022', 'Modelo de Anthropic Claude seleccionado para la síntesis de boletines', 'ia'),
+    ('CLAUDE_MODEL', 'claude-sonnet-4-5-20250929', 'Modelo de Anthropic Claude seleccionado para la síntesis de boletines', 'ia'),
     ('CLAUDE_MAX_TOKENS', '1000', 'Límite máximo de tokens por síntesis', 'ia')
-ON CONFLICT (clave) DO NOTHING;
+ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor;

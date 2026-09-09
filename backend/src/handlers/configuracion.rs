@@ -41,60 +41,92 @@ pub struct TestClaudePayload {
 pub fn get_available_claude_models() -> Vec<AvailableModel> {
     vec![
         AvailableModel {
-            id: "claude-3-7-sonnet-20250219".to_string(),
-            name: "Claude 3.7 Sonnet".to_string(),
-            description: "Modelo híbrido de vanguardia con capacidad de razonamiento profundo y síntesis de alta precisión.".to_string(),
-            badge: Some("Último Lanzamiento".to_string()),
-            speed: "Rápido".to_string(),
-            intelligence: "Máxima (Híbrida)".to_string(),
-        },
-        AvailableModel {
-            id: "claude-3-5-sonnet-20241022".to_string(),
-            name: "Claude 3.5 Sonnet (v2)".to_string(),
-            description: "Equilibrio ideal para análisis de riesgos, síntesis de boletines ejecutivos y comprensión legal.".to_string(),
+            id: "claude-sonnet-4-5-20250929".to_string(),
+            name: "Claude Sonnet 4.5".to_string(),
+            description: "Equilibrio ideal para análisis de riesgos, síntesis de boletines ejecutivos y detección regulatoria.".to_string(),
             badge: Some("Recomendado".to_string()),
             speed: "Rápido".to_string(),
             intelligence: "Muy Alta".to_string(),
         },
         AvailableModel {
-            id: "claude-3-5-sonnet-20240620".to_string(),
-            name: "Claude 3.5 Sonnet (v1)".to_string(),
-            description: "Primera versión de Claude 3.5 Sonnet, alta compatibilidad con cuentas existentes.".to_string(),
-            badge: None,
-            speed: "Rápido".to_string(),
-            intelligence: "Muy Alta".to_string(),
-        },
-        AvailableModel {
-            id: "claude-3-5-sonnet-latest".to_string(),
-            name: "Claude 3.5 Sonnet (Latest)".to_string(),
-            description: "Alias oficial que siempre apunta a la versión más actualizada de Claude 3.5 Sonnet.".to_string(),
-            badge: None,
-            speed: "Rápido".to_string(),
-            intelligence: "Muy Alta".to_string(),
-        },
-        AvailableModel {
-            id: "claude-3-5-haiku-20241022".to_string(),
-            name: "Claude 3.5 Haiku".to_string(),
-            description: "Velocidad extrema y bajo costo. Ideal para generación instantánea de briefs ejecutivos cortos.".to_string(),
+            id: "claude-haiku-4-5-20251001".to_string(),
+            name: "Claude Haiku 4.5".to_string(),
+            description: "Máxima velocidad y costo mínimo para generación instantánea de briefs ejecutivos de WhatsApp.".to_string(),
             badge: Some("Ultra Rápido".to_string()),
             speed: "Instantáneo".to_string(),
             intelligence: "Alta".to_string(),
         },
         AvailableModel {
-            id: "claude-3-haiku-20240307".to_string(),
-            name: "Claude 3 Haiku".to_string(),
-            description: "Versión compacta clásica con máxima disponibilidad global en todas las cuentas de Anthropic.".to_string(),
-            badge: Some("Económico".to_string()),
-            speed: "Instantáneo".to_string(),
-            intelligence: "Media-Alta".to_string(),
+            id: "claude-sonnet-4-6".to_string(),
+            name: "Claude Sonnet 4.6".to_string(),
+            description: "Capacidad analítica avanzada para síntesis estratégica y reportes directivos.".to_string(),
+            badge: Some("Avanzado".to_string()),
+            speed: "Rápido".to_string(),
+            intelligence: "Muy Alta".to_string(),
         },
         AvailableModel {
-            id: "claude-3-opus-20240229".to_string(),
-            name: "Claude 3 Opus".to_string(),
-            description: "Modelo para tareas altamente complejas y análisis exhaustivo de documentos extensos.".to_string(),
+            id: "claude-sonnet-5".to_string(),
+            name: "Claude Sonnet 5".to_string(),
+            description: "Generación Sonnet 5 para análisis exhaustivo de riesgos y extracción de patrones operativos.".to_string(),
+            badge: Some("Nueva Generación".to_string()),
+            speed: "Rápido".to_string(),
+            intelligence: "Máxima".to_string(),
+        },
+        AvailableModel {
+            id: "claude-opus-4-5-20251101".to_string(),
+            name: "Claude Opus 4.5".to_string(),
+            description: "Razonamiento profundo para documentos de alta complejidad jurídica y técnica.".to_string(),
             badge: None,
             speed: "Moderado".to_string(),
             intelligence: "Extrema".to_string(),
+        },
+        AvailableModel {
+            id: "claude-opus-4-6".to_string(),
+            name: "Claude Opus 4.6".to_string(),
+            description: "Motor Opus optimizado para correlación de riesgos corporativos.".to_string(),
+            badge: None,
+            speed: "Moderado".to_string(),
+            intelligence: "Extrema".to_string(),
+        },
+        AvailableModel {
+            id: "claude-opus-4-7".to_string(),
+            name: "Claude Opus 4.7".to_string(),
+            description: "Opus 4.7 para análisis multinivel y síntesis ejecutiva sin pérdida de contexto.".to_string(),
+            badge: None,
+            speed: "Moderado".to_string(),
+            intelligence: "Extrema".to_string(),
+        },
+        AvailableModel {
+            id: "claude-opus-4-8".to_string(),
+            name: "Claude Opus 4.8".to_string(),
+            description: "Máxima precisión en inferencia analítica y redacción directiva.".to_string(),
+            badge: None,
+            speed: "Moderado".to_string(),
+            intelligence: "Extrema".to_string(),
+        },
+        AvailableModel {
+            id: "claude-opus-5".to_string(),
+            name: "Claude Opus 5".to_string(),
+            description: "El modelo más potente de Anthropic para análisis integral de inteligencia de riesgos.".to_string(),
+            badge: Some("Máxima Potencia".to_string()),
+            speed: "Moderado".to_string(),
+            intelligence: "Cúspide".to_string(),
+        },
+        AvailableModel {
+            id: "claude-fable-5".to_string(),
+            name: "Claude Fable 5".to_string(),
+            description: "Arquitectura Fable para síntesis narrativa ejecutiva y estilizada.".to_string(),
+            badge: None,
+            speed: "Rápido".to_string(),
+            intelligence: "Alta".to_string(),
+        },
+        AvailableModel {
+            id: "claude-fable-5-1".to_string(),
+            name: "Claude Fable 5.1".to_string(),
+            description: "Versión refinada de Fable 5 para síntesis ejecutiva clara y concisa.".to_string(),
+            badge: None,
+            speed: "Rápido".to_string(),
+            intelligence: "Alta".to_string(),
         },
     ]
 }
@@ -122,7 +154,7 @@ pub async fn get_configuraciones(
     .await
     .unwrap_or_default();
 
-    let mut current_model = "claude-3-5-sonnet-20241022".to_string();
+    let mut current_model = "claude-sonnet-4-5-20250929".to_string();
     for r in &rows {
         if r.clave == "CLAUDE_MODEL" {
             current_model = r.valor.clone();

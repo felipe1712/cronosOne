@@ -42,8 +42,8 @@ interface AvailableModel {
 }
 
 export default function ConfiguracionPage() {
-  const [activeModel, setActiveModel] = useState<string>("claude-3-5-sonnet-20241022");
-  const [selectedModel, setSelectedModel] = useState<string>("claude-3-5-sonnet-20241022");
+  const [activeModel, setActiveModel] = useState<string>("claude-sonnet-4-5-20250929");
+  const [selectedModel, setSelectedModel] = useState<string>("claude-sonnet-4-5-20250929");
   const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [saving, setSaving] = useState<boolean>(false);
