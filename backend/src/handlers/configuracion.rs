@@ -28,12 +28,12 @@ pub struct AvailableModel {
     pub intelligence: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct UpdateConfiguracionPayload {
     pub claude_model: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TestClaudePayload {
     pub model: Option<String>,
 }
