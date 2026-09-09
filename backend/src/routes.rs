@@ -10,7 +10,7 @@ use tower_http::trace::TraceLayer;
 use crate::{
     config::Config,
     db::DbPool,
-    handlers::{auth, boletines, mensajes, osint, waha},
+    handlers::{auth, boletines, configuracion, mensajes, osint, waha},
     middleware::auth::require_auth,
 };
 
@@ -47,6 +47,10 @@ pub fn create_router(pool: DbPool, config: Arc<Config>) -> Router {
         .route("/api/osint/fuentes", get(osint::list_fuentes_osint))
         .route("/api/osint/fuentes/:id/toggle", patch(osint::toggle_fuente_osint))
         .route("/api/osint/scan", post(osint::run_osint_scan))
+        // Configuración General y Modelos de IA
+        .route("/api/configuracion", get(configuracion::get_configuraciones))
+        .route("/api/configuracion", put(configuracion::update_configuracion))
+        .route("/api/configuracion/test-claude", post(configuracion::test_claude))
         .layer(middleware::from_fn_with_state(config.clone(), require_auth));
 
     // Rutas públicas (consumidas por frontend login y cron n8n)

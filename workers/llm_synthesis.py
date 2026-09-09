@@ -2,6 +2,41 @@ import os
 from typing import List, Dict, Any, Tuple
 import anthropic
 from config import settings
+from db import get_db_connection
+
+def get_configured_model() -> str:
+    """Obtiene el modelo configurado dinámicamente desde PostgreSQL."""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT valor FROM configuraciones_sistema WHERE clave = 'CLAUDE_MODEL'")
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if row and row.get("valor"):
+            return row["valor"].strip()
+    except Exception as e:
+        print(f"[Config] Error leyendo modelo de BD ({e}), usando default.")
+    return settings.claude_model
+
+async def test_claude_model(model_name: str) -> str:
+    """Prueba rápida de conectividad con un modelo específico de Claude."""
+    if not settings.anthropic_api_key:
+        raise ValueError("ANTHROPIC_API_KEY no configurada en workers/.env")
+    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    try:
+        response = client.messages.create(
+            model=model_name,
+            max_tokens=25,
+            messages=[{"role": "user", "content": "Responde con 5 palabras confirmando conexión y modelo."}]
+        )
+    except TypeError:
+        response = client.messages.create(
+            model=model_name,
+            max_tokens=25,
+            messages=[{"role": "user", "content": "Responde con 5 palabras confirmando conexión y modelo."}]
+        )
+    return response.content[0].text.strip()
 
 SYSTEM_PROMPT = """Eres el analista jefe de inteligencia estratégica de ExposureIQ, al servicio del Director de Operaciones de una de las aseguradoras más grandes de México.
 
@@ -66,7 +101,8 @@ async def generate_executive_brief(sections: List[Dict[str, Any]], fecha_str: st
     try:
         client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
-        models_to_try = [settings.claude_model]
+        configured_model = get_configured_model()
+        models_to_try = [configured_model]
         fallback_candidates = [
             "claude-3-5-sonnet-20240620",
             "claude-3-5-sonnet-latest",

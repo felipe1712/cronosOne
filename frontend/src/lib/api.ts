@@ -160,4 +160,19 @@ export const ApiService = {
     apiFetch<any>('/osint/scan', {
       method: 'POST',
     }),
+
+  // Configuración del Sistema & Modelos de IA
+  getConfiguraciones: () => apiFetch<any>('/configuracion'),
+
+  updateConfiguracion: (claude_model: string) =>
+    apiFetch<any>('/configuracion', {
+      method: 'PUT',
+      body: JSON.stringify({ claude_model }),
+    }),
+
+  testClaude: (model?: string) =>
+    apiFetch<any>('/configuracion/test-claude', {
+      method: 'POST',
+      body: JSON.stringify({ model }),
+    }),
 };

@@ -124,6 +124,36 @@ def run_osint_scan_endpoint(background_tasks: BackgroundTasks):
         "mensaje": "Escaneo de inteligencia OSINT iniciado contra entidades vigiladas"
     }
 
+class TestClaudeRequest(BaseModel):
+    model: Optional[str] = None
+
+@app.post("/api/test-claude")
+async def test_claude_endpoint(payload: TestClaudeRequest):
+    import time
+    from llm_synthesis import test_claude_model, get_configured_model
+    target_model = payload.model or get_configured_model()
+    start_time = time.time()
+    try:
+        reply = await test_claude_model(target_model)
+        latency = int((time.time() - start_time) * 1000)
+        return {
+            "ok": True,
+            "model": target_model,
+            "latency_ms": latency,
+            "reply": reply,
+            "mensaje": f"Conexión exitosa con Claude ({target_model}) en {latency}ms."
+        }
+    except Exception as e:
+        latency = int((time.time() - start_time) * 1000)
+        return {
+            "ok": False,
+            "model": target_model,
+            "latency_ms": latency,
+            "error": str(e),
+            "mensaje": f"Fallo al conectar con {target_model}: {str(e)}"
+        }
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host=settings.host, port=settings.port, reload=True)

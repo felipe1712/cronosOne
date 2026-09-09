@@ -145,6 +145,16 @@ const LeftSidebarMenu: React.FC<LeftSidebarProps> = ({ toggleActive }) => {
                     Canal WhatsApp (WAHA)
                   </Link>
                 </li>
+                <li className="sidemenu-item">
+                  <Link
+                    href="/configuracion"
+                    className={`sidemenu-link ${
+                      pathname === "/configuracion" ? "active" : ""
+                    }`}
+                  >
+                    Configuración
+                  </Link>
+                </li>
               </ul>
             </AccordionDetails>
           </Accordion>
