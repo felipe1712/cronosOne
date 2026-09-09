@@ -63,17 +63,30 @@ async def generate_executive_brief(sections: List[Dict[str, Any]], fecha_str: st
         )
         return fallback_brief, detected_topics
 
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    try:
+        client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
-    response = client.messages.create(
-        model=settings.claude_model,
-        max_tokens=800,
-        temperature=0.2,
-        system=SYSTEM_PROMPT,
-        messages=[
-            {"role": "user", "content": context_prompt}
-        ]
-    )
+        response = client.messages.create(
+            model=settings.claude_model,
+            max_tokens=800,
+            temperature=0.2,
+            system=SYSTEM_PROMPT,
+            messages=[
+                {"role": "user", "content": context_prompt}
+            ]
+        )
 
-    brief_text = response.content[0].text
-    return brief_text, detected_topics
+        brief_text = response.content[0].text
+        return brief_text, detected_topics
+    except Exception as e:
+        print(f"[LLM] Error al invocar Claude API ({e}). Usando síntesis ejecutiva estructurada.")
+        fallback_brief = (
+            f"📋 *BRIEFING EJECUTIVO COPARMEX — {fecha_str}*\n"
+            f"_ExposureIQ · Inteligencia Operativa_\n\n"
+            f"• *Regulación y Cumplimiento:* Seguimiento a lineamientos regulatorios e iniciativas publicadas.\n"
+            f"• *Siniestralidad y Seguridad:* Monitoreo continuo de reportes de transporte de carga e incidencias en carreteras prioritarias.\n"
+            f"• *Entorno Económico:* Parámetros macroeconómicos e inflación bajo vigilancia para reservas técnicas.\n\n"
+            f"📌 *Atención Operativa:* Revisar comités de siniestros y suscripción de flotillas.\n\n"
+            f"_(Nota: Claude API retornó '{str(e)[:80]}...'. Se generó síntesis de respaldo editable)_"
+        )
+        return fallback_brief, detected_topics

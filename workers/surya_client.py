@@ -4,14 +4,45 @@ from typing import Dict, Any, List
 from config import settings
 from pypdf import PdfReader
 
+def resolve_file_path(file_path: str) -> str:
+    """
+    Resuelve la ruta del archivo asegurando compatibilidad entre servicios
+    cuando el backend y los workers corren en diferentes directorios de trabajo.
+    """
+    if os.path.exists(file_path):
+        return os.path.abspath(file_path)
+
+    clean_path = file_path.lstrip("./").lstrip(".\\")
+    filename = os.path.basename(file_path)
+
+    candidates = [
+        os.path.join("/opt/cronosOne/backend", clean_path),
+        os.path.join("/opt/cronosOne/backend/uploads", filename),
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backend", clean_path)),
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backend", "uploads", filename)),
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", clean_path)),
+        os.path.abspath(os.path.join(os.path.dirname(__file__), clean_path)),
+        os.path.abspath(os.path.join(os.getcwd(), clean_path)),
+    ]
+
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            print(f"[File Resolver] Archivo resuelto en: {candidate}")
+            return candidate
+
+    return file_path
+
 async def process_pdf_ocr(file_path: str) -> List[Dict[str, Any]]:
     """
     Envía el PDF al servicio interno Surya OCR en el servidor.
     Si el servicio no responde (entorno de pruebas local), utiliza fallback con pypdf.
     Retorna una lista de páginas con texto estructurado.
     """
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"No se encontró el archivo: {file_path}")
+    resolved_path = resolve_file_path(file_path)
+    if not os.path.exists(resolved_path):
+        raise FileNotFoundError(f"No se encontró el archivo: {file_path} (probado en {resolved_path})")
+    
+    file_path = resolved_path
 
     # 1. Intentar llamar al servicio interno Surya OCR
     try:

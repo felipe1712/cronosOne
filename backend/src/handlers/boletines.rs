@@ -168,7 +168,6 @@ pub async fn upload_boletin(
 
     let safe_file_name = format!("{}_{}", boletin_id, file_name);
     let target_path = upload_dir.join(&safe_file_name);
-    let target_path_str = target_path.to_string_lossy().to_string();
 
     let mut file = tokio::fs::File::create(&target_path)
         .await
@@ -185,6 +184,10 @@ pub async fn upload_boletin(
             Json(json!({"error": format!("Error escribiendo datos de archivo: {}", e)})),
         )
     })?;
+
+    // Obtener ruta canónica absoluta para que los workers en otros directorios la encuentren siempre
+    let target_path_abs = std::fs::canonicalize(&target_path).unwrap_or_else(|_| target_path.clone());
+    let target_path_str = target_path_abs.to_string_lossy().to_string();
 
     // Registrar en PostgreSQL
     let boletin = sqlx::query_as::<_, Boletin>(
