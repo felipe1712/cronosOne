@@ -8,11 +8,11 @@ use serde_json::json;
 use std::sync::Arc;
 use tracing::error;
 
-use crate::config::Config;
+use crate::{config::Config, db::DbPool};
 
 /// Obtiene el estado de la sesión de WAHA (CONNECTED, SCAN_QR_CODE, STOPPED, etc.)
 pub async fn get_waha_status(
-    State(config): State<Arc<Config>>,
+    State((_, config)): State<(DbPool, Arc<Config>)>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let client = reqwest::Client::new();
     let url = format!(
@@ -60,7 +60,7 @@ pub async fn get_waha_status(
 
 /// Obtiene el código QR actual de emparejamiento de WhatsApp
 pub async fn get_waha_qr(
-    State(config): State<Arc<Config>>,
+    State((_, config)): State<(DbPool, Arc<Config>)>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let client = reqwest::Client::new();
     let url = format!(
@@ -102,7 +102,7 @@ pub async fn get_waha_qr(
 
 /// Dispara un reinicio de la sesión de WAHA para forzar reconexión
 pub async fn restart_waha_session(
-    State(config): State<Arc<Config>>,
+    State((_, config)): State<(DbPool, Arc<Config>)>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let client = reqwest::Client::new();
     let url = format!(
