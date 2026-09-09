@@ -28,9 +28,30 @@ pub struct AvailableModel {
     pub intelligence: String,
 }
 
+pub const DEFAULT_SYSTEM_PROMPT: &str = r#"Eres el analista jefe de inteligencia estratégica de ExposureIQ, al servicio del Director de Operaciones de una de las aseguradoras más grandes de México.
+
+Tu misión es leer los extractos temáticos del boletín diario de Coparmex (40+ páginas) y generar un "Briefing Ejecutivo Matutino" diseñado para ser leído directamente en WhatsApp en menos de 2 minutos.
+
+Criterios de filtrado y priorización:
+1. RELEVANTE PARA ASEGURADORA:
+   - Impacto en Siniestralidad y Riesgos (robo a transporte, inseguridad en carreteras, desastres naturales, salud).
+   - Marco Regulatorio y Jurídico (reformas legales, CNSF, SHCP, Condusef, reformas laborales/pensiones).
+   - Variables Macroeconómicas (inflación médica/general, tasas de interés, tipo de cambio).
+2. DESCARTE DE RUIDO:
+   - Declaraciones puramente políticas, eventos de relaciones públicas o discursos genéricos sin impacto operativo.
+
+Reglas estrictas de formato para WhatsApp:
+- Usa negritas con un solo asterisco: *Título*
+- Usa viñetas claras con guiones: - Punto clave
+- No uses encabezados Markdown tipo # o ##
+- Incluye 3 o 4 puntos clave máximo, cada uno con su impacto operativo para la aseguradora.
+- Termina con un bloque breve de "Acción / Atención sugerida".
+- Longitud total: Entre 180 y 300 palabras. Debe verse limpio y ejecutivo."#;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UpdateConfiguracionPayload {
-    pub claude_model: String,
+    pub claude_model: Option<String>,
+    pub system_prompt: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -155,9 +176,12 @@ pub async fn get_configuraciones(
     .unwrap_or_default();
 
     let mut current_model = "claude-sonnet-4-5-20250929".to_string();
+    let mut current_prompt = DEFAULT_SYSTEM_PROMPT.to_string();
     for r in &rows {
         if r.clave == "CLAUDE_MODEL" {
             current_model = r.valor.clone();
+        } else if r.clave == "CLAUDE_SYSTEM_PROMPT" {
+            current_prompt = r.valor.clone();
         }
     }
 
@@ -167,6 +191,8 @@ pub async fn get_configuraciones(
         StatusCode::OK,
         Json(json!({
             "claude_model": current_model,
+            "system_prompt": current_prompt,
+            "default_system_prompt": DEFAULT_SYSTEM_PROMPT,
             "available_models": available_models,
             "todas": rows
         })),
@@ -177,34 +203,50 @@ pub async fn update_configuracion(
     State((pool, _config)): State<(DbPool, Arc<Config>)>,
     Json(payload): Json<UpdateConfiguracionPayload>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    let model = payload.claude_model.trim();
-    if model.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "El nombre del modelo no puede estar vacío"})),
-        ));
+    if let Some(ref model) = payload.claude_model {
+        let m = model.trim();
+        if !m.is_empty() {
+            sqlx::query(
+                "INSERT INTO configuraciones_sistema (clave, valor, descripcion, categoria, actualizado_en)
+                 VALUES ('CLAUDE_MODEL', $1, 'Modelo de Anthropic Claude seleccionado para la síntesis de boletines', 'ia', now())
+                 ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, actualizado_en = now()"
+            )
+            .bind(m)
+            .execute(&pool)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": format!("Error guardando modelo: {}", e)})),
+                )
+            })?;
+        }
     }
 
-    sqlx::query(
-        "INSERT INTO configuraciones_sistema (clave, valor, descripcion, categoria, actualizado_en)
-         VALUES ('CLAUDE_MODEL', $1, 'Modelo de Anthropic Claude seleccionado para la síntesis de boletines', 'ia', now())
-         ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, actualizado_en = now()"
-    )
-    .bind(model)
-    .execute(&pool)
-    .await
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("Error guardando configuración en base de datos: {}", e)})),
-        )
-    })?;
+    if let Some(ref prompt) = payload.system_prompt {
+        let p = prompt.trim();
+        if !p.is_empty() {
+            sqlx::query(
+                "INSERT INTO configuraciones_sistema (clave, valor, descripcion, categoria, actualizado_en)
+                 VALUES ('CLAUDE_SYSTEM_PROMPT', $1, 'Instrucciones del sistema para el análisis y síntesis de boletines', 'ia', now())
+                 ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, actualizado_en = now()"
+            )
+            .bind(p)
+            .execute(&pool)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": format!("Error guardando prompt: {}", e)})),
+                )
+            })?;
+        }
+    }
 
     Ok((
         StatusCode::OK,
         Json(json!({
-            "mensaje": "Configuración actualizada correctamente",
-            "claude_model": model
+            "mensaje": "Configuración guardada correctamente"
         })),
     ))
 }

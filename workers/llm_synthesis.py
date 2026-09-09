@@ -52,7 +52,7 @@ async def test_claude_model(model_name: str) -> str:
         )
     return extract_text_from_response(response)
 
-SYSTEM_PROMPT = """Eres el analista jefe de inteligencia estratégica de ExposureIQ, al servicio del Director de Operaciones de una de las aseguradoras más grandes de México.
+DEFAULT_SYSTEM_PROMPT = """Eres el analista jefe de inteligencia estratégica de ExposureIQ, al servicio del Director de Operaciones de una de las aseguradoras más grandes de México.
 
 Tu misión es leer los extractos temáticos del boletín diario de Coparmex (40+ páginas) y generar un "Briefing Ejecutivo Matutino" diseñado para ser leído directamente en WhatsApp en menos de 2 minutos.
 
@@ -72,6 +72,21 @@ Reglas estrictas de formato para WhatsApp:
 - Termina con un bloque breve de "Acción / Atención sugerida".
 - Longitud total: Entre 180 y 300 palabras. Debe verse limpio y ejecutivo.
 """
+
+def get_configured_system_prompt() -> str:
+    """Obtiene el prompt de sistema configurado dinámicamente desde PostgreSQL."""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT valor FROM configuraciones_sistema WHERE clave = 'CLAUDE_SYSTEM_PROMPT'")
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if row and row.get("valor") and row["valor"].strip():
+            return row["valor"].strip()
+    except Exception as e:
+        print(f"[Config] Error leyendo CLAUDE_SYSTEM_PROMPT de BD ({e}), usando default.")
+    return DEFAULT_SYSTEM_PROMPT
 
 async def generate_executive_brief(sections: List[Dict[str, Any]], fecha_str: str) -> Tuple[str, List[str]]:
     """
@@ -134,6 +149,7 @@ async def generate_executive_brief(sections: List[Dict[str, Any]], fecha_str: st
             if m not in models_to_try:
                 models_to_try.append(m)
 
+        active_system_prompt = get_configured_system_prompt()
         last_error = None
         for model_name in models_to_try:
             try:
@@ -142,7 +158,7 @@ async def generate_executive_brief(sections: List[Dict[str, Any]], fecha_str: st
                     response = client.messages.create(
                         model=model_name,
                         max_tokens=1000,
-                        system=SYSTEM_PROMPT,
+                        system=active_system_prompt,
                         messages=[
                             {"role": "user", "content": context_prompt}
                         ]
@@ -153,7 +169,7 @@ async def generate_executive_brief(sections: List[Dict[str, Any]], fecha_str: st
                         model=model_name,
                         max_tokens=1000,
                         messages=[
-                            {"role": "user", "content": f"{SYSTEM_PROMPT}\n\n---\n\n{context_prompt}"}
+                            {"role": "user", "content": f"{active_system_prompt}\n\n---\n\n{context_prompt}"}
                         ]
                     )
 

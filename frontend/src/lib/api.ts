@@ -164,11 +164,13 @@ export const ApiService = {
   // Configuración del Sistema & Modelos de IA
   getConfiguraciones: () => apiFetch<any>('/configuracion'),
 
-  updateConfiguracion: (claude_model: string) =>
-    apiFetch<any>('/configuracion', {
+  updateConfiguracion: (payload: { claude_model?: string; system_prompt?: string } | string) => {
+    const body = typeof payload === 'string' ? { claude_model: payload } : payload;
+    return apiFetch<any>('/configuracion', {
       method: 'PUT',
-      body: JSON.stringify({ claude_model }),
-    }),
+      body: JSON.stringify(body),
+    });
+  },
 
   testClaude: (model?: string) =>
     apiFetch<any>('/configuracion/test-claude', {
