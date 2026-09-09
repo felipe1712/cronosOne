@@ -66,27 +66,58 @@ async def generate_executive_brief(sections: List[Dict[str, Any]], fecha_str: st
     try:
         client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
-        try:
-            response = client.messages.create(
-                model=settings.claude_model,
-                max_tokens=1000,
-                system=SYSTEM_PROMPT,
-                messages=[
-                    {"role": "user", "content": context_prompt}
-                ]
-            )
-        except TypeError as te:
-            print(f"[LLM] Reintentando llamada compatible a Claude sin parámetro system ({te})...")
-            response = client.messages.create(
-                model=settings.claude_model,
-                max_tokens=1000,
-                messages=[
-                    {"role": "user", "content": f"{SYSTEM_PROMPT}\n\n---\n\n{context_prompt}"}
-                ]
-            )
+        models_to_try = [settings.claude_model]
+        fallback_candidates = [
+            "claude-3-5-sonnet-20240620",
+            "claude-3-5-sonnet-latest",
+            "claude-3-haiku-20240307",
+            "claude-3-5-haiku-20241022",
+            "claude-3-sonnet-20240229",
+        ]
+        for m in fallback_candidates:
+            if m not in models_to_try:
+                models_to_try.append(m)
 
-        brief_text = response.content[0].text
-        return brief_text, detected_topics
+        last_error = None
+        for model_name in models_to_try:
+            try:
+                print(f"[LLM] Solicitando síntesis con modelo: {model_name}...")
+                try:
+                    response = client.messages.create(
+                        model=model_name,
+                        max_tokens=1000,
+                        system=SYSTEM_PROMPT,
+                        messages=[
+                            {"role": "user", "content": context_prompt}
+                        ]
+                    )
+                except TypeError as te:
+                    print(f"[LLM] Reintentando llamada compatible sin parámetro system ({te})...")
+                    response = client.messages.create(
+                        model=model_name,
+                        max_tokens=1000,
+                        messages=[
+                            {"role": "user", "content": f"{SYSTEM_PROMPT}\n\n---\n\n{context_prompt}"}
+                        ]
+                    )
+
+                brief_text = response.content[0].text
+                print(f"[LLM] ✅ Síntesis ejecutiva generada exitosamente con '{model_name}'.")
+                return brief_text, detected_topics
+
+            except Exception as e:
+                err_str = str(e).lower()
+                if "404" in err_str or "not_found" in err_str:
+                    print(f"[LLM] Modelo '{model_name}' no disponible en tu cuenta (404 Not Found). Probando siguiente...")
+                    last_error = e
+                    continue
+                else:
+                    # Si es otro error (ej: saldo/créditos o cuota), guardar y salir
+                    last_error = e
+                    break
+
+        if last_error:
+            raise last_error
     except Exception as e:
         print(f"[LLM] Error al invocar Claude API ({e}). Usando síntesis ejecutiva estructurada.")
         fallback_brief = (
