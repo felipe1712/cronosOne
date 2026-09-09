@@ -66,15 +66,24 @@ async def generate_executive_brief(sections: List[Dict[str, Any]], fecha_str: st
     try:
         client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
-        response = client.messages.create(
-            model=settings.claude_model,
-            max_tokens=800,
-            temperature=0.2,
-            system=SYSTEM_PROMPT,
-            messages=[
-                {"role": "user", "content": context_prompt}
-            ]
-        )
+        try:
+            response = client.messages.create(
+                model=settings.claude_model,
+                max_tokens=1000,
+                system=SYSTEM_PROMPT,
+                messages=[
+                    {"role": "user", "content": context_prompt}
+                ]
+            )
+        except TypeError as te:
+            print(f"[LLM] Reintentando llamada compatible a Claude sin parámetro system ({te})...")
+            response = client.messages.create(
+                model=settings.claude_model,
+                max_tokens=1000,
+                messages=[
+                    {"role": "user", "content": f"{SYSTEM_PROMPT}\n\n---\n\n{context_prompt}"}
+                ]
+            )
 
         brief_text = response.content[0].text
         return brief_text, detected_topics
