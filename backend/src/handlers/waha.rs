@@ -4,131 +4,196 @@ use axum::{
     response::IntoResponse,
     Json,
 };
+use chrono::Utc;
 use serde_json::json;
 use std::sync::Arc;
-use tracing::error;
+use tracing::{error, info};
 
-use crate::{config::Config, db::DbPool};
+use crate::{
+    config::Config,
+    db::DbPool,
+    models::{WebhookWhatsappSessionPayload, WhatsappSesion},
+};
 
-/// Obtiene el estado de la sesión de WAHA (CONNECTED, SCAN_QR_CODE, STOPPED, etc.)
+/// Obtiene el estado actual de la sesión de WhatsApp desde la base de datos (alimentado por n8n)
 pub async fn get_waha_status(
-    State((_, config)): State<(DbPool, Arc<Config>)>,
+    State((pool, config)): State<(DbPool, Arc<Config>)>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    let client = reqwest::Client::new();
-    let url = format!(
-        "{}/api/sessions/{}",
-        config.waha_base_url, config.waha_session
-    );
+    let sesion = sqlx::query_as::<_, WhatsappSesion>(
+        "SELECT id, estado, qr_code, detalles, actualizado_en 
+         FROM whatsapp_sesion 
+         WHERE id = $1",
+    )
+    .bind(&config.waha_session)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error consultando sesión de WhatsApp: {}", e)})),
+        )
+    })?;
 
-    let mut req = client.get(&url);
-    if let Some(key) = &config.waha_api_key {
-        req = req.header("X-Api-Key", key);
-    }
-
-    match req.send().await {
-        Ok(resp) => {
-            let status = resp.status();
-            if status.is_success() {
-                let data: serde_json::Value = resp.json().await.unwrap_or(json!({
-                    "status": "UNKNOWN"
-                }));
-                Ok((StatusCode::OK, Json(data)))
-            } else {
-                Ok((
-                    StatusCode::OK,
-                    Json(json!({
-                        "name": config.waha_session,
-                        "status": "DISCONNECTED",
-                        "error": format!("Respuesta WAHA: {}", status)
-                    })),
-                ))
-            }
-        }
-        Err(e) => {
-            error!("Error contactando WAHA en {}: {}", url, e);
-            Ok((
-                StatusCode::OK,
-                Json(json!({
-                    "name": config.waha_session,
-                    "status": "UNREACHABLE",
-                    "error": format!("No se pudo conectar con el servicio WAHA: {}", e)
-                })),
-            ))
-        }
+    match sesion {
+        Some(s) => Ok((
+            StatusCode::OK,
+            Json(json!({
+                "name": s.id,
+                "status": s.estado,
+                "detalles": s.detalles,
+                "actualizado_en": s.actualizado_en,
+                "gestionado_por": "n8n"
+            })),
+        )),
+        None => Ok((
+            StatusCode::OK,
+            Json(json!({
+                "name": config.waha_session,
+                "status": "DISCONNECTED",
+                "message": "Sin registro de sesión en base de datos. Esperando webhook de n8n."
+            })),
+        )),
     }
 }
 
-/// Obtiene el código QR actual de emparejamiento de WhatsApp
+/// Obtiene el código QR actual de WhatsApp almacenado por el webhook de n8n
 pub async fn get_waha_qr(
-    State((_, config)): State<(DbPool, Arc<Config>)>,
+    State((pool, config)): State<(DbPool, Arc<Config>)>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    let client = reqwest::Client::new();
-    let url = format!(
-        "{}/api/{}/auth/qr",
-        config.waha_base_url, config.waha_session
-    );
+    let sesion = sqlx::query_as::<_, WhatsappSesion>(
+        "SELECT id, estado, qr_code, detalles, actualizado_en 
+         FROM whatsapp_sesion 
+         WHERE id = $1",
+    )
+    .bind(&config.waha_session)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error consultando código QR: {}", e)})),
+        )
+    })?;
 
-    let mut req = client.get(&url);
-    if let Some(key) = &config.waha_api_key {
-        req = req.header("X-Api-Key", key);
-    }
-
-    match req.send().await {
-        Ok(resp) => {
-            if resp.status().is_success() {
-                let data: serde_json::Value = resp.json().await.unwrap_or(json!({}));
-                Ok((StatusCode::OK, Json(data)))
-            } else {
-                Ok((
-                    StatusCode::OK,
-                    Json(json!({
-                        "qr": null,
-                        "message": "No hay código QR pendiente (la sesión podría estar ya conectada)"
-                    })),
-                ))
-            }
-        }
-        Err(e) => {
-            Ok((
-                StatusCode::OK,
-                Json(json!({
-                    "qr": null,
-                    "error": format!("Error consultando QR en WAHA: {}", e)
-                })),
-            ))
-        }
+    match sesion {
+        Some(s) if s.qr_code.is_some() => Ok((
+            StatusCode::OK,
+            Json(json!({
+                "qr": s.qr_code,
+                "status": s.estado,
+                "actualizado_en": s.actualizado_en
+            })),
+        )),
+        Some(s) => Ok((
+            StatusCode::OK,
+            Json(json!({
+                "qr": null,
+                "status": s.estado,
+                "message": if s.estado == "CONNECTED" || s.estado == "WORKING" {
+                    "La sesión de WhatsApp ya está conectada y activa."
+                } else {
+                    "No hay código QR pendiente en este momento."
+                }
+            })),
+        )),
+        None => Ok((
+            StatusCode::OK,
+            Json(json!({
+                "qr": null,
+                "message": "Esperando inicialización desde el flujo de n8n."
+            })),
+        )),
     }
 }
 
-/// Dispara un reinicio de la sesión de WAHA para forzar reconexión
+/// Solicita reinicio de sesión notificando a n8n
 pub async fn restart_waha_session(
-    State((_, config)): State<(DbPool, Arc<Config>)>,
+    State((pool, config)): State<(DbPool, Arc<Config>)>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    let client = reqwest::Client::new();
-    let url = format!(
-        "{}/api/sessions/{}/restart",
-        config.waha_base_url, config.waha_session
+    let now = Utc::now();
+
+    // Actualizar estado local a RESTART_REQUESTED
+    let _ = sqlx::query(
+        "UPDATE whatsapp_sesion 
+         SET estado = 'RESTART_REQUESTED', actualizado_en = $1 
+         WHERE id = $2",
+    )
+    .bind(now)
+    .bind(&config.waha_session)
+    .execute(&pool)
+    .await;
+
+    // Si hay un webhook de reinicio configurado hacia n8n, dispararlo
+    if let Some(webhook_url) = &config.n8n_restart_webhook_url {
+        let client = reqwest::Client::new();
+        let payload = json!({
+            "accion": "restart_session",
+            "session": config.waha_session
+        });
+        let w_url = webhook_url.clone();
+        tokio::spawn(async move {
+            info!("Notificando a n8n solicitud de reinicio en {}", w_url);
+            if let Err(e) = client.post(&w_url).json(&payload).send().await {
+                error!("No se pudo notificar a n8n del reinicio: {}", e);
+            }
+        });
+    }
+
+    Ok((
+        StatusCode::OK,
+        Json(json!({
+            "mensaje": "Solicitud de reconexión registrada. El flujo de n8n procesará la reactivación.",
+            "status": "RESTART_REQUESTED"
+        })),
+    ))
+}
+
+/// Webhook consumido por n8n para actualizar el estado de la sesión y el código QR
+/// Endpoint: POST /api/webhooks/whatsapp/session
+pub async fn webhook_session_update(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+    Json(payload): Json<WebhookWhatsappSessionPayload>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let session_id = payload.session.unwrap_or_else(|| "default".to_string());
+    let now = Utc::now();
+
+    info!(
+        "Recibida actualización de sesión WhatsApp desde n8n: sesión={}, estado={}, tiene_qr={}",
+        session_id,
+        payload.status,
+        payload.qr.is_some()
     );
 
-    let mut req = client.post(&url);
-    if let Some(key) = &config.waha_api_key {
-        req = req.header("X-Api-Key", key);
-    }
+    sqlx::query(
+        "INSERT INTO whatsapp_sesion (id, estado, qr_code, detalles, actualizado_en)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (id) DO UPDATE 
+         SET estado = EXCLUDED.estado,
+             qr_code = EXCLUDED.qr_code,
+             detalles = EXCLUDED.detalles,
+             actualizado_en = EXCLUDED.actualizado_en",
+    )
+    .bind(&session_id)
+    .bind(&payload.status)
+    .bind(&payload.qr)
+    .bind(&payload.detalles)
+    .bind(now)
+    .execute(&pool)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error guardando estado de sesión: {}", e)})),
+        )
+    })?;
 
-    match req.send().await {
-        Ok(resp) => {
-            let data: serde_json::Value = resp.json().await.unwrap_or(json!({
-                "mensaje": "Comando de reinicio enviado a WAHA"
-            }));
-            Ok((StatusCode::OK, Json(data)))
-        }
-        Err(e) => {
-            Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "error": format!("Error reiniciando sesión de WAHA: {}", e)
-                })),
-            ))
-        }
-    }
+    Ok((
+        StatusCode::OK,
+        Json(json!({
+            "success": true,
+            "mensaje": "Estado de sesión WhatsApp actualizado correctamente",
+            "session": session_id,
+            "status": payload.status
+        })),
+    ))
 }

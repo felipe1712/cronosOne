@@ -179,8 +179,20 @@ export default function WahaPage() {
                 onClick={handleRestart}
                 sx={{ fontWeight: 600 }}
               >
-                {restarting ? <CircularProgress size={24} /> : "Forzar Reconexión / Reiniciar Sesión"}
+                {restarting ? <CircularProgress size={24} /> : "Solicitar Reconexión (vía n8n)"}
               </Button>
+
+              <Box sx={{ mt: 2.5, p: 2, backgroundColor: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+                <Typography variant="caption" sx={{ fontWeight: 700, color: "#334155", display: "block", mb: 0.5 }}>
+                  🔗 URL DE WEBHOOK (CONFIGURAR EN N8N):
+                </Typography>
+                <Typography variant="body2" sx={{ fontFamily: "monospace", fontSize: "0.78rem", color: "#4f46e5", wordBreak: "break-all" }}>
+                  POST https://monitoreo.causer.com.mx/api/webhooks/whatsapp/session
+                </Typography>
+                <Typography variant="caption" sx={{ color: "#64748b", display: "block", mt: 0.5 }}>
+                  Tu flujo de n8n envía el QR y el estado de WAHA a este endpoint para visualizarlo aquí.
+                </Typography>
+              </Box>
             </CardContent>
           </Card>
         </Grid>

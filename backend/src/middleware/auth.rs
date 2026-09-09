@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use crate::{config::Config, models::Claims};
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct AuthContext {
     pub user_id: uuid::Uuid,

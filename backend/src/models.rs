@@ -7,6 +7,7 @@ use uuid::Uuid;
 // 1. Usuarios y Roles
 // ============================================================================
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "varchar", rename_all = "snake_case")]
 pub enum RolUsuario {
@@ -18,6 +19,7 @@ pub enum RolUsuario {
     Analista,
 }
 
+#[allow(dead_code)]
 impl RolUsuario {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -193,4 +195,25 @@ pub struct AlertaOsint {
 pub struct ValidarAlertaRequest {
     pub accion: String, // 'validar' | 'descartar'
     pub notas: Option<String>,
+}
+
+// ============================================================================
+// 5. Estado de Sesión WhatsApp (Alimentado por n8n / WAHA)
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct WhatsappSesion {
+    pub id: String,
+    pub estado: String,
+    pub qr_code: Option<String>,
+    pub detalles: Option<serde_json::Value>,
+    pub actualizado_en: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WebhookWhatsappSessionPayload {
+    pub session: Option<String>,
+    pub status: String,
+    pub qr: Option<String>,
+    pub detalles: Option<serde_json::Value>,
 }

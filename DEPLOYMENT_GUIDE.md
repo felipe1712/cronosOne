@@ -38,13 +38,14 @@ Ejecuta estos comandos directamente en la terminal de tu servidor (no necesitas 
 # 1. Crear la base de datos exclusiva para ExposureIQ
 sudo -u postgres psql -c "CREATE DATABASE exposureiq_db;"
 
-# 2. Aplicar migraciones iniciales y datos semilla (crea tablas, índices y activa pgcrypto)
+# 2. Aplicar migraciones iniciales, semillas y tabla de sesión WhatsApp
 cd /opt/CronosOne/backend/migrations
 sudo -u postgres psql -d exposureiq_db -f 20260908000001_init_schema.sql
 sudo -u postgres psql -d exposureiq_db -f 20260908000002_seed_data.sql
+sudo -u postgres psql -d exposureiq_db -f 20260908000003_whatsapp_sesion.sql
 ```
 
-> **Nota:** La migración `01_init_schema.sql` ya incluye la habilitación automática de la extensión `pgcrypto`.
+> **Nota:** La migración `01_init_schema.sql` ya incluye la habilitación automática de la extensión `pgcrypto`. La migración `03_whatsapp_sesion.sql` crea la tabla que almacena el QR y estado recibidos vía webhook desde n8n.
 
 ---
 
@@ -253,6 +254,21 @@ sudo certbot --nginx -d monitoreo.causer.com.mx
    - **Nodo Enviar WhatsApp vía WAHA**: URL `http://127.0.0.1:3000/api/sendText`
    - **Nodo Confirmar Entrega**: URL `http://127.0.0.1:8080/api/mensajes/{{ $json.id }}/confirmar`
 5. Activa el interruptor **Active** del workflow en n8n.
+
+### Sincronización del Estado de WhatsApp y QR desde n8n:
+En tu flujo de gestión de WAHA dentro de n8n, cuando recibas el evento de estado o el código QR de WAHA, simplemente haz una petición HTTP POST a:
+```
+POST http://127.0.0.1:8080/api/webhooks/whatsapp/session
+Content-Type: application/json
+
+{
+  "session": "default",
+  "status": "SCAN_QR_CODE",      // o "CONNECTED", "WORKING", "STOPPED"
+  "qr": "data:image/png;base64,...", // o string del QR para mostrarlo en el panel
+  "detalles": {}
+}
+```
+Esto guardará inmediatamente el estado y la imagen QR en la base de datos de ExposureIQ para que se muestre en tiempo real en la pantalla **/waha** del panel web.
 
 ---
 

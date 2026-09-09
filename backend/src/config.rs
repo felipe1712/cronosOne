@@ -10,10 +10,9 @@ pub struct Config {
     pub jwt_expiration_hours: i64,
     pub upload_dir: String,
     pub worker_base_url: String,
-    pub waha_base_url: String,
     pub waha_session: String,
-    pub waha_api_key: Option<String>,
     pub director_whatsapp: String,
+    pub n8n_restart_webhook_url: Option<String>,
 }
 
 impl Config {
@@ -41,12 +40,10 @@ impl Config {
             upload_dir: env::var("UPLOAD_DIR").unwrap_or_else(|_| "./uploads".to_string()),
             worker_base_url: env::var("WORKER_BASE_URL")
                 .unwrap_or_else(|_| "http://127.0.0.1:8001".to_string()),
-            waha_base_url: env::var("WAHA_BASE_URL")
-                .unwrap_or_else(|_| "http://127.0.0.1:3000".to_string()),
             waha_session: env::var("WAHA_SESSION").unwrap_or_else(|_| "default".to_string()),
-            waha_api_key: env::var("WAHA_API_KEY").ok(),
             director_whatsapp: env::var("DIRECTOR_WHATSAPP_PHONE")
                 .unwrap_or_else(|_| "5215512345678".to_string()),
+            n8n_restart_webhook_url: env::var("N8N_RESTART_WEBHOOK_URL").ok(),
         }
     }
 }

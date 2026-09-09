@@ -49,7 +49,9 @@ pub fn create_router(pool: DbPool, config: Arc<Config>) -> Router {
         // Endpoint prioritario de sondeo (polling) para cron de n8n
         .route("/api/mensajes/pendientes", get(mensajes::get_mensajes_pendientes))
         // Webhook para que n8n confirme la entrega
-        .route("/api/mensajes/:id/confirmar", post(mensajes::confirmar_mensaje));
+        .route("/api/mensajes/:id/confirmar", post(mensajes::confirmar_mensaje))
+        // Webhook para que n8n sincronice estado de sesión y QR de WhatsApp
+        .route("/api/webhooks/whatsapp/session", post(waha::webhook_session_update));
 
     Router::new()
         .merge(public_routes)
