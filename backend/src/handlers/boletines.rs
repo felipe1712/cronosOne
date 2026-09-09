@@ -370,3 +370,52 @@ pub async fn aprobar_boletin(
         })),
     ))
 }
+
+pub async fn procesar_boletin(
+    State((pool, config)): State<(DbPool, Arc<Config>)>,
+    Path(id): Path<Uuid>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let boletin = sqlx::query_as::<_, Boletin>(
+        "SELECT id, fecha_boletin, nombre_archivo, ruta_archivo, subido_por, estado, 
+                total_paginas, error_mensaje, creado_en, actualizado_en
+         FROM boletines WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error consultando boletín: {}", e)})),
+        )
+    })?
+    .ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "Boletín no encontrado"})),
+        )
+    })?;
+
+    let worker_url = format!("{}/api/process-boletin", config.worker_base_url);
+    let client = reqwest::Client::new();
+    let b_id_str = boletin.id.to_string();
+    let f_path = boletin.ruta_archivo.clone();
+
+    tokio::spawn(async move {
+        let payload = json!({
+            "boletin_id": b_id_str,
+            "ruta_archivo": f_path
+        });
+        if let Err(e) = client.post(&worker_url).json(&payload).send().await {
+            tracing::error!("Error notificando a worker Python: {}", e);
+        }
+    });
+
+    Ok((
+        StatusCode::OK,
+        Json(json!({
+            "mensaje": "Procesamiento OCR y síntesis iniciado en el worker",
+            "boletin_id": id
+        })),
+    ))
+}

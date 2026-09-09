@@ -49,6 +49,7 @@ import CodeIcon from "@mui/icons-material/Code";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import DoneAllIcon from "@mui/icons-material/DoneAll";
 import WhatsAppIcon from "@mui/icons-material/WhatsApp";
+import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import { ApiService } from "@/lib/api";
 
 export default function BoletinesPage() {
@@ -140,6 +141,22 @@ export default function BoletinesPage() {
       setError("No se pudo cargar el detalle del boletín");
     } finally {
       setLoadingDetail(false);
+    }
+  };
+
+  const handleProcesarBoletin = async (id: string) => {
+    try {
+      setLoading(true);
+      setError(null);
+      await ApiService.procesarBoletin(id);
+      setSuccess("Iniciando procesamiento OCR y síntesis con Claude. Espera unos segundos...");
+      setTimeout(() => {
+        fetchBoletines();
+      }, 3000);
+    } catch (err: any) {
+      setError(err.message || "Error al solicitar procesamiento.");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -437,6 +454,17 @@ export default function BoletinesPage() {
                                 sx={{ fontWeight: 600, textTransform: "none" }}
                               >
                                 Revisar & Aprobar
+                              </Button>
+                            ) : b.estado === "pendiente_ocr" || b.estado === "error_sintesis" ? (
+                              <Button
+                                size="small"
+                                variant="contained"
+                                color="warning"
+                                startIcon={<PlayArrowIcon />}
+                                onClick={() => handleProcesarBoletin(b.id)}
+                                sx={{ fontWeight: 600, textTransform: "none" }}
+                              >
+                                Procesar Ahora
                               </Button>
                             ) : (
                               <Button

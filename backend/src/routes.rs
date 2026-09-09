@@ -28,6 +28,7 @@ pub fn create_router(pool: DbPool, config: Arc<Config>) -> Router {
         .route("/api/boletines", get(boletines::list_boletines))
         .route("/api/boletines/upload", post(boletines::upload_boletin))
         .route("/api/boletines/:id", get(boletines::get_boletin))
+        .route("/api/boletines/:id/procesar", post(boletines::procesar_boletin))
         .route("/api/boletines/:id/sintesis", put(boletines::actualizar_sintesis))
         .route("/api/boletines/:id/aprobar", post(boletines::aprobar_boletin))
         // Mensajería (historial en panel)

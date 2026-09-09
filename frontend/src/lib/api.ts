@@ -87,6 +87,11 @@ export const ApiService = {
       body: formData,
     }),
 
+  procesarBoletin: (id: string) =>
+    apiFetch<any>(`/boletines/${id}/procesar`, {
+      method: 'POST',
+    }),
+
   actualizarSintesis: (id: string, texto: string) =>
     apiFetch<any>(`/boletines/${id}/sintesis`, {
       method: 'PUT',
