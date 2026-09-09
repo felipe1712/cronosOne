@@ -445,16 +445,28 @@ export default function BoletinesPage() {
                           <TableCell>{b.total_paginas || "-"}</TableCell>
                           <TableCell sx={{ textAlign: "right" }}>
                             {b.estado === "sintesis_lista" ? (
-                              <Button
-                                size="small"
-                                variant="contained"
-                                color="primary"
-                                startIcon={<EditNoteIcon />}
-                                onClick={() => handleOpenEditor(b.id)}
-                                sx={{ fontWeight: 600, textTransform: "none" }}
-                              >
-                                Revisar & Aprobar
-                              </Button>
+                              <Box sx={{ display: "flex", gap: 0.5, alignItems: "center" }}>
+                                <Button
+                                  size="small"
+                                  variant="contained"
+                                  color="primary"
+                                  startIcon={<EditNoteIcon />}
+                                  onClick={() => handleOpenEditor(b.id)}
+                                  sx={{ fontWeight: 600, textTransform: "none" }}
+                                >
+                                  Revisar & Aprobar
+                                </Button>
+                                <Tooltip title="Reprocesar con IA / Claude">
+                                  <IconButton
+                                    size="small"
+                                    color="warning"
+                                    onClick={() => handleProcesarBoletin(b.id)}
+                                    sx={{ border: "1px solid #fed7aa", borderRadius: "8px" }}
+                                  >
+                                    <PlayArrowIcon fontSize="small" />
+                                  </IconButton>
+                                </Tooltip>
+                              </Box>
                             ) : b.estado === "pendiente_ocr" || b.estado === "error_sintesis" ? (
                               <Button
                                 size="small"
@@ -792,6 +804,21 @@ export default function BoletinesPage() {
           </Button>
 
           <Box sx={{ display: "flex", gap: 1.5 }}>
+            <Button
+              variant="outlined"
+              color="warning"
+              startIcon={<PlayArrowIcon />}
+              onClick={() => {
+                if (selectedBoletin) {
+                  handleProcesarBoletin(selectedBoletin.boletin.id);
+                  setEditorModalOpen(false);
+                }
+              }}
+              disabled={savingDraft || approving || loadingDetail}
+            >
+              Reprocesar con Claude
+            </Button>
+
             <Button
               variant="outlined"
               startIcon={<SaveIcon />}
