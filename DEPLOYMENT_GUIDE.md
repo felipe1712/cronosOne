@@ -15,9 +15,9 @@ Esta guía detalla paso a paso cómo montar **ExposureIQ** en el mismo servidor 
 | **Surya OCR** | 5000 (o socket) | Compartido | API interna consumida por los workers de ExposureIQ |
 | **WAHA (WhatsApp API)** | 3000 | Compartido | Instancia de WhatsApp ya vinculada |
 | **n8n (Orquestador)** | 5678 | Compartido | Flujo independiente importado para sondeo de cola |
-| **ExposureIQ Backend (Rust)** | **8080** | ExposureIQ | API Axum escuchando en localhost:8080 |
-| **ExposureIQ Workers (Python)** | **8001** | ExposureIQ | Procesamiento en background en localhost:8001 |
-| **ExposureIQ Frontend (Next.js)**| **3005** | ExposureIQ | Aplicación web en localhost:3005 |
+| **ExposureIQ Backend (Rust)** | **8090** | ExposureIQ | API Axum escuchando en localhost:8090 |
+| **ExposureIQ Workers (Python)** | **8091** | ExposureIQ | Procesamiento en background en localhost:8091 |
+| **ExposureIQ Frontend (Next.js)**| **3010** | ExposureIQ | Aplicación web en localhost:3010 |
 
 ---
 
@@ -62,11 +62,11 @@ nano .env
 Ajusta las variables en `.env`:
 ```ini
 HOST=127.0.0.1
-PORT=8080
+PORT=8090
 DATABASE_URL=postgres://postgres:<TU_PASSWORD_POSTGRES>@127.0.0.1:5432/exposureiq_db?sslmode=disable
 JWT_SECRET=<GENERA_UNA_CLAVE_ALEATORIA_SEGURA>
 UPLOAD_DIR=/opt/CronosOne/backend/uploads
-WORKER_BASE_URL=http://127.0.0.1:8001
+WORKER_BASE_URL=http://127.0.0.1:8091
 WAHA_BASE_URL=http://127.0.0.1:3000
 WAHA_SESSION=default
 DIRECTOR_WHATSAPP_PHONE=5215512345678
@@ -145,7 +145,7 @@ After=network.target postgresql.service
 Type=simple
 User=root
 WorkingDirectory=/opt/CronosOne/workers
-ExecStart=/opt/CronosOne/workers/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8001
+ExecStart=/opt/CronosOne/workers/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8091
 Restart=always
 RestartSec=5
 EnvironmentFile=/opt/CronosOne/workers/.env
@@ -164,10 +164,10 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/opt/CronosOne/frontend
-ExecStart=/usr/bin/npm start -- -p 3005
+ExecStart=/usr/bin/npm start -- -p 3010
 Restart=always
 RestartSec=5
-Environment=PORT=3005
+Environment=PORT=3010
 Environment=NODE_ENV=production
 
 [Install]
@@ -203,7 +203,7 @@ server {
 
     # Enrutar API hacia el Backend en Rust
     location /api/ {
-        proxy_pass http://127.0.0.1:8080/api/;
+        proxy_pass http://127.0.0.1:8090/api/;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
@@ -217,7 +217,7 @@ server {
 
     # Enrutar todo lo demás al Frontend Next.js
     location / {
-        proxy_pass http://127.0.0.1:3005;
+        proxy_pass http://127.0.0.1:3010;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
