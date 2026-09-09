@@ -125,7 +125,7 @@ export default function WahaPage() {
 
       <Grid container spacing={3}>
         {/* Tarjeta de Estado de WAHA y QR */}
-        <Grid item xs={12} md={4}>
+        <Grid size={{ xs: 12, md: 4 }}>
           <Card sx={{ borderRadius: "12px", boxShadow: "0 2px 6px rgba(0,0,0,0.04)" }}>
             <CardContent>
               <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 2 }}>
@@ -198,7 +198,7 @@ export default function WahaPage() {
         </Grid>
 
         {/* Tarjeta de Log de Mensajes (Cola n8n / WAHA) */}
-        <Grid item xs={12} md={8}>
+        <Grid size={{ xs: 12, md: 8 }}>
           <Card sx={{ borderRadius: "12px", boxShadow: "0 2px 6px rgba(0,0,0,0.04)" }}>
             <CardContent>
               <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 2 }}>
