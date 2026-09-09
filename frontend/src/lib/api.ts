@@ -150,4 +150,9 @@ export const ApiService = {
     apiFetch<any>(`/osint/fuentes/${id}/toggle`, {
       method: 'PATCH',
     }),
+
+  runOsintScan: () =>
+    apiFetch<any>('/osint/scan', {
+      method: 'POST',
+    }),
 };

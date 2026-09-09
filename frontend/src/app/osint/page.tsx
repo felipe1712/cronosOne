@@ -74,6 +74,26 @@ export default function OsintPage() {
   const [openValidationModal, setOpenValidationModal] = useState<boolean>(false);
   const [actionType, setActionType] = useState<"validar" | "descartar">("validar");
 
+  // Filtro de dominios y escaneo manual
+  const [selectedDomain, setSelectedDomain] = useState<string>("todos");
+  const [scanning, setScanning] = useState<boolean>(false);
+
+  const handleTriggerScan = async () => {
+    try {
+      setScanning(true);
+      setError(null);
+      await ApiService.runOsintScan();
+      setSuccess("Escaneo de inteligencia OSINT disparado en segundo plano contra las fuentes activas.");
+      setTimeout(() => {
+        loadData();
+      }, 2500);
+    } catch (err: any) {
+      setError(err.message || "Error al disparar el escaneo OSINT.");
+    } finally {
+      setScanning(false);
+    }
+  };
+
   const loadData = async () => {
     try {
       setLoading(true);
@@ -428,85 +448,145 @@ export default function OsintPage() {
       {tabIndex === 2 && (
         <Card sx={{ borderRadius: "12px", boxShadow: "0 2px 6px rgba(0,0,0,0.04)" }}>
           <CardContent>
-            <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 3 }}>
+            <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 3, flexWrap: "wrap", gap: 2 }}>
               <Box>
-                <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                <Typography variant="h6" sx={{ fontWeight: 700, color: "#1e293b" }}>
                   Administrador de Fuentes de Inteligencia (world-intel-mcp)
                 </Typography>
                 <Typography variant="body2" sx={{ color: "#64748b" }}>
-                  Selecciona qué canales, foros y fuentes de datos se consultan durante los escaneos de exposición de la aseguradora.
+                  Servicio agnóstico compartido (puerto 8095) disponible para ExposureIQ y SentinelIQ. Selecciona qué dominios recolectar.
                 </Typography>
               </Box>
+
+              <Box sx={{ display: "flex", gap: 1.5, alignItems: "center" }}>
+                <Chip
+                  icon={<HubIcon />}
+                  label="MCP Hub (Puerto 8095)"
+                  color="success"
+                  variant="outlined"
+                  sx={{ fontWeight: 600 }}
+                />
+
+                <Button
+                  variant="contained"
+                  color="primary"
+                  startIcon={scanning ? <CircularProgress size={18} color="inherit" /> : <PlayArrowIcon />}
+                  onClick={handleTriggerScan}
+                  disabled={scanning}
+                  sx={{ fontWeight: 600, textTransform: "none" }}
+                >
+                  {scanning ? "Escaneando fuentes..." : "Ejecutar Escaneo Ahora"}
+                </Button>
+              </Box>
+            </Box>
+
+            {/* Selector de Dominios de Inteligencia */}
+            <Box sx={{ mb: 3, display: "flex", gap: 1, flexWrap: "wrap" }}>
               <Chip
-                icon={<HubIcon />}
-                label="Protocolo MCP Conectado"
-                color="success"
-                variant="outlined"
+                label={`Todos (${fuentes.length})`}
+                clickable
+                color={selectedDomain === "todos" ? "primary" : "default"}
+                onClick={() => setSelectedDomain("todos")}
+                sx={{ fontWeight: 600 }}
+              />
+              <Chip
+                label="🛡️ Ciberseguridad & Fugas"
+                clickable
+                color={selectedDomain === "ciberseguridad" ? "primary" : "default"}
+                onClick={() => setSelectedDomain("ciberseguridad")}
+                sx={{ fontWeight: 600 }}
+              />
+              <Chip
+                label="📰 Noticias & Geopolítica"
+                clickable
+                color={selectedDomain === "noticias_geopolitica" ? "primary" : "default"}
+                onClick={() => setSelectedDomain("noticias_geopolitica")}
+                sx={{ fontWeight: 600 }}
+              />
+              <Chip
+                label="🌋 Catástrofes & Clima"
+                clickable
+                color={selectedDomain === "catastrofes_clima" ? "primary" : "default"}
+                onClick={() => setSelectedDomain("catastrofes_clima")}
+                sx={{ fontWeight: 600 }}
+              />
+              <Chip
+                label="📈 Financiero & Regulatorio"
+                clickable
+                color={selectedDomain === "financiero_regulatorio" ? "primary" : "default"}
+                onClick={() => setSelectedDomain("financiero_regulatorio")}
                 sx={{ fontWeight: 600 }}
               />
             </Box>
 
             <Grid container spacing={2.5}>
-              {fuentes.map((f) => (
-                <Grid size={{ xs: 12, md: 6, lg: 4 }} key={f.id}>
-                  <Card
-                    sx={{
-                      borderRadius: "10px",
-                      border: "1px solid",
-                      borderColor: f.activo ? "#c7d2fe" : "#e2e8f0",
-                      backgroundColor: f.activo ? "#fdfdff" : "#f8fafc",
-                      p: 2,
-                      height: "100%",
-                      display: "flex",
-                      flexDirection: "column",
-                      justifyContent: "space-between",
-                      transition: "all 0.2s ease-in-out",
-                      "&:hover": {
-                        boxShadow: "0 4px 12px rgba(0,0,0,0.06)",
-                      },
-                    }}
-                  >
-                    <Box>
-                      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", mb: 1 }}>
-                        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                          <PublicIcon sx={{ color: f.activo ? "#4f46e5" : "#94a3b8" }} />
-                          <Typography variant="subtitle2" sx={{ fontWeight: 700, color: "#1e293b" }}>
-                            {f.nombre}
+              {fuentes
+                .filter((f) => selectedDomain === "todos" || f.dominio === selectedDomain)
+                .map((f) => (
+                  <Grid size={{ xs: 12, md: 6, lg: 4 }} key={f.id}>
+                    <Card
+                      sx={{
+                        borderRadius: "10px",
+                        border: "1px solid",
+                        borderColor: f.activo ? "#c7d2fe" : "#e2e8f0",
+                        backgroundColor: f.activo ? "#fdfdff" : "#f8fafc",
+                        p: 2,
+                        height: "100%",
+                        display: "flex",
+                        flexDirection: "column",
+                        justifyContent: "space-between",
+                        transition: "all 0.2s ease-in-out",
+                        "&:hover": {
+                          boxShadow: "0 4px 12px rgba(0,0,0,0.06)",
+                        },
+                      }}
+                    >
+                      <Box>
+                        <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", mb: 1 }}>
+                          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                            <PublicIcon sx={{ color: f.activo ? "#4f46e5" : "#94a3b8" }} />
+                            <Typography variant="subtitle2" sx={{ fontWeight: 700, color: "#1e293b" }}>
+                              {f.nombre}
+                            </Typography>
+                          </Box>
+                          <Switch
+                            checked={f.activo}
+                            onChange={() => handleToggleFuente(f.id)}
+                            color="primary"
+                          />
+                        </Box>
+
+                        <Box sx={{ mb: 1.5, display: "flex", gap: 0.8, alignItems: "center", flexWrap: "wrap" }}>
+                          {getFuenteTipoChip(f.tipo)}
+                          <Chip
+                            label={f.dominio ? f.dominio.replace("_", " ") : "general"}
+                            size="small"
+                            sx={{ fontSize: "0.72rem", textTransform: "capitalize" }}
+                          />
+                          <Typography variant="caption" sx={{ fontFamily: "monospace", color: "#64748b" }}>
+                            {f.clave}
                           </Typography>
                         </Box>
-                        <Switch
-                          checked={f.activo}
-                          onChange={() => handleToggleFuente(f.id)}
-                          color="primary"
-                        />
-                      </Box>
 
-                      <Box sx={{ mb: 1.5, display: "flex", gap: 1, alignItems: "center" }}>
-                        {getFuenteTipoChip(f.tipo)}
-                        <Typography variant="caption" sx={{ fontFamily: "monospace", color: "#64748b" }}>
-                          {f.clave}
+                        <Typography variant="body2" sx={{ color: "#475569", fontSize: "0.85rem", mb: 2 }}>
+                          {f.descripcion}
                         </Typography>
                       </Box>
 
-                      <Typography variant="body2" sx={{ color: "#475569", fontSize: "0.85rem", mb: 2 }}>
-                        {f.descripcion}
-                      </Typography>
-                    </Box>
-
-                    <Box sx={{ pt: 1, borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <Typography variant="caption" sx={{ color: "#64748b" }}>
-                        Hallazgos totales: <strong>{f.total_hallazgos || 0}</strong>
-                      </Typography>
-                      <Chip
-                        label={f.activo ? "Monitoreando" : "Inactivo"}
-                        color={f.activo ? "success" : "default"}
-                        size="small"
-                        sx={{ fontSize: "0.72rem" }}
-                      />
-                    </Box>
-                  </Card>
-                </Grid>
-              ))}
+                      <Box sx={{ pt: 1, borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <Typography variant="caption" sx={{ color: "#64748b" }}>
+                          Hallazgos: <strong>{f.total_hallazgos || 0}</strong>
+                        </Typography>
+                        <Chip
+                          label={f.activo ? "Recolectando" : "Pausado"}
+                          color={f.activo ? "success" : "default"}
+                          size="small"
+                          sx={{ fontSize: "0.72rem" }}
+                        />
+                      </Box>
+                    </Card>
+                  </Grid>
+                ))}
             </Grid>
           </CardContent>
         </Card>

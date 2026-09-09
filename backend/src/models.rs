@@ -213,6 +213,7 @@ pub struct FuenteOsint {
     pub clave: String,
     pub nombre: String,
     pub descripcion: String,
+    pub dominio: String,
     pub tipo: String,
     pub activo: bool,
     pub ultimo_escaneo: Option<DateTime<Utc>>,

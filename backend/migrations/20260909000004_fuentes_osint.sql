@@ -1,5 +1,5 @@
 -- =============================================================================
--- ExposureIQ — Base de Datos: exposureiq_db
+-- ExposureIQ & SentinelIQ — Base de Datos: exposureiq_db
 -- Migración 004: Administrador de Fuentes OSINT (world-intel-mcp)
 -- =============================================================================
 
@@ -8,7 +8,8 @@ CREATE TABLE IF NOT EXISTS fuentes_osint (
     clave           VARCHAR(50) UNIQUE NOT NULL,
     nombre          VARCHAR(100) NOT NULL,
     descripcion     TEXT NOT NULL,
-    tipo            VARCHAR(50) NOT NULL DEFAULT 'mcp_service', -- 'mcp_service', 'scraper', 'rss', 'api'
+    dominio         VARCHAR(50) NOT NULL DEFAULT 'ciberseguridad', -- 'ciberseguridad', 'noticias_geopolitica', 'catastrofes_clima', 'financiero_regulatorio'
+    tipo            VARCHAR(50) NOT NULL DEFAULT 'mcp_service',   -- 'mcp_service', 'scraper', 'rss', 'api'
     activo          BOOLEAN NOT NULL DEFAULT TRUE,
     ultimo_escaneo  TIMESTAMPTZ,
     total_hallazgos INT NOT NULL DEFAULT 0,
@@ -16,51 +17,120 @@ CREATE TABLE IF NOT EXISTS fuentes_osint (
     actualizado_en  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Fuentes de inteligencia preconfiguradas para world-intel-mcp
-INSERT INTO fuentes_osint (clave, nombre, descripcion, tipo, activo)
+-- Si la tabla ya existía, asegurar la columna dominio
+ALTER TABLE fuentes_osint ADD COLUMN IF NOT EXISTS dominio VARCHAR(50) NOT NULL DEFAULT 'ciberseguridad';
+
+-- 12 Fuentes de inteligencia de world-intel-mcp organizadas por dominio
+INSERT INTO fuentes_osint (clave, nombre, descripcion, dominio, tipo, activo)
 VALUES 
+    -- 1. CIBERSEGURIDAD & AMENAZAS
     (
-        'darkweb_breaches', 
-        'Foros & Marketplaces Dark Web', 
-        'Monitoreo en redes Onion de foros de ciberdelincuencia (Breached, Exploit, XSS) buscando bases de datos y credenciales filtradas.', 
+        'cyber_cisa', 
+        'CISA Advisories & KEV Catalog', 
+        'Catálogo oficial de vulnerabilidades explotadas activamente y directivas de emergencia de CISA/DHS.', 
+        'ciberseguridad', 
         'mcp_service', 
         true
     ),
     (
-        'paste_sites', 
-        'Sitios de Código y Fugas (Pastes)', 
-        'Escaneo en Pastebin, Rentry y repositorios públicos (GitHub Gists) detectando filtraciones de pólizas o tokens.', 
-        'scraper', 
+        'cyber_ransomware', 
+        'Ransomware Victims & Leaks', 
+        'Rastreo de sitios de extorsión de bandas cibercriminales (LockBit, BlackCat, RansomHub) y filtraciones corporativas.', 
+        'ciberseguridad', 
+        'mcp_service', 
         true
     ),
     (
-        'telegram_intel', 
-        'Canales de Hacktivismo Telegram', 
-        'Interceptación de canales de hacktivistas y grupos cibercriminales dirigidos a infraestructuras críticas e instituciones mexicanas.', 
+        'cyber_cve_recent', 
+        'Vulnerabilidades Críticas (CVEs)', 
+        'Monitoreo del National Vulnerability Database (NVD) para exploits públicos de severidad Alta y Crítica.', 
+        'ciberseguridad', 
         'api', 
         true
     ),
     (
-        'regulatory_gazette', 
-        'DOF & Circulares CNSF', 
-        'Vigilancia regulatoria diaria sobre sanciones, nuevas reglas operativas y avisos de la Comisión Nacional de Seguros y Fianzas.', 
+        'cyber_threat_actors', 
+        'Threat Actors & Dark Web Dumps', 
+        'Inteligencia sobre actores de amenazas, foros clandestinos (Breached, Exploit) y repositorios públicos con fugas de datos.', 
+        'ciberseguridad', 
+        'mcp_service', 
+        true
+    ),
+
+    -- 2. NOTICIAS GLOBALES & GEOPOLÍTICA
+    (
+        'news_global_rss', 
+        '47 Feeds Globales de Noticias', 
+        'Monitoreo continuo de agencias internacionales y prensa financiera (Reuters, AP, Al Jazeera, Bloomberg, medios nacionales).', 
+        'noticias_geopolitica', 
         'rss', 
         true
     ),
     (
-        'financial_news', 
-        'Medios Económicos & Siniestralidad', 
-        'Portales de noticias financieras, notas de siniestros de alto impacto y riesgo reputacional en el sector asegurador mexicano.', 
-        'rss', 
+        'news_sanctions', 
+        'Sanciones Internacionales (OFAC / ONU)', 
+        'Listas de observación de personas bloqueadas (SDN), entidades sancionadas y riesgos de lavado de dinero.', 
+        'noticias_geopolitica', 
+        'mcp_service', 
         true
     ),
     (
-        'x_twitter_feed', 
-        'Monitoreo en X / Redes Sociales', 
-        'Detección de incidentes graves en tiempo real, quejas virales de asegurados y reportes de siniestros catastróficos en X/Twitter.', 
+        'geopolitics_conflict', 
+        'Conflictos & Inestabilidad Regional', 
+        'Eventos de disturbios civiles, bloqueos carreteros y alertas de seguridad pública de alto impacto.', 
+        'noticias_geopolitica', 
+        'mcp_service', 
+        true
+    ),
+
+    -- 3. CATASTROFES & CLIMA (Impacto en Seguros y Operaciones)
+    (
+        'disaster_earthquakes', 
+        'Sismos en Tiempo Real (USGS)', 
+        'Monitoreo sísmico en vivo del Servicio Geológico de EE.UU. con epicentro, magnitud y radio de afectación.', 
+        'catastrofes_clima', 
+        'api', 
+        true
+    ),
+    (
+        'disaster_wildfires', 
+        'Incendios Forestales (NASA FIRMS)', 
+        'Detección satelital térmica de incendios activos en zonas industriales, agrícolas y urbanas.', 
+        'catastrofes_clima', 
+        'mcp_service', 
+        true
+    ),
+    (
+        'disaster_weather', 
+        'Alertas Meteorológicas Extremas', 
+        'Rastreo de ciclones, huracanes, inundaciones y fenómenos climáticos con potencial de siniestro catastrófico.', 
+        'catastrofes_clima', 
+        'rss', 
+        true
+    ),
+
+    -- 4. FINANCIERO & REGULATORIO
+    (
+        'finance_sec_filings', 
+        'Reportes Regulatorios (SEC 8-K / 10-K)', 
+        'Filings ante autoridades regulatorias sobre ciberataques materiales, demandas y contingencias corporativas.', 
+        'financiero_regulatorio', 
+        'mcp_service', 
+        true
+    ),
+    (
+        'finance_macro_signals', 
+        'Señales Macroeconómicas & Divisas', 
+        'Indicadores macroeconómicos clave, volatilidad cambiaria (USD/MXN) e índices de presión inflacionaria.', 
+        'financiero_regulatorio', 
         'api', 
         true
     )
-ON CONFLICT (clave) DO NOTHING;
+ON CONFLICT (clave) DO UPDATE 
+SET nombre = EXCLUDED.nombre,
+    descripcion = EXCLUDED.descripcion,
+    dominio = EXCLUDED.dominio,
+    tipo = EXCLUDED.tipo;
 
 CREATE INDEX IF NOT EXISTS idx_fuentes_osint_activo ON fuentes_osint(activo);
+CREATE INDEX IF NOT EXISTS idx_fuentes_osint_dominio ON fuentes_osint(dominio);

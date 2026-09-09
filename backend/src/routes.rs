@@ -45,6 +45,7 @@ pub fn create_router(pool: DbPool, config: Arc<Config>) -> Router {
         .route("/api/osint/entidades/:id/toggle", patch(osint::toggle_entidad))
         .route("/api/osint/fuentes", get(osint::list_fuentes_osint))
         .route("/api/osint/fuentes/:id/toggle", patch(osint::toggle_fuente_osint))
+        .route("/api/osint/scan", post(osint::run_osint_scan))
         .layer(middleware::from_fn_with_state(config.clone(), require_auth));
 
     // Rutas públicas (consumidas por frontend login y cron n8n)

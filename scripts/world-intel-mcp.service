@@ -1,0 +1,16 @@
+[Unit]
+Description=World Intel MCP — Shared Intelligence Service (ExposureIQ & SentinelIQ)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/world-intel-mcp
+Environment="PORT=8095"
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/opt/cronosOne/workers/venv/bin/python /opt/world-intel-mcp/service_api.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

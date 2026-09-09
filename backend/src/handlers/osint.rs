@@ -327,9 +327,9 @@ pub async fn list_fuentes_osint(
     State((pool, _)): State<(DbPool, Arc<Config>)>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let fuentes = sqlx::query_as::<_, FuenteOsint>(
-        "SELECT id, clave, nombre, descripcion, tipo, activo, ultimo_escaneo, total_hallazgos, creado_en, actualizado_en
+        "SELECT id, clave, nombre, descripcion, dominio, tipo, activo, ultimo_escaneo, total_hallazgos, creado_en, actualizado_en
          FROM fuentes_osint
-         ORDER BY creado_en ASC",
+         ORDER BY dominio ASC, creado_en ASC",
     )
     .fetch_all(&pool)
     .await
@@ -359,7 +359,7 @@ pub async fn toggle_fuente_osint(
         "UPDATE fuentes_osint
          SET activo = NOT activo, actualizado_en = now()
          WHERE id = $1
-         RETURNING id, clave, nombre, descripcion, tipo, activo, ultimo_escaneo, total_hallazgos, creado_en, actualizado_en",
+         RETURNING id, clave, nombre, descripcion, dominio, tipo, activo, ultimo_escaneo, total_hallazgos, creado_en, actualizado_en",
     )
     .bind(id)
     .fetch_optional(&pool)
@@ -378,4 +378,25 @@ pub async fn toggle_fuente_osint(
     })?;
 
     Ok((StatusCode::OK, Json(fuente)))
+}
+
+pub async fn run_osint_scan(
+    State((_, config)): State<(DbPool, Arc<Config>)>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let worker_url = format!("{}/api/run-osint-scan", config.worker_base_url);
+    let client = reqwest::Client::new();
+
+    tokio::spawn(async move {
+        if let Err(e) = client.post(&worker_url).send().await {
+            tracing::error!("Error disparando escaneo OSINT en worker Python: {}", e);
+        }
+    });
+
+    Ok((
+        StatusCode::OK,
+        Json(json!({
+            "mensaje": "Escaneo de inteligencia OSINT disparado exitosamente",
+            "estado": "encolado"
+        })),
+    ))
 }
