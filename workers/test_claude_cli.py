@@ -40,10 +40,11 @@ def run_test():
         try:
             res = client.messages.create(
                 model=m,
-                max_tokens=15,
+                max_tokens=60,
                 messages=[{"role": "user", "content": "Di 'OK funcionando' en 2 palabras"}]
             )
-            text = res.content[0].text.strip()
+            text_blocks = [b.text for b in res.content if hasattr(b, "text") and getattr(b, "type", "") == "text"]
+            text = " ".join(text_blocks).strip() if text_blocks else str(res.content[0])
             print(f"✅ ÉXITO -> Respuesta: '{text}'")
             success_found = True
         except Exception as e:

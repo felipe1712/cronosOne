@@ -19,6 +19,20 @@ def get_configured_model() -> str:
         print(f"[Config] Error leyendo modelo de BD ({e}), usando default.")
     return settings.claude_model
 
+def extract_text_from_response(response) -> str:
+    """Extrae texto concatenado ignorando bloques de pensamiento (ThinkingBlock)."""
+    text_blocks = []
+    for block in response.content:
+        if getattr(block, "type", "") == "text" and hasattr(block, "text"):
+            text_blocks.append(block.text)
+        elif hasattr(block, "text") and not hasattr(block, "thinking"):
+            text_blocks.append(block.text)
+    if not text_blocks and response.content:
+        for block in response.content:
+            if hasattr(block, "text"):
+                text_blocks.append(str(block.text))
+    return "\n".join(text_blocks).strip()
+
 async def test_claude_model(model_name: str) -> str:
     """Prueba rápida de conectividad con un modelo específico de Claude."""
     if not settings.anthropic_api_key:
@@ -27,16 +41,16 @@ async def test_claude_model(model_name: str) -> str:
     try:
         response = client.messages.create(
             model=model_name,
-            max_tokens=25,
+            max_tokens=60,
             messages=[{"role": "user", "content": "Responde con 5 palabras confirmando conexión y modelo."}]
         )
     except TypeError:
         response = client.messages.create(
             model=model_name,
-            max_tokens=25,
+            max_tokens=60,
             messages=[{"role": "user", "content": "Responde con 5 palabras confirmando conexión y modelo."}]
         )
-    return response.content[0].text.strip()
+    return extract_text_from_response(response)
 
 SYSTEM_PROMPT = """Eres el analista jefe de inteligencia estratégica de ExposureIQ, al servicio del Director de Operaciones de una de las aseguradoras más grandes de México.
 
@@ -143,7 +157,7 @@ async def generate_executive_brief(sections: List[Dict[str, Any]], fecha_str: st
                         ]
                     )
 
-                brief_text = response.content[0].text
+                brief_text = extract_text_from_response(response)
                 print(f"[LLM] ✅ Síntesis ejecutiva generada exitosamente con '{model_name}'.")
                 return brief_text, detected_topics
 
