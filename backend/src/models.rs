@@ -128,6 +128,16 @@ pub struct BoletinDetailResponse {
     pub secciones: Vec<Seccion>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct AprobarBoletinRequest {
+    pub texto: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateSintesisRequest {
+    pub texto: String,
+}
+
 // ============================================================================
 // 3. Cola de Mensajes Pendientes (Polling n8n / WAHA)
 // ============================================================================
@@ -195,6 +205,20 @@ pub struct AlertaOsint {
 pub struct ValidarAlertaRequest {
     pub accion: String, // 'validar' | 'descartar'
     pub notas: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct FuenteOsint {
+    pub id: Uuid,
+    pub clave: String,
+    pub nombre: String,
+    pub descripcion: String,
+    pub tipo: String,
+    pub activo: bool,
+    pub ultimo_escaneo: Option<DateTime<Utc>>,
+    pub total_hallazgos: i32,
+    pub creado_en: DateTime<Utc>,
+    pub actualizado_en: DateTime<Utc>,
 }
 
 // ============================================================================

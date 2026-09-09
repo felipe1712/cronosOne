@@ -82,21 +82,13 @@ async def run_bulletin_pipeline(boletin_id: str, ruta_archivo: str):
         )
         conn.commit()
 
-        # 7. Encolar en mensajes_pendientes para consumo de n8n / WAHA
-        cur.execute(
-            """
-            INSERT INTO mensajes_pendientes (tipo, referencia_id, texto, destinatario, estado)
-            VALUES ('brief', %s, %s, %s, 'pendiente')
-            """,
-            (boletin_id, brief_texto, settings.director_whatsapp)
-        )
-
+        # 7. Marcar síntesis lista para revisión y visto bueno humano
         cur.execute(
             "UPDATE boletines SET estado = 'sintesis_lista', actualizado_en = now() WHERE id = %s",
             (boletin_id,)
         )
         conn.commit()
-        print(f"[Pipeline] ✅ Boletín {boletin_id} procesado exitosamente. Briefing encolado para WhatsApp.")
+        print(f"[Pipeline] ✅ Boletín {boletin_id} procesado exitosamente. Síntesis generada; esperando visto bueno en la interfaz web.")
 
     except Exception as e:
         conn.rollback()

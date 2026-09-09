@@ -87,6 +87,18 @@ export const ApiService = {
       body: formData,
     }),
 
+  actualizarSintesis: (id: string, texto: string) =>
+    apiFetch<any>(`/boletines/${id}/sintesis`, {
+      method: 'PUT',
+      body: JSON.stringify({ texto }),
+    }),
+
+  aprobarBoletin: (id: string, texto: string) =>
+    apiFetch<any>(`/boletines/${id}/aprobar`, {
+      method: 'POST',
+      body: JSON.stringify({ texto }),
+    }),
+
   // Mensajería y WAHA
   getHistorialMensajes: () => apiFetch<any[]>('/mensajes/historial'),
 
@@ -123,6 +135,19 @@ export const ApiService = {
 
   toggleEntidad: (id: string) =>
     apiFetch<any>(`/osint/entidades/${id}/toggle`, {
+      method: 'PATCH',
+    }),
+
+  deleteEntidad: (id: string) =>
+    apiFetch<any>(`/osint/entidades/${id}`, {
+      method: 'DELETE',
+    }),
+
+  // Fuentes OSINT (world-intel-mcp)
+  getFuentesOsint: () => apiFetch<any[]>('/osint/fuentes'),
+
+  toggleFuenteOsint: (id: string) =>
+    apiFetch<any>(`/osint/fuentes/${id}/toggle`, {
       method: 'PATCH',
     }),
 };

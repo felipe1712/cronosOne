@@ -14,7 +14,7 @@ use crate::{
     config::Config,
     db::DbPool,
     middleware::auth::AuthContext,
-    models::{AlertaOsint, CreateEntidadRequest, EntidadVigilada, ValidarAlertaRequest},
+    models::{AlertaOsint, CreateEntidadRequest, EntidadVigilada, FuenteOsint, ValidarAlertaRequest},
 };
 
 #[derive(Debug, Deserialize)]
@@ -277,4 +277,105 @@ pub async fn toggle_entidad(
     })?;
 
     Ok((StatusCode::OK, Json(entidad)))
+}
+
+pub async fn delete_entidad(
+    Extension(auth_ctx): Extension<AuthContext>,
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+    Path(id): Path<Uuid>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    if auth_ctx.rol != "admin" && auth_ctx.rol != "analista" {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "Permiso denegado para eliminar entidades"})),
+        ));
+    }
+
+    let affected = sqlx::query("DELETE FROM entidades_vigiladas WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("Error eliminando entidad: {}", e)})),
+            )
+        })?
+        .rows_affected();
+
+    if affected == 0 {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "Entidad no encontrada"})),
+        ));
+    }
+
+    Ok((
+        StatusCode::OK,
+        Json(json!({
+            "mensaje": "Entidad eliminada del catálogo exitosamente",
+            "id": id
+        })),
+    ))
+}
+
+// ============================================================================
+// CRUD de Fuentes OSINT (world-intel-mcp)
+// ============================================================================
+
+pub async fn list_fuentes_osint(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let fuentes = sqlx::query_as::<_, FuenteOsint>(
+        "SELECT id, clave, nombre, descripcion, tipo, activo, ultimo_escaneo, total_hallazgos, creado_en, actualizado_en
+         FROM fuentes_osint
+         ORDER BY creado_en ASC",
+    )
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error consultando fuentes OSINT: {}", e)})),
+        )
+    })?;
+
+    Ok((StatusCode::OK, Json(fuentes)))
+}
+
+pub async fn toggle_fuente_osint(
+    Extension(auth_ctx): Extension<AuthContext>,
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+    Path(id): Path<Uuid>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    if auth_ctx.rol != "admin" && auth_ctx.rol != "analista" {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "Permiso denegado para modificar fuentes OSINT"})),
+        ));
+    }
+
+    let fuente = sqlx::query_as::<_, FuenteOsint>(
+        "UPDATE fuentes_osint
+         SET activo = NOT activo, actualizado_en = now()
+         WHERE id = $1
+         RETURNING id, clave, nombre, descripcion, tipo, activo, ultimo_escaneo, total_hallazgos, creado_en, actualizado_en",
+    )
+    .bind(id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error actualizando fuente OSINT: {}", e)})),
+        )
+    })?
+    .ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "Fuente OSINT no encontrada"})),
+        )
+    })?;
+
+    Ok((StatusCode::OK, Json(fuente)))
 }

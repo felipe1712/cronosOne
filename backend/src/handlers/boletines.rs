@@ -16,7 +16,7 @@ use crate::{
     config::Config,
     db::DbPool,
     middleware::auth::AuthContext,
-    models::{Boletin, BoletinDetailResponse, Seccion, SintesisGenerada},
+    models::{AprobarBoletinRequest, Boletin, BoletinDetailResponse, Seccion, SintesisGenerada, UpdateSintesisRequest},
 };
 
 #[derive(Debug, Deserialize)]
@@ -229,6 +229,144 @@ pub async fn upload_boletin(
         Json(json!({
             "mensaje": "Boletín subido exitosamente y encolado para OCR",
             "boletin": boletin
+        })),
+    ))
+}
+
+pub async fn actualizar_sintesis(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+    Path(id): Path<Uuid>,
+    Json(payload): Json<UpdateSintesisRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let affected = sqlx::query(
+        "UPDATE sintesis_generadas SET texto = $1 WHERE boletin_id = $2",
+    )
+    .bind(&payload.texto)
+    .bind(id)
+    .execute(&pool)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error guardando síntesis: {}", e)})),
+        )
+    })?
+    .rows_affected();
+
+    if affected == 0 {
+        // Si no existía, insertarla
+        sqlx::query(
+            "INSERT INTO sintesis_generadas (boletin_id, texto, modelo_usado) VALUES ($1, $2, 'manual_edit')",
+        )
+        .bind(id)
+        .bind(&payload.texto)
+        .execute(&pool)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("Error insertando síntesis: {}", e)})),
+            )
+        })?;
+    }
+
+    Ok((
+        StatusCode::OK,
+        Json(json!({
+            "mensaje": "Síntesis actualizada exitosamente",
+            "boletin_id": id
+        })),
+    ))
+}
+
+pub async fn aprobar_boletin(
+    State((pool, config)): State<(DbPool, Arc<Config>)>,
+    Path(id): Path<Uuid>,
+    Json(payload): Json<AprobarBoletinRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let mut tx = pool.begin().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error de base de datos: {}", e)})),
+        )
+    })?;
+
+    // 1. Guardar o actualizar la síntesis definitiva
+    let affected = sqlx::query(
+        "UPDATE sintesis_generadas SET texto = $1 WHERE boletin_id = $2",
+    )
+    .bind(&payload.texto)
+    .bind(id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error actualizando síntesis: {}", e)})),
+        )
+    })?
+    .rows_affected();
+
+    if affected == 0 {
+        sqlx::query(
+            "INSERT INTO sintesis_generadas (boletin_id, texto, modelo_usado) VALUES ($1, $2, 'approved_edit')",
+        )
+        .bind(id)
+        .bind(&payload.texto)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("Error registrando síntesis: {}", e)})),
+            )
+        })?;
+    }
+
+    // 2. Marcar boletín como aprobado
+    sqlx::query(
+        "UPDATE boletines SET estado = 'aprobado', actualizado_en = now() WHERE id = $1",
+    )
+    .bind(id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error marcando boletín como aprobado: {}", e)})),
+        )
+    })?;
+
+    // 3. Encolar en mensajes_pendientes para que n8n / WAHA lo recoja
+    sqlx::query(
+        "INSERT INTO mensajes_pendientes (tipo, referencia_id, texto, destinatario, estado)
+         VALUES ('brief', $1, $2, $3, 'pendiente')",
+    )
+    .bind(id)
+    .bind(&payload.texto)
+    .bind(&config.director_whatsapp)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error encolando mensaje para WhatsApp: {}", e)})),
+        )
+    })?;
+
+    tx.commit().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error confirmando transacción: {}", e)})),
+        )
+    })?;
+
+    Ok((
+        StatusCode::OK,
+        Json(json!({
+            "mensaje": "Boletín aprobado y encolado para entrega vía WhatsApp",
+            "boletin_id": id,
+            "estado": "aprobado"
         })),
     ))
 }

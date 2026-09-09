@@ -1,6 +1,6 @@
 use axum::{
     middleware,
-    routing::{get, patch, post},
+    routing::{delete, get, patch, post, put},
     Router,
 };
 use std::sync::Arc;
@@ -28,6 +28,8 @@ pub fn create_router(pool: DbPool, config: Arc<Config>) -> Router {
         .route("/api/boletines", get(boletines::list_boletines))
         .route("/api/boletines/upload", post(boletines::upload_boletin))
         .route("/api/boletines/:id", get(boletines::get_boletin))
+        .route("/api/boletines/:id/sintesis", put(boletines::actualizar_sintesis))
+        .route("/api/boletines/:id/aprobar", post(boletines::aprobar_boletin))
         // Mensajería (historial en panel)
         .route("/api/mensajes/historial", get(mensajes::list_historial_mensajes))
         // WAHA
@@ -39,7 +41,10 @@ pub fn create_router(pool: DbPool, config: Arc<Config>) -> Router {
         .route("/api/osint/alertas/:id/validar", post(osint::validar_alerta))
         .route("/api/osint/entidades", get(osint::list_entidades))
         .route("/api/osint/entidades", post(osint::create_entidad))
+        .route("/api/osint/entidades/:id", delete(osint::delete_entidad))
         .route("/api/osint/entidades/:id/toggle", patch(osint::toggle_entidad))
+        .route("/api/osint/fuentes", get(osint::list_fuentes_osint))
+        .route("/api/osint/fuentes/:id/toggle", patch(osint::toggle_fuente_osint))
         .layer(middleware::from_fn_with_state(config.clone(), require_auth));
 
     // Rutas públicas (consumidas por frontend login y cron n8n)

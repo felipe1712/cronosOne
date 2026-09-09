@@ -31,6 +31,8 @@ import {
   InputLabel,
   IconButton,
   Tooltip,
+  Switch,
+  Divider,
 } from "@mui/material";
 import SecurityIcon from "@mui/icons-material/Security";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
@@ -39,12 +41,18 @@ import AddIcon from "@mui/icons-material/Add";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import ToggleOnIcon from "@mui/icons-material/ToggleOn";
 import ToggleOffIcon from "@mui/icons-material/ToggleOff";
+import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
+import PublicIcon from "@mui/icons-material/Public";
+import LanguageIcon from "@mui/icons-material/Language";
+import HubIcon from "@mui/icons-material/Hub";
+import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import { ApiService } from "@/lib/api";
 
 export default function OsintPage() {
   const [tabIndex, setTabIndex] = useState<number>(0);
   const [alertas, setAlertas] = useState<any[]>([]);
   const [entidades, setEntidades] = useState<any[]>([]);
+  const [fuentes, setFuentes] = useState<any[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -54,6 +62,11 @@ export default function OsintPage() {
   const [newTipo, setNewTipo] = useState<string>("marca");
   const [newValor, setNewValor] = useState<string>("");
   const [newDescripcion, setNewDescripcion] = useState<string>("");
+
+  // Modal para eliminar entidad vigilada
+  const [entityToDelete, setEntityToDelete] = useState<any | null>(null);
+  const [openDeleteModal, setOpenDeleteModal] = useState<boolean>(false);
+  const [deletingEntity, setDeletingEntity] = useState<boolean>(false);
 
   // Modal para validar / descartar alerta
   const [selectedAlerta, setSelectedAlerta] = useState<any | null>(null);
@@ -65,12 +78,14 @@ export default function OsintPage() {
     try {
       setLoading(true);
       setError(null);
-      const [alertasData, entidadesData] = await Promise.all([
+      const [alertasData, entidadesData, fuentesData] = await Promise.all([
         ApiService.getAlertas(),
         ApiService.getEntidades(),
+        ApiService.getFuentesOsint().catch(() => []),
       ]);
       setAlertas(alertasData);
       setEntidades(entidadesData);
+      setFuentes(fuentesData);
     } catch (err: any) {
       setError(err.message || "Error consultando datos de OSINT");
     } finally {
@@ -88,13 +103,13 @@ export default function OsintPage() {
 
     try {
       await ApiService.createEntidad(newTipo, newValor.trim(), newDescripcion.trim());
-      setSuccess("Entidad agregada al catálogo de vigilancia con éxito");
+      setSuccess("Entidad agregada al catálogo de vigilancia con éxito.");
       setOpenAddModal(false);
       setNewValor("");
       setNewDescripcion("");
       loadData();
     } catch (err: any) {
-      setError(err.message || "Error al registrar la entidad");
+      setError(err.message || "Error al registrar la entidad.");
     }
   };
 
@@ -103,7 +118,39 @@ export default function OsintPage() {
       await ApiService.toggleEntidad(id);
       loadData();
     } catch (err: any) {
-      setError(err.message || "Error al actualizar estado");
+      setError(err.message || "Error al actualizar estado.");
+    }
+  };
+
+  const handleOpenDeleteModal = (entidad: any) => {
+    setEntityToDelete(entidad);
+    setOpenDeleteModal(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!entityToDelete) return;
+    try {
+      setDeletingEntity(true);
+      await ApiService.deleteEntidad(entityToDelete.id);
+      setSuccess(`Entidad "${entityToDelete.valor}" eliminada del catálogo exitosamente.`);
+      setOpenDeleteModal(false);
+      setEntityToDelete(null);
+      loadData();
+    } catch (err: any) {
+      setError(err.message || "Error al eliminar la entidad.");
+    } finally {
+      setDeletingEntity(false);
+    }
+  };
+
+  const handleToggleFuente = async (id: string) => {
+    try {
+      await ApiService.toggleFuenteOsint(id);
+      const updated = await ApiService.getFuentesOsint();
+      setFuentes(updated);
+      setSuccess("Estado de la fuente OSINT actualizado con éxito.");
+    } catch (err: any) {
+      setError(err.message || "Error al actualizar la fuente OSINT.");
     }
   };
 
@@ -126,7 +173,7 @@ export default function OsintPage() {
       setOpenValidationModal(false);
       loadData();
     } catch (err: any) {
-      setError(err.message || "Error al validar la alerta");
+      setError(err.message || "Error al validar la alerta.");
     }
   };
 
@@ -154,6 +201,21 @@ export default function OsintPage() {
     }
   };
 
+  const getFuenteTipoChip = (tipo: string) => {
+    switch (tipo) {
+      case "mcp_service":
+        return <Chip label="MCP Service" color="primary" size="small" variant="outlined" />;
+      case "scraper":
+        return <Chip label="Scraper / Crawler" color="secondary" size="small" variant="outlined" />;
+      case "rss":
+        return <Chip label="Feed RSS / DOF" color="info" size="small" variant="outlined" />;
+      case "api":
+        return <Chip label="API / Social" color="success" size="small" variant="outlined" />;
+      default:
+        return <Chip label={tipo} size="small" variant="outlined" />;
+    }
+  };
+
   return (
     <Box sx={{ p: 3 }}>
       {/* Encabezado */}
@@ -163,7 +225,7 @@ export default function OsintPage() {
             Inteligencia OSINT & Exposición Digital (world-intel-mcp)
           </Typography>
           <Typography variant="body2" sx={{ color: "#64748b" }}>
-            Vigilancia en tiempo real de redes, foros y marketplaces de Dark Web sobre datos de la aseguradora.
+            Vigilancia en tiempo real de fuentes abiertas, redes y marketplaces de Dark Web sobre datos de la aseguradora.
           </Typography>
         </Box>
         <Button variant="outlined" startIcon={<RefreshIcon />} onClick={loadData} disabled={loading}>
@@ -188,6 +250,7 @@ export default function OsintPage() {
         <Tabs value={tabIndex} onChange={(_, v) => setTabIndex(v)}>
           <Tab label={`Bandeja de Alertas (${alertas.length})`} />
           <Tab label={`Entidades Vigiladas (${entidades.length})`} />
+          <Tab label={`Fuentes OSINT (world-intel-mcp) (${fuentes.length})`} />
         </Tabs>
       </Box>
 
@@ -279,7 +342,7 @@ export default function OsintPage() {
         </Card>
       )}
 
-      {/* TAB 1: ENTIDADES VIGILADAS */}
+      {/* TAB 1: ENTIDADES VIGILADAS (CON BOTÓN DE ELIMINAR) */}
       {tabIndex === 1 && (
         <Card sx={{ borderRadius: "12px", boxShadow: "0 2px 6px rgba(0,0,0,0.04)" }}>
           <CardContent>
@@ -309,7 +372,7 @@ export default function OsintPage() {
                     <TableCell sx={{ fontWeight: 600 }}>Valor de Búsqueda / Regla</TableCell>
                     <TableCell sx={{ fontWeight: 600 }}>Descripción</TableCell>
                     <TableCell sx={{ fontWeight: 600 }}>Estado</TableCell>
-                    <TableCell sx={{ fontWeight: 600, textAlign: "right" }}>Acción</TableCell>
+                    <TableCell sx={{ fontWeight: 600, textAlign: "right" }}>Acciones</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -330,17 +393,121 @@ export default function OsintPage() {
                         )}
                       </TableCell>
                       <TableCell sx={{ textAlign: "right" }}>
-                        <Tooltip title={e.activo ? "Desactivar vigilancia" : "Activar vigilancia"}>
-                          <IconButton onClick={() => handleToggleEntidad(e.id)} color="primary">
-                            {e.activo ? <ToggleOnIcon fontSize="large" color="success" /> : <ToggleOffIcon fontSize="large" />}
-                          </IconButton>
-                        </Tooltip>
+                        <Box sx={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 0.5 }}>
+                          <Tooltip title={e.activo ? "Desactivar vigilancia" : "Activar vigilancia"}>
+                            <IconButton onClick={() => handleToggleEntidad(e.id)} color="primary" size="small">
+                              {e.activo ? <ToggleOnIcon fontSize="large" color="success" /> : <ToggleOffIcon fontSize="large" />}
+                            </IconButton>
+                          </Tooltip>
+
+                          {/* Botón de Eliminar */}
+                          <Tooltip title="Eliminar entidad">
+                            <IconButton
+                              onClick={() => handleOpenDeleteModal(e)}
+                              color="error"
+                              size="small"
+                              sx={{
+                                "&:hover": { backgroundColor: "#fee2e2" },
+                              }}
+                            >
+                              <DeleteOutlineIcon fontSize="medium" />
+                            </IconButton>
+                          </Tooltip>
+                        </Box>
                       </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
             </TableContainer>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* TAB 2: ADMINISTRADOR DE FUENTES OSINT (WORLD-INTEL-MCP) */}
+      {tabIndex === 2 && (
+        <Card sx={{ borderRadius: "12px", boxShadow: "0 2px 6px rgba(0,0,0,0.04)" }}>
+          <CardContent>
+            <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 3 }}>
+              <Box>
+                <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                  Administrador de Fuentes de Inteligencia (world-intel-mcp)
+                </Typography>
+                <Typography variant="body2" sx={{ color: "#64748b" }}>
+                  Selecciona qué canales, foros y fuentes de datos se consultan durante los escaneos de exposición de la aseguradora.
+                </Typography>
+              </Box>
+              <Chip
+                icon={<HubIcon />}
+                label="Protocolo MCP Conectado"
+                color="success"
+                variant="outlined"
+                sx={{ fontWeight: 600 }}
+              />
+            </Box>
+
+            <Grid container spacing={2.5}>
+              {fuentes.map((f) => (
+                <Grid size={{ xs: 12, md: 6, lg: 4 }} key={f.id}>
+                  <Card
+                    sx={{
+                      borderRadius: "10px",
+                      border: "1px solid",
+                      borderColor: f.activo ? "#c7d2fe" : "#e2e8f0",
+                      backgroundColor: f.activo ? "#fdfdff" : "#f8fafc",
+                      p: 2,
+                      height: "100%",
+                      display: "flex",
+                      flexDirection: "column",
+                      justifyContent: "space-between",
+                      transition: "all 0.2s ease-in-out",
+                      "&:hover": {
+                        boxShadow: "0 4px 12px rgba(0,0,0,0.06)",
+                      },
+                    }}
+                  >
+                    <Box>
+                      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", mb: 1 }}>
+                        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                          <PublicIcon sx={{ color: f.activo ? "#4f46e5" : "#94a3b8" }} />
+                          <Typography variant="subtitle2" sx={{ fontWeight: 700, color: "#1e293b" }}>
+                            {f.nombre}
+                          </Typography>
+                        </Box>
+                        <Switch
+                          checked={f.activo}
+                          onChange={() => handleToggleFuente(f.id)}
+                          color="primary"
+                        />
+                      </Box>
+
+                      <Box sx={{ mb: 1.5, display: "flex", gap: 1, alignItems: "center" }}>
+                        {getFuenteTipoChip(f.tipo)}
+                        <Typography variant="caption" sx={{ fontFamily: "monospace", color: "#64748b" }}>
+                          {f.clave}
+                        </Typography>
+                      </Box>
+
+                      <Typography variant="body2" sx={{ color: "#475569", fontSize: "0.85rem", mb: 2 }}>
+                        {f.descripcion}
+                      </Typography>
+                    </Box>
+
+                    <Box sx={{ pt: 1, borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <Typography variant="caption" sx={{ color: "#64748b" }}>
+                        Hallazgos totales: <strong>{f.total_hallazgos || 0}</strong>
+                      </Typography>
+                      <Chip
+                        label={f.activo ? "Monitoreando" : "Inactivo"}
+                        color={f.activo ? "success" : "default"}
+                        size="small"
+                        sx={{ fontSize: "0.72rem" }}
+                      />
+                    </Box>
+                  </Card>
+                </Grid>
+              ))}
+            </Grid>
           </CardContent>
         </Card>
       )}
@@ -390,6 +557,44 @@ export default function OsintPage() {
             <Button type="submit" variant="contained">Guardar Entidad</Button>
           </DialogActions>
         </form>
+      </Dialog>
+
+      {/* Modal de Confirmación de Eliminación de Entidad */}
+      <Dialog open={openDeleteModal} onClose={() => setOpenDeleteModal(false)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontWeight: 700, color: "#dc2626" }}>
+          Confirmar Eliminación de Entidad
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" sx={{ color: "#334155", mb: 1 }}>
+            ¿Estás seguro de que deseas eliminar permanentemente esta entidad del catálogo de vigilancia?
+          </Typography>
+          {entityToDelete && (
+            <Box sx={{ p: 1.5, backgroundColor: "#fee2e2", borderRadius: "6px", border: "1px solid #fca5a5" }}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 700, color: "#991b1b" }}>
+                {entityToDelete.valor}
+              </Typography>
+              <Typography variant="caption" sx={{ color: "#7f1d1d" }}>
+                Tipo: {entityToDelete.tipo.toUpperCase()}
+              </Typography>
+            </Box>
+          )}
+          <Typography variant="caption" sx={{ display: "block", mt: 1.5, color: "#64748b" }}>
+            Las alertas previas generadas por esta entidad conservarán su evidencia histórica de auditoría.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ p: 2 }}>
+          <Button onClick={() => setOpenDeleteModal(false)} disabled={deletingEntity}>
+            Cancelar
+          </Button>
+          <Button
+            variant="contained"
+            color="error"
+            onClick={handleConfirmDelete}
+            disabled={deletingEntity}
+          >
+            {deletingEntity ? <CircularProgress size={20} color="inherit" /> : "Eliminar Entidad"}
+          </Button>
+        </DialogActions>
       </Dialog>
 
       {/* Modal de Validación de Alerta */}
