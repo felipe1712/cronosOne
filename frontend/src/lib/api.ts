@@ -2,7 +2,7 @@
  * Cliente HTTP para comunicarse con la API Rust de ExposureIQ
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api';
 
 export function getToken(): string | null {
   if (typeof window === 'undefined') return null;
@@ -40,6 +40,14 @@ export async function apiFetch<T>(endpoint: string, options: RequestInit = {}): 
   });
 
   if (!response.ok) {
+    if (response.status === 401) {
+      removeToken();
+      if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/authentication')) {
+        window.location.href = '/authentication/sign-in';
+      }
+      throw new Error('Sesión no autorizada o credenciales inválidas. Inicie sesión.');
+    }
+
     let errorMsg = `Error HTTP ${response.status}`;
     try {
       const errJson = await response.json();

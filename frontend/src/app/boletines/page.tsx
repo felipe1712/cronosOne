@@ -190,30 +190,56 @@ export default function BoletinesPage() {
                 </Box>
 
                 <Box
+                  component="label"
+                  htmlFor="boletin-file-upload"
                   sx={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
                     border: "2px dashed #cbd5e1",
-                    borderRadius: "8px",
+                    borderRadius: "10px",
                     p: 3,
+                    minHeight: "150px",
                     textAlign: "center",
                     backgroundColor: "#f8fafc",
                     cursor: "pointer",
-                    mb: 2,
-                    "&:hover": { borderColor: "#6366f1" },
+                    mb: 3,
+                    width: "100%",
+                    boxSizing: "border-box",
+                    transition: "all 0.2s ease-in-out",
+                    "&:hover": {
+                      borderColor: "#6366f1",
+                      backgroundColor: "#f1f5f9",
+                    },
                   }}
-                  component="label"
                 >
                   <input
+                    id="boletin-file-upload"
                     type="file"
-                    accept=".pdf"
-                    hidden
+                    accept=".pdf,application/pdf"
+                    style={{ display: "none" }}
                     onChange={handleFileChange}
                   />
-                  <CloudUploadIcon sx={{ fontSize: 40, color: "#6366f1", mb: 1 }} />
-                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                  <CloudUploadIcon sx={{ fontSize: 44, color: "#6366f1", mb: 1 }} />
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      fontWeight: 600,
+                      color: "#1e293b",
+                      mb: 0.5,
+                      wordBreak: "break-word",
+                    }}
+                  >
                     {selectedFile ? selectedFile.name : "Haz clic o arrastra el archivo PDF aquí"}
                   </Typography>
-                  <Typography variant="caption" sx={{ color: "#94a3b8" }}>
-                    Boletín de 40+ páginas (PDF de Coparmex)
+                  <Typography
+                    variant="caption"
+                    sx={{ color: "#64748b", display: "block" }}
+                  >
+                    {selectedFile
+                      ? `Tamaño: ${(selectedFile.size / (1024 * 1024)).toFixed(2)} MB`
+                      : "Boletín diario (formato PDF de Coparmex)"}
                   </Typography>
                 </Box>
 
@@ -222,9 +248,21 @@ export default function BoletinesPage() {
                   variant="contained"
                   fullWidth
                   disabled={uploading || !selectedFile}
-                  sx={{ py: 1.2, fontWeight: 600 }}
+                  sx={{
+                    py: 1.3,
+                    fontWeight: 600,
+                    textTransform: "none",
+                    borderRadius: "8px",
+                  }}
                 >
-                  {uploading ? <CircularProgress size={24} color="inherit" /> : "Iniciar Procesamiento OCR"}
+                  {uploading ? (
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                      <CircularProgress size={20} color="inherit" />
+                      <span>Procesando archivo...</span>
+                    </Box>
+                  ) : (
+                    "Iniciar Procesamiento OCR"
+                  )}
                 </Button>
               </form>
             </CardContent>

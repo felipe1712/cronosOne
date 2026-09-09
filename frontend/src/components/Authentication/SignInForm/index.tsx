@@ -1,6 +1,6 @@
 "use client";
 
-import * as React from "react";
+import React, { useState } from "react";
 import {
   Grid,
   Button,
@@ -8,304 +8,253 @@ import {
   Typography,
   FormControl,
   TextField,
+  Alert,
+  CircularProgress,
 } from "@mui/material";
-import Link from "next/link";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
+import { ApiService, setToken } from "@/lib/api";
 
 const SignInForm: React.FC = () => {
+  const router = useRouter();
+  const [correo, setCorreo] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!correo || !password) {
+      setError("Por favor ingrese correo y contraseña");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError(null);
+
+      const response = await ApiService.login(correo, password);
+      if (response && response.token) {
+        setToken(response.token);
+        if (typeof window !== "undefined") {
+          localStorage.setItem("exposureiq_user", JSON.stringify(response.usuario));
+        }
+        router.push("/boletines");
+      } else {
+        setError("Respuesta de autenticación inválida del servidor");
+      }
+    } catch (err: any) {
+      setError(err.message || "Error al iniciar sesión. Verifique sus credenciales.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <>
+    <Box
+      className="auth-main-wrapper sign-in-area"
+      sx={{
+        py: { xs: "50px", md: "80px", lg: "100px" },
+        minHeight: "100vh",
+        display: "flex",
+        alignItems: "center",
+      }}
+    >
       <Box
-        className="auth-main-wrapper sign-in-area"
         sx={{
-          py: { xs: "60px", md: "80px", lg: "100px", xl: "135px" },
+          maxWidth: { sm: "500px", md: "1150px" },
+          mx: "auto !important",
+          px: "16px",
+          width: "100%",
         }}
       >
-        <Box
-          sx={{
-            maxWidth: { sm: "500px", md: "1255px" },
-            mx: "auto !important",
-            px: "12px",
-          }}
+        <Grid
+          container
+          alignItems="center"
+          columnSpacing={{ xs: 1, sm: 2, md: 4, lg: 5 }}
         >
-          <Grid
-            container
-            alignItems="center"
-            columnSpacing={{ xs: 1, sm: 2, md: 4, lg: 3 }}
-          >
-            <Grid size={{ xs: 12, md: 6, lg: 6, xl: 7 }}>
+          <Grid size={{ xs: 12, md: 6, lg: 6 }}>
+            <Box
+              sx={{
+                display: { xs: "none", md: "block" },
+                textAlign: "center",
+              }}
+            >
+              <Image
+                src="/images/sign-in.jpg"
+                alt="ExposureIQ Portal"
+                width={560}
+                height={680}
+                style={{
+                  borderRadius: "20px",
+                  objectFit: "cover",
+                  boxShadow: "0 10px 30px rgba(0,0,0,0.08)",
+                  width: "100%",
+                  height: "auto",
+                  maxHeight: "680px",
+                }}
+              />
+            </Box>
+          </Grid>
+
+          <Grid size={{ xs: 12, md: 6, lg: 6 }}>
+            <Box
+              className="form-content"
+              sx={{
+                paddingLeft: { xs: "0", lg: "20px" },
+                backgroundColor: "#fff",
+                p: { xs: 3, sm: 4 },
+                borderRadius: "16px",
+                boxShadow: "0 4px 20px rgba(0,0,0,0.05)",
+              }}
+            >
               <Box
+                className="logo"
                 sx={{
-                  display: { xs: "none", md: "block" },
+                  mb: "20px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1.5,
                 }}
               >
                 <Image
-                  src="/images/sign-in.jpg"
-                  alt="sign-in-image"
-                  width={646}
-                  height={804}
-                  style={{
-                    borderRadius: "24px",
-                  }}
+                  src="/images/logo-icon.svg"
+                  alt="ExposureIQ Logo"
+                  width={36}
+                  height={36}
                 />
+                <Typography
+                  variant="h5"
+                  sx={{
+                    fontWeight: 700,
+                    color: "#1e293b",
+                    letterSpacing: "-0.5px",
+                  }}
+                >
+                  ExposureIQ
+                </Typography>
               </Box>
-            </Grid>
 
-            <Grid size={{ xs: 12, md: 6, lg: 6, xl: 5 }}>
-              <Box
-                className="form-content"
-                sx={{
-                  paddingLeft: { xs: "0", lg: "10px" },
-                }}
-              >
-                <Box
-                  className="logo"
+              <Box className="title" sx={{ mb: "24px" }}>
+                <Typography
+                  variant="h1"
+                  className="text-black"
                   sx={{
-                    mb: "23px",
+                    fontSize: { xs: "22px", sm: "26px" },
+                    mb: "6px",
+                    fontWeight: "700",
                   }}
                 >
-                  <Image
-                    src="/images/logo-big.svg"
-                    alt="logo"
-                    width={142}
-                    height={38}
-                  />
-                  <Image
-                    src="/images/white-logo.svg"
-                    className="d-none"
-                    alt="logo"
-                    width={142}
-                    height={38}
-                  />
-                </Box>
+                  Monitoreo Ejecutivo
+                </Typography>
 
-                <Box
-                  className="title"
-                  sx={{
-                    mb: "23px",
-                  }}
-                >
-                  <Typography
-                    variant="h1"
-                    className="text-black"
-                    sx={{
-                      fontSize: { xs: "22px", sm: "25px", lg: "28px" },
-                      mb: "7px",
-                      fontWeight: "600",
-                    }}
-                  >
-                    Welcome back to Trezo!
-                  </Typography>
+                <Typography sx={{ fontWeight: "400", fontSize: "14px", color: "#64748b" }}>
+                  Ingrese sus credenciales institucionales para acceder al sistema.
+                </Typography>
+              </Box>
 
-                  <Typography sx={{ fontWeight: "500", fontSize: "16px" }}>
-                    Sign In with social account or enter your details
-                  </Typography>
-                </Box>
+              {error && (
+                <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>
+                  {error}
+                </Alert>
+              )}
 
-                <Box
-                  className="with-socials"
-                  sx={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-around",
-                    gap: "5px",
-                    mb: "20px",
-                  }}
-                >
-                  <Button
-                    variant="outlined"
-                    className="border bg-white"
-                    sx={{
-                      width: "100%",
-                      borderRadius: "8px",
-                      padding: "10.5px 20px",
-                    }}
-                  >
-                    <Image
-                      src="/images/icons/google.svg"
-                      alt="google"
-                      width={25}
-                      height={25}
-                    />
-                  </Button>
-
-                  <Button
-                    variant="outlined"
-                    className="border bg-white"
-                    sx={{
-                      width: "100%",
-                      borderRadius: "8px",
-                      padding: "10.5px 20px",
-                    }}
-                  >
-                    <Image
-                      src="/images/icons/facebook2.svg"
-                      alt="facebook"
-                      width={25}
-                      height={25}
-                    />
-                  </Button>
-
-                  <Button
-                    variant="outlined"
-                    className="border bg-white"
-                    sx={{
-                      width: "100%",
-                      borderRadius: "8px",
-                      padding: "10.5px 20px",
-                    }}
-                  >
-                    <Image
-                      src="/images/icons/apple.svg"
-                      alt="apple"
-                      width={25}
-                      height={25}
-                    />
-                  </Button>
-                </Box>
-
-                <Box component="form">
-                  <Box mb="15px">
-                    <FormControl fullWidth>
-                      <Typography
-                        component="label"
-                        sx={{
-                          fontWeight: "500",
-                          fontSize: "14px",
-                          mb: "10px",
-                          display: "block",
-                        }}
-                        className="text-black"
-                      >
-                        Email Address
-                      </Typography>
-
-                      <TextField
-                        label="example&#64;trezo.com"
-                        variant="filled"
-                        id="email"
-                        name="email"
-                        sx={{
-                          "& .MuiInputBase-root": {
-                            border: "1px solid #D5D9E2",
-                            backgroundColor: "#fff",
-                            borderRadius: "7px",
-                          },
-                          "& .MuiInputBase-root::before": {
-                            border: "none",
-                          },
-                          "& .MuiInputBase-root:hover::before": {
-                            border: "none",
-                          },
-                          "& .MuiInputBase-root:hover:hover:not(.Mui-disabled, .Mui-error)::before":
-                            {
-                              border: "none",
-                            },
-                        }}
-                      />
-                    </FormControl>
-                  </Box>
-
-                  <Box mb="15px">
-                    <FormControl fullWidth>
-                      <Typography
-                        component="label"
-                        sx={{
-                          fontWeight: "500",
-                          fontSize: "14px",
-                          mb: "10px",
-                          display: "block",
-                        }}
-                        className="text-black"
-                      >
-                        Password
-                      </Typography>
-
-                      <TextField
-                        label="Type Password"
-                        variant="filled"
-                        type="password"
-                        id="password"
-                        name="password"
-                        sx={{
-                          "& .MuiInputBase-root": {
-                            border: "1px solid #D5D9E2",
-                            backgroundColor: "#fff",
-                            borderRadius: "7px",
-                          },
-                          "& .MuiInputBase-root::before": {
-                            border: "none",
-                          },
-                          "& .MuiInputBase-root:hover::before": {
-                            border: "none",
-                          },
-                          "& .MuiInputBase-root:hover:hover:not(.Mui-disabled, .Mui-error)::before":
-                            {
-                              border: "none",
-                            },
-                        }}
-                      />
-                    </FormControl>
-                  </Box>
-
-                  <Box mb="20px">
-                    <Link
-                      href="/authentication/forgot-password/"
-                      className="text-primary"
-                      style={{
-                        fontWeight: "500",
-                      }}
-                    >
-                      Forgot Password?
-                    </Link>
-                  </Box>
-
-                  <Box mb="20px">
-                    <Button
-                      type="submit"
-                      variant="contained" 
+              <Box component="form" onSubmit={handleSubmit}>
+                <Box mb="18px">
+                  <FormControl fullWidth>
+                    <Typography
+                      component="label"
+                      htmlFor="email-input"
                       sx={{
-                        textTransform: "capitalize",
-                        borderRadius: "6px",
-                        fontWeight: "500",
-                        fontSize: { xs: "13px", sm: "16px" },
-                        padding: { xs: "10px 20px", sm: "10px 24px" },
-                        color: "#fff !important",
-                        boxShadow: "none",
-                        width: "100%",
-
-                        // Disabled state styles
-                        "&.Mui-disabled": {
-                          backgroundColor: "#000", // Light gray background
-                          color: "#9e9e9e !important", // Darker gray text
-                          cursor: "not-allowed",
-                        },
+                        fontWeight: "600",
+                        fontSize: "13px",
+                        mb: "8px",
+                        display: "block",
+                        color: "#334155",
                       }}
                     >
-                      <i className="material-symbols-outlined mr-5">login</i>
-                      Sign In
-                    </Button>
-                  </Box>
+                      Correo Electrónico
+                    </Typography>
 
-                  <Typography>
-                    Don’t have an account.{" "}
-                    <Link
-                      href="/authentication/sign-up/"
-                      className="text-primary"
-                      style={{
-                        fontWeight: "500",
-                      }}
-                    >
-                      Sign Up
-                    </Link>
-                  </Typography>
+                    <TextField
+                      id="email-input"
+                      placeholder="admin@exposureiq.internal"
+                      variant="outlined"
+                      size="small"
+                      value={correo}
+                      onChange={(e) => setCorreo(e.target.value)}
+                      required
+                      fullWidth
+                    />
+                  </FormControl>
                 </Box>
+
+                <Box mb="24px">
+                  <FormControl fullWidth>
+                    <Typography
+                      component="label"
+                      htmlFor="password-input"
+                      sx={{
+                        fontWeight: "600",
+                        fontSize: "13px",
+                        mb: "8px",
+                        display: "block",
+                        color: "#334155",
+                      }}
+                    >
+                      Contraseña
+                    </Typography>
+
+                    <TextField
+                      id="password-input"
+                      placeholder="••••••••••••"
+                      variant="outlined"
+                      size="small"
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      required
+                      fullWidth
+                    />
+                  </FormControl>
+                </Box>
+
+                <Box mb="20px">
+                  <Button
+                    type="submit"
+                    variant="contained"
+                    disabled={loading}
+                    sx={{
+                      textTransform: "none",
+                      borderRadius: "8px",
+                      fontWeight: "600",
+                      fontSize: "15px",
+                      py: 1.2,
+                      width: "100%",
+                      backgroundColor: "#4f46e5",
+                      "&:hover": { backgroundColor: "#4338ca" },
+                    }}
+                  >
+                    {loading ? (
+                      <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                        <CircularProgress size={20} color="inherit" />
+                        <span>Verificando credenciales...</span>
+                      </Box>
+                    ) : (
+                      "Iniciar Sesión"
+                    )}
+                  </Button>
+                </Box>
+
+                <Typography sx={{ fontSize: "12px", color: "#94a3b8", textAlign: "center" }}>
+                  Plataforma Segura de Inteligencia de Riesgo y Alertas Tempranas.
+                </Typography>
               </Box>
-            </Grid>
+            </Box>
           </Grid>
-        </Box>
+        </Grid>
       </Box>
-    </>
+    </Box>
   );
 };
 

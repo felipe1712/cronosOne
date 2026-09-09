@@ -1,11 +1,11 @@
 "use client";
 
-import React, { useState, ReactNode } from "react";
-import { usePathname } from "next/navigation";
+import React, { useState, useEffect, ReactNode } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import LeftSidebarMenu from "@/components/Layout/LeftSidebarMenu";
 import TopNavbar from "./../components/Layout/TopNavbar/index";
 import Footer from "@/components/Layout/Footer";
-import ControlPanel from "@/components/Layout/ControlPanel";
+import { Box, CircularProgress } from "@mui/material";
 
 interface LayoutProviderProps {
   children: ReactNode;
@@ -13,7 +13,9 @@ interface LayoutProviderProps {
 
 const LayoutProvider: React.FC<LayoutProviderProps> = ({ children }) => {
   const [active, setActive] = useState<boolean>(false);
+  const [isCheckingAuth, setIsCheckingAuth] = useState<boolean>(true);
   const pathname = usePathname();
+  const router = useRouter();
 
   const toggleActive = () => {
     setActive(!active);
@@ -21,37 +23,49 @@ const LayoutProvider: React.FC<LayoutProviderProps> = ({ children }) => {
 
   const isAuthPage = pathname.startsWith("/authentication");
 
-  return (
-    <>
-      <div className={`main-wrapper-content ${active ? "active" : ""}`}>
-        {!isAuthPage && (
-          <>
-            <TopNavbar toggleActive={toggleActive} />
+  useEffect(() => {
+    if (!isAuthPage) {
+      const token = typeof window !== "undefined" ? localStorage.getItem("exposureiq_token") : null;
+      if (!token) {
+        router.replace("/authentication/sign-in");
+        return;
+      }
+    }
+    setIsCheckingAuth(false);
+  }, [pathname, isAuthPage, router]);
 
-            <LeftSidebarMenu toggleActive={toggleActive} />
-          </>
-        )}
-
-        <div className="main-content">
-          {children}
-
-          {!isAuthPage && <Footer />}
-        </div>
-      </div>
-
-      <div
-        style={{
-          position: "fixed",
-          bottom: "15px",
-          right: "15px",
-          zIndex: "-5",
-          opacity: 0,
-          visibility: "hidden",
+  // Si no está autenticado y no es página de autenticación, mostrar carga mientras redirige
+  if (!isAuthPage && isCheckingAuth) {
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          minHeight: "100vh",
+          backgroundColor: "#f8fafc",
         }}
       >
-        <ControlPanel />
+        <CircularProgress />
+      </Box>
+    );
+  }
+
+  return (
+    <div className={`main-wrapper-content ${active ? "active" : ""}`}>
+      {!isAuthPage && (
+        <>
+          <TopNavbar toggleActive={toggleActive} />
+          <LeftSidebarMenu toggleActive={toggleActive} />
+        </>
+      )}
+
+      <div className="main-content">
+        {children}
+
+        {!isAuthPage && <Footer />}
       </div>
-    </>
+    </div>
   );
 };
 

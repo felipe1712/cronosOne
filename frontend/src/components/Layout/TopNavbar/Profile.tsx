@@ -12,22 +12,32 @@ import {
   ListItemIcon,
   Divider,
 } from "@mui/material";
-import Link from "next/link";
-import AccountCircleIcon from "@mui/icons-material/AccountCircle";
-import CreditCardIcon from "@mui/icons-material/CreditCard";
-import ChatIcon from "@mui/icons-material/Chat";
-import ListIcon from "@mui/icons-material/List";
 import Logout from "@mui/icons-material/Logout";
 import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
-import SettingsIcon from "@mui/icons-material/Settings";
-import SupportIcon from "@mui/icons-material/Support";
-import LockOpenIcon from "@mui/icons-material/LockOpen";
+import { useRouter } from "next/navigation";
+import { removeToken } from "@/lib/api";
 
-interface ProfileProps {}
-
-const Profile: React.FC<ProfileProps> = () => {
+const Profile: React.FC = () => {
+  const router = useRouter();
   const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
+  const [userName, setUserName] = React.useState<string>("Olivia");
+  const [userRole, setUserRole] = React.useState<string>("Dirección de Operaciones");
   const open = Boolean(anchorEl);
+
+  React.useEffect(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const storedUser = localStorage.getItem("exposureiq_user");
+        if (storedUser) {
+          const parsed = JSON.parse(storedUser);
+          if (parsed.nombre) setUserName(parsed.nombre);
+          if (parsed.rol) setUserRole(parsed.rol.toUpperCase());
+        }
+      } catch {
+        // Fallback a valores por defecto
+      }
+    }
+  }, []);
 
   const handleClick = (event: React.MouseEvent<HTMLElement>) => {
     setAnchorEl(event.currentTarget);
@@ -37,13 +47,23 @@ const Profile: React.FC<ProfileProps> = () => {
     setAnchorEl(null);
   };
 
+  const handleLogout = () => {
+    handleClose();
+    removeToken();
+    router.push("/authentication/sign-in");
+  };
+
   return (
     <>
-      <Tooltip title="Account settings">
+      <Tooltip title="Perfil de Usuario">
         <IconButton
           onClick={handleClick}
           size="small"
-          sx={{ p: 0, borderRadius: "5px" }}
+          sx={{
+            p: "4px 8px",
+            borderRadius: "8px",
+            "&:hover": { backgroundColor: "rgba(0,0,0,0.04)" },
+          }}
           aria-controls={open ? "account-menu" : undefined}
           aria-haspopup="true"
           aria-expanded={open ? "true" : undefined}
@@ -52,24 +72,25 @@ const Profile: React.FC<ProfileProps> = () => {
             src="/images/admin.png"
             alt="Olivia"
             sx={{
-              width: { xs: "35px", sm: "42px" },
-              height: { xs: "35px", sm: "42px" },
+              width: { xs: "34px", sm: "38px" },
+              height: { xs: "34px", sm: "38px" },
               border: "2px solid #C2CDFF",
+              mr: 1,
             }}
-            className="mr-8"
           />
           <Typography
-            variant="h3"
+            variant="subtitle2"
             sx={{
               fontWeight: "600",
-              fontSize: "13px",
+              fontSize: "14px",
               display: { xs: "none", sm: "block" },
+              color: "#1e293b",
+              mr: 0.5,
             }}
-            className="text-black"
           >
             Olivia
           </Typography>
-          <KeyboardArrowDownIcon sx={{ fontSize: "15px" }} />
+          <KeyboardArrowDownIcon sx={{ fontSize: "18px", color: "#64748b" }} />
         </IconButton>
       </Tooltip>
 
@@ -80,207 +101,45 @@ const Profile: React.FC<ProfileProps> = () => {
         onClose={handleClose}
         onClick={handleClose}
         PaperProps={{
-          elevation: 0,
+          elevation: 3,
           sx: {
-            borderRadius: "7px",
-            boxShadow: "0 4px 45px #0000001a",
+            borderRadius: "10px",
+            minWidth: "220px",
             overflow: "visible",
             mt: 1.5,
-            "& .MuiAvatar-root": {
-              width: 32,
-              height: 32,
-              ml: -0.5,
-              mr: 1,
-            },
-            "&:before": {
-              content: '""',
-              display: "block",
-              position: "absolute",
-              top: 0,
-              right: 14,
-              width: 10,
-              height: 10,
-              bgcolor: "background.paper",
-              transform: "translateY(-50%) rotate(45deg)",
-              zIndex: 0,
-            },
           },
         }}
         transformOrigin={{ horizontal: "right", vertical: "top" }}
         anchorOrigin={{ horizontal: "right", vertical: "bottom" }}
-        className="for-dark-top-navList"
       >
-        <MenuItem sx={{ padding: "10px 20px" }}>
-          <Avatar
-            src="/images/admin.png"
-            sx={{
-              width: 31,
-              height: 31,
-              border: "2px solid #C2CDFF",
-            }}
-            className="mr-8"
-          />
+        <MenuItem sx={{ py: 1.5, px: 2, cursor: "default", "&:hover": { backgroundColor: "transparent" } }}>
           <Box>
-            <Typography
-              variant="h5"
-              sx={{
-                fontSize: "13px",
-                color: "#260944",
-                fontWeight: "500",
-              }}
-              className="text-black"
-            >
-              Olivia Jhon
+            <Typography variant="subtitle2" sx={{ fontWeight: "700", color: "#1e293b" }}>
+              {userName}
             </Typography>
-
-            <Typography sx={{ fontSize: "12px" }}>Marketing Manager</Typography>
+            <Typography variant="caption" sx={{ color: "#64748b", display: "block" }}>
+              {userRole}
+            </Typography>
           </Box>
         </MenuItem>
 
-        <Divider sx={{ borderColor: "#F6F7F9" }} />
+        <Divider sx={{ my: 0.5 }} />
 
-        <MenuItem sx={{ padding: "8px 20px" }}>
-          <Link
-            href="/my-profile/"
-            className="text-black"
-            style={{
-              display: "flex",
-              alignItems: "center",
-            }}
-          >
-            <ListItemIcon sx={{ mr: "-10px", mt: "-3px" }}>
-              <AccountCircleIcon
-                sx={{ fontSize: "20px" }}
-                className="text-black"
-              />
-            </ListItemIcon>
-
-            <span style={{ fontSize: "13px" }}>My Profile</span>
-          </Link>
-        </MenuItem>
-
-        <MenuItem sx={{ padding: "8px 20px" }}>
-          <Link
-            href="/apps/chat/"
-            className="text-black"
-            style={{
-              display: "flex",
-              alignItems: "center",
-            }}
-          >
-            <ListItemIcon sx={{ mr: "-10px", mt: "-3px" }}>
-              <ChatIcon sx={{ fontSize: "20px" }} className="text-black" />
-            </ListItemIcon>
-
-            <span style={{ fontSize: "13px" }}>Messages</span>
-          </Link>
-        </MenuItem>
-
-        <MenuItem sx={{ padding: "8px 20px" }}>
-          <Link
-            href="/apps/to-do-list/"
-            className="text-black"
-            style={{
-              display: "flex",
-              alignItems: "center",
-            }}
-          >
-            <ListItemIcon sx={{ mr: "-10px", mt: "-3px" }}>
-              <ListIcon sx={{ fontSize: "20px" }} className="text-black" />
-            </ListItemIcon>
-
-            <span style={{ fontSize: "13px" }}>My Task</span>
-          </Link>
-        </MenuItem>
-
-        <MenuItem sx={{ padding: "8px 20px" }}>
-          <Link
-            href="/ecommerce/checkout/"
-            className="text-black"
-            style={{
-              display: "flex",
-              alignItems: "center",
-            }}
-          >
-            <ListItemIcon sx={{ mr: "-10px", mt: "-3px" }}>
-              <CreditCardIcon
-                sx={{ fontSize: "20px" }}
-                className="text-black"
-              />
-            </ListItemIcon>
-
-            <span style={{ fontSize: "13px" }}>Billing</span>
-          </Link>
-        </MenuItem>
-
-        <Divider sx={{ borderColor: "#F6F7F9" }} />
-
-        <MenuItem sx={{ padding: "8px 20px" }}>
-          <Link
-            href="/settings/"
-            className="text-black"
-            style={{
-              display: "flex",
-              alignItems: "center",
-            }}
-          >
-            <ListItemIcon sx={{ mr: "-10px", mt: "-3px" }}>
-              <SettingsIcon sx={{ fontSize: "20px" }} className="text-black" />
-            </ListItemIcon>
-
-            <span style={{ fontSize: "13px" }}>Settings</span>
-          </Link>
-        </MenuItem>
-
-        <MenuItem sx={{ padding: "8px 20px" }}>
-          <Link
-            href="/faq/"
-            className="text-black"
-            style={{
-              display: "flex",
-              alignItems: "center",
-            }}
-          >
-            <ListItemIcon sx={{ mr: "-10px", mt: "-3px" }}>
-              <SupportIcon sx={{ fontSize: "20px" }} className="text-black" />
-            </ListItemIcon>
-
-            <span style={{ fontSize: "13px" }}>Support</span>
-          </Link>
-        </MenuItem>
-
-        <MenuItem sx={{ padding: "8px 20px" }}>
-          <Link
-            href="/authentication/lock-screen/"
-            className="text-black"
-            style={{
-              display: "flex",
-              alignItems: "center",
-            }}
-          >
-            <ListItemIcon sx={{ mr: "-10px", mt: "-3px" }}>
-              <LockOpenIcon sx={{ fontSize: "20px" }} className="text-black" />
-            </ListItemIcon>
-
-            <span style={{ fontSize: "13px" }}>Lock Screen</span>
-          </Link>
-        </MenuItem>
-
-        <MenuItem sx={{ padding: "8px 20px" }}>
-          <Link
-            href="/authentication/logout/"
-            className="text-black"
-            style={{
-              display: "flex",
-              alignItems: "center",
-            }}
-          >
-            <ListItemIcon sx={{ mr: "-10px", mt: "-3px" }}>
-              <Logout sx={{ fontSize: "20px" }} className="text-black" />
-            </ListItemIcon>
-
-            <span style={{ fontSize: "13px" }}>Logout</span>
-          </Link>
+        <MenuItem
+          onClick={handleLogout}
+          sx={{
+            py: 1,
+            px: 2,
+            color: "#dc2626",
+            "&:hover": { backgroundColor: "#fef2f2" },
+          }}
+        >
+          <ListItemIcon sx={{ color: "#dc2626", minWidth: "32px" }}>
+            <Logout fontSize="small" />
+          </ListItemIcon>
+          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+            Cerrar Sesión
+          </Typography>
         </MenuItem>
       </Menu>
     </>

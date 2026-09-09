@@ -8,7 +8,7 @@ export default function Home() {
   const router = useRouter();
 
   useEffect(() => {
-    router.replace("/boletines");
+    router.replace("/authentication/sign-in");
   }, [router]);
 
   return (
