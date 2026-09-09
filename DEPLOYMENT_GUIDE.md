@@ -17,7 +17,7 @@ Esta guía detalla paso a paso cómo montar **ExposureIQ** en el mismo servidor 
 | **n8n (Orquestador)** | 5678 | Compartido | Flujo independiente importado para sondeo de cola |
 | **ExposureIQ Backend (Rust)** | **8080** | ExposureIQ | API Axum escuchando en localhost:8080 |
 | **ExposureIQ Workers (Python)** | **8001** | ExposureIQ | Procesamiento en background en localhost:8001 |
-| **ExposureIQ Frontend (Next.js)**| **3001** | ExposureIQ | Aplicación web en localhost:3001 |
+| **ExposureIQ Frontend (Next.js)**| **3005** | ExposureIQ | Aplicación web en localhost:3005 |
 
 ---
 
@@ -164,10 +164,10 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/opt/CronosOne/frontend
-ExecStart=/usr/bin/npm start -- -p 3001
+ExecStart=/usr/bin/npm start -- -p 3005
 Restart=always
 RestartSec=5
-Environment=PORT=3001
+Environment=PORT=3005
 Environment=NODE_ENV=production
 
 [Install]
@@ -217,7 +217,7 @@ server {
 
     # Enrutar todo lo demás al Frontend Next.js
     location / {
-        proxy_pass http://127.0.0.1:3001;
+        proxy_pass http://127.0.0.1:3005;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
