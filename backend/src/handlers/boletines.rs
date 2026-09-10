@@ -364,6 +364,43 @@ pub async fn aprobar_boletin(
         )
     })?;
 
+    // Despacho en tiempo real vía Kapso si está configurado
+    let pool_clone = pool.clone();
+    let texto_clone = payload.texto.clone();
+    let b_id = id;
+
+    tokio::spawn(async move {
+        use crate::services::kapso::{get_whatsapp_config, KapsoClient};
+        let cfg = get_whatsapp_config(&pool_clone).await;
+        if cfg.provider == "kapso" && !cfg.api_key.trim().is_empty() && !cfg.phone_number_id.trim().is_empty() {
+            let client = KapsoClient::new(cfg.api_key, cfg.phone_number_id);
+            match client.send_text(&cfg.director_phone, &texto_clone).await {
+                Ok(msg_id) => {
+                    let _ = sqlx::query(
+                        "UPDATE mensajes_pendientes 
+                         SET estado = 'confirmado', proveedor = 'kapso', kapso_message_id = $1, meta_status = 'sent', confirmado_en = now()
+                         WHERE referencia_id = $2"
+                    )
+                    .bind(&msg_id)
+                    .bind(b_id)
+                    .execute(&pool_clone)
+                    .await;
+                }
+                Err(e) => {
+                    let _ = sqlx::query(
+                        "UPDATE mensajes_pendientes 
+                         SET estado = 'error', error_mensaje = $1, proveedor = 'kapso'
+                         WHERE referencia_id = $2"
+                    )
+                    .bind(e)
+                    .bind(b_id)
+                    .execute(&pool_clone)
+                    .await;
+                }
+            }
+        }
+    });
+
     Ok((
         StatusCode::OK,
         Json(json!({

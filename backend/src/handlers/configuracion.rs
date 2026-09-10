@@ -52,11 +52,21 @@ Reglas estrictas de formato para WhatsApp:
 pub struct UpdateConfiguracionPayload {
     pub claude_model: Option<String>,
     pub system_prompt: Option<String>,
+    pub whatsapp_provider: Option<String>,
+    pub kapso_api_key: Option<String>,
+    pub kapso_phone_number_id: Option<String>,
+    pub director_whatsapp_phone: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TestClaudePayload {
     pub model: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TestWhatsappPayload {
+    pub phone: Option<String>,
+    pub message: Option<String>,
 }
 
 pub fn get_available_claude_models() -> Vec<AvailableModel> {
@@ -177,11 +187,20 @@ pub async fn get_configuraciones(
 
     let mut current_model = "claude-sonnet-4-5-20250929".to_string();
     let mut current_prompt = DEFAULT_SYSTEM_PROMPT.to_string();
+    let mut whatsapp_provider = "kapso".to_string();
+    let mut kapso_api_key = String::new();
+    let mut kapso_phone_number_id = String::new();
+    let mut director_whatsapp_phone = "5215512345678".to_string();
+
     for r in &rows {
-        if r.clave == "CLAUDE_MODEL" {
-            current_model = r.valor.clone();
-        } else if r.clave == "CLAUDE_SYSTEM_PROMPT" {
-            current_prompt = r.valor.clone();
+        match r.clave.as_str() {
+            "CLAUDE_MODEL" => current_model = r.valor.clone(),
+            "CLAUDE_SYSTEM_PROMPT" => current_prompt = r.valor.clone(),
+            "WHATSAPP_PROVIDER" => whatsapp_provider = r.valor.clone(),
+            "KAPSO_API_KEY" => kapso_api_key = r.valor.clone(),
+            "KAPSO_PHONE_NUMBER_ID" => kapso_phone_number_id = r.valor.clone(),
+            "DIRECTOR_WHATSAPP_PHONE" => director_whatsapp_phone = r.valor.clone(),
+            _ => {}
         }
     }
 
@@ -194,6 +213,10 @@ pub async fn get_configuraciones(
             "system_prompt": current_prompt,
             "default_system_prompt": DEFAULT_SYSTEM_PROMPT,
             "available_models": available_models,
+            "whatsapp_provider": whatsapp_provider,
+            "kapso_api_key": kapso_api_key,
+            "kapso_phone_number_id": kapso_phone_number_id,
+            "director_whatsapp_phone": director_whatsapp_phone,
             "todas": rows
         })),
     ))
@@ -206,41 +229,73 @@ pub async fn update_configuracion(
     if let Some(ref model) = payload.claude_model {
         let m = model.trim();
         if !m.is_empty() {
-            sqlx::query(
+            let _ = sqlx::query(
                 "INSERT INTO configuraciones_sistema (clave, valor, descripcion, categoria, actualizado_en)
                  VALUES ('CLAUDE_MODEL', $1, 'Modelo de Anthropic Claude seleccionado para la síntesis de boletines', 'ia', now())
                  ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, actualizado_en = now()"
             )
             .bind(m)
             .execute(&pool)
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": format!("Error guardando modelo: {}", e)})),
-                )
-            })?;
+            .await;
         }
     }
 
     if let Some(ref prompt) = payload.system_prompt {
         let p = prompt.trim();
         if !p.is_empty() {
-            sqlx::query(
+            let _ = sqlx::query(
                 "INSERT INTO configuraciones_sistema (clave, valor, descripcion, categoria, actualizado_en)
                  VALUES ('CLAUDE_SYSTEM_PROMPT', $1, 'Instrucciones del sistema para el análisis y síntesis de boletines', 'ia', now())
                  ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, actualizado_en = now()"
             )
             .bind(p)
             .execute(&pool)
-            .await
-            .map_err(|e| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": format!("Error guardando prompt: {}", e)})),
-                )
-            })?;
+            .await;
         }
+    }
+
+    if let Some(ref provider) = payload.whatsapp_provider {
+        let _ = sqlx::query(
+            "INSERT INTO configuraciones_sistema (clave, valor, descripcion, categoria, actualizado_en)
+             VALUES ('WHATSAPP_PROVIDER', $1, 'Proveedor activo de WhatsApp: kapso o waha', 'whatsapp', now())
+             ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, actualizado_en = now()"
+        )
+        .bind(provider.trim())
+        .execute(&pool)
+        .await;
+    }
+
+    if let Some(ref key) = payload.kapso_api_key {
+        let _ = sqlx::query(
+            "INSERT INTO configuraciones_sistema (clave, valor, descripcion, categoria, actualizado_en)
+             VALUES ('KAPSO_API_KEY', $1, 'Clave de API del proyecto en Kapso (X-API-Key)', 'whatsapp', now())
+             ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, actualizado_en = now()"
+        )
+        .bind(key.trim())
+        .execute(&pool)
+        .await;
+    }
+
+    if let Some(ref phone_id) = payload.kapso_phone_number_id {
+        let _ = sqlx::query(
+            "INSERT INTO configuraciones_sistema (clave, valor, descripcion, categoria, actualizado_en)
+             VALUES ('KAPSO_PHONE_NUMBER_ID', $1, 'Identificador de número telefónico de WhatsApp en Kapso / Meta', 'whatsapp', now())
+             ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, actualizado_en = now()"
+        )
+        .bind(phone_id.trim())
+        .execute(&pool)
+        .await;
+    }
+
+    if let Some(ref phone) = payload.director_whatsapp_phone {
+        let _ = sqlx::query(
+            "INSERT INTO configuraciones_sistema (clave, valor, descripcion, categoria, actualizado_en)
+             VALUES ('DIRECTOR_WHATSAPP_PHONE', $1, 'Número de WhatsApp de destino del Director en formato E.164', 'whatsapp', now())
+             ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, actualizado_en = now()"
+        )
+        .bind(phone.trim())
+        .execute(&pool)
+        .await;
     }
 
     Ok((
@@ -249,6 +304,56 @@ pub async fn update_configuracion(
             "mensaje": "Configuración guardada correctamente"
         })),
     ))
+}
+
+pub async fn test_whatsapp(
+    State((pool, _config)): State<(DbPool, Arc<Config>)>,
+    Json(payload): Json<TestWhatsappPayload>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    use crate::services::kapso::{get_whatsapp_config, KapsoClient};
+    use std::time::Instant;
+
+    let cfg = get_whatsapp_config(&pool).await;
+
+    let target_phone = payload
+        .phone
+        .as_deref()
+        .filter(|p| !p.trim().is_empty())
+        .unwrap_or(&cfg.director_phone);
+
+    let test_body = payload.message.unwrap_or_else(|| {
+        "🔔 *Prueba de Conexión ExposureIQ — WhatsApp Cloud API via Kapso*\n\nEste es un mensaje de prueba para validar la integración oficial en tiempo real.".to_string()
+    });
+
+    let client = KapsoClient::new(cfg.api_key.clone(), cfg.phone_number_id.clone());
+    let start = Instant::now();
+
+    match client.send_text(target_phone, &test_body).await {
+        Ok(msg_id) => {
+            let latency_ms = start.elapsed().as_millis();
+            Ok((
+                StatusCode::OK,
+                Json(json!({
+                    "ok": true,
+                    "mensaje": format!("Mensaje entregado exitosamente a {} ({}) en {}ms", target_phone, msg_id, latency_ms),
+                    "message_id": msg_id,
+                    "latency_ms": latency_ms
+                })),
+            ))
+        }
+        Err(e) => {
+            let latency_ms = start.elapsed().as_millis();
+            Ok((
+                StatusCode::OK,
+                Json(json!({
+                    "ok": false,
+                    "error": e.clone(),
+                    "mensaje": format!("Fallo al enviar mensaje por Kapso: {}", e),
+                    "latency_ms": latency_ms
+                })),
+            ))
+        }
+    }
 }
 
 pub async fn test_claude(

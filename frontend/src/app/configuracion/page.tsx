@@ -23,10 +23,13 @@ import {
   Tab,
   TextField,
   Tooltip,
+  IconButton,
+  InputAdornment,
 } from "@mui/material";
 import SettingsIcon from "@mui/icons-material/Settings";
 import SmartToyIcon from "@mui/icons-material/SmartToy";
 import DescriptionIcon from "@mui/icons-material/Description";
+import WhatsAppIcon from "@mui/icons-material/WhatsApp";
 import SpeedIcon from "@mui/icons-material/Speed";
 import PsychologyIcon from "@mui/icons-material/Psychology";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
@@ -36,6 +39,10 @@ import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import RestartAltIcon from "@mui/icons-material/RestartAlt";
 import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
+import SendIcon from "@mui/icons-material/Send";
+import VisibilityIcon from "@mui/icons-material/Visibility";
+import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
+import LaunchIcon from "@mui/icons-material/Launch";
 import { ApiService } from "@/lib/api";
 
 interface AvailableModel {
@@ -59,6 +66,21 @@ export default function ConfiguracionPage() {
   const [systemPrompt, setSystemPrompt] = useState<string>("");
   const [savedPrompt, setSavedPrompt] = useState<string>("");
   const [defaultSystemPrompt, setDefaultSystemPrompt] = useState<string>("");
+
+  // Estados para WhatsApp (Kapso)
+  const [whatsappProvider, setWhatsappProvider] = useState<string>("kapso");
+  const [kapsoApiKey, setKapsoApiKey] = useState<string>("");
+  const [kapsoPhoneNumberId, setKapsoPhoneNumberId] = useState<string>("");
+  const [directorWhatsappPhone, setDirectorWhatsappPhone] = useState<string>("5215512345678");
+  const [showApiKey, setShowApiKey] = useState<boolean>(false);
+  const [savingWhatsapp, setSavingWhatsapp] = useState<boolean>(false);
+  const [testingWhatsapp, setTestingWhatsapp] = useState<boolean>(false);
+  const [whatsappTestResult, setWhatsappTestResult] = useState<{
+    ok: boolean;
+    latency_ms?: number;
+    mensaje: string;
+    error?: string;
+  } | null>(null);
 
   // Estados generales
   const [loading, setLoading] = useState<boolean>(true);
@@ -97,6 +119,18 @@ export default function ConfiguracionPage() {
         }
         if (data.default_system_prompt) {
           setDefaultSystemPrompt(data.default_system_prompt);
+        }
+        if (data.whatsapp_provider) {
+          setWhatsappProvider(data.whatsapp_provider);
+        }
+        if (data.kapso_api_key) {
+          setKapsoApiKey(data.kapso_api_key);
+        }
+        if (data.kapso_phone_number_id) {
+          setKapsoPhoneNumberId(data.kapso_phone_number_id);
+        }
+        if (data.director_whatsapp_phone) {
+          setDirectorWhatsappPhone(data.director_whatsapp_phone);
         }
       }
     } catch (err: any) {
@@ -146,6 +180,47 @@ export default function ConfiguracionPage() {
     }
   };
 
+  const handleSaveWhatsapp = async () => {
+    try {
+      setSavingWhatsapp(true);
+      setErrorMsg(null);
+      setSuccessMsg(null);
+      await ApiService.updateConfiguracion({
+        whatsapp_provider: whatsappProvider,
+        kapso_api_key: kapsoApiKey,
+        kapso_phone_number_id: kapsoPhoneNumberId,
+        director_whatsapp_phone: directorWhatsappPhone,
+      });
+      setSuccessMsg("Configuración de WhatsApp guardada exitosamente en el sistema.");
+    } catch (err: any) {
+      console.error("Error guardando configuración de WhatsApp:", err);
+      setErrorMsg(err.message || "Error al guardar configuración de WhatsApp.");
+    } finally {
+      setSavingWhatsapp(false);
+    }
+  };
+
+  const handleTestWhatsapp = async () => {
+    try {
+      setTestingWhatsapp(true);
+      setWhatsappTestResult(null);
+      setErrorMsg(null);
+      const res = await ApiService.testWhatsapp({
+        phone: directorWhatsappPhone,
+        message: "🔔 *Prueba de Conexión ExposureIQ — WhatsApp Cloud API via Kapso*\n\nSi estás leyendo esto, la entrega oficial de mensajes está 100% activa y funcionando.",
+      });
+      setWhatsappTestResult(res);
+    } catch (err: any) {
+      console.error("Error probando WhatsApp con Kapso:", err);
+      setWhatsappTestResult({
+        ok: false,
+        mensaje: `Error al probar WhatsApp: ${err.message}`,
+      });
+    } finally {
+      setTestingWhatsapp(false);
+    }
+  };
+
   const handleTest = async () => {
     try {
       setTesting(true);
@@ -173,7 +248,7 @@ export default function ConfiguracionPage() {
             Configuración del Sistema
           </Typography>
           <Typography variant="body2" sx={{ color: "#64748b" }}>
-            Control de Modelos de Inteligencia Artificial e Instrucciones de Síntesis Ejecutiva
+            Modelos de IA, Directrices de Prompt y Canal de Entrega WhatsApp (Kapso Cloud API)
           </Typography>
         </Box>
 
@@ -210,6 +285,12 @@ export default function ConfiguracionPage() {
             icon={<DescriptionIcon />}
             iconPosition="start"
             label="Prompt / Instrucciones"
+            sx={{ fontWeight: 600, textTransform: "none", fontSize: "0.95rem" }}
+          />
+          <Tab
+            icon={<WhatsAppIcon sx={{ color: "#25D366" }} />}
+            iconPosition="start"
+            label="Canal WhatsApp (Kapso)"
             sx={{ fontWeight: 600, textTransform: "none", fontSize: "0.95rem" }}
           />
         </Tabs>
@@ -589,6 +670,212 @@ export default function ConfiguracionPage() {
 
                     <Typography variant="body2" sx={{ color: "#475569", lineHeight: 1.6 }}>
                       4. <strong>Llamado a la Acción:</strong> Concluye siempre con un bloque de <em>"Atención Operativa Sugerida"</em> para el Director de Operaciones.
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+            </Grid>
+          )}
+
+          {/* ================================================================= */}
+          {/* PESTAÑA 2: CANAL WHATSAPP (KAPSO CLOUD API)                       */}
+          {/* ================================================================= */}
+          {tabIndex === 2 && (
+            <Grid container spacing={3}>
+              <Grid size={{ xs: 12, lg: 8 }}>
+                <Card sx={{ borderRadius: "12px", boxShadow: "0 2px 6px rgba(0,0,0,0.04)" }}>
+                  <CardContent sx={{ p: 3 }}>
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}>
+                      <WhatsAppIcon sx={{ color: "#25D366" }} />
+                      <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                        Integración WhatsApp Cloud API (vía Kapso)
+                      </Typography>
+                    </Box>
+                    <Typography variant="body2" sx={{ color: "#64748b", mb: 3 }}>
+                      Entrega directa y oficial a través de los servidores de Meta. No requiere escanear códigos QR, no sufre caídas de sesión de WhatsApp Web y entrega los mensajes en milisegundos.
+                    </Typography>
+
+                    <Grid container spacing={2.5}>
+                      {/* Proveedor activo */}
+                      <Grid size={{ xs: 12, sm: 6 }}>
+                        <FormControl fullWidth>
+                          <InputLabel id="whatsapp-provider-label">Proveedor de Entrega</InputLabel>
+                          <Select
+                            labelId="whatsapp-provider-label"
+                            value={whatsappProvider}
+                            label="Proveedor de Entrega"
+                            onChange={(e) => setWhatsappProvider(e.target.value)}
+                          >
+                            <MenuItem value="kapso">
+                              <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                                <strong>Kapso</strong> (Cloud API Oficial Meta · Recomendado)
+                              </Box>
+                            </MenuItem>
+                            <MenuItem value="waha">
+                              <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                                <span>WAHA</span> (WhatsApp Web Local / n8n)
+                              </Box>
+                            </MenuItem>
+                          </Select>
+                        </FormControl>
+                      </Grid>
+
+                      {/* Teléfono del Director */}
+                      <Grid size={{ xs: 12, sm: 6 }}>
+                        <TextField
+                          fullWidth
+                          label="Teléfono WhatsApp del Director"
+                          value={directorWhatsappPhone}
+                          onChange={(e) => setDirectorWhatsappPhone(e.target.value)}
+                          placeholder="5215512345678"
+                          helperText="Formato internacional E.164 sin signo + (ej: 5215512345678)"
+                        />
+                      </Grid>
+
+                      {/* Kapso API Key */}
+                      <Grid size={{ xs: 12 }}>
+                        <TextField
+                          fullWidth
+                          label="Kapso API Key (X-API-Key)"
+                          type={showApiKey ? "text" : "password"}
+                          value={kapsoApiKey}
+                          onChange={(e) => setKapsoApiKey(e.target.value)}
+                          placeholder="kapso_live_..."
+                          helperText="Obtenla en dashboard.kapso.ai → Integrations → API keys"
+                          InputProps={{
+                            endAdornment: (
+                              <InputAdornment position="end">
+                                <IconButton onClick={() => setShowApiKey(!showApiKey)} edge="end">
+                                  {showApiKey ? <VisibilityOffIcon /> : <VisibilityIcon />}
+                                </IconButton>
+                              </InputAdornment>
+                            ),
+                          }}
+                        />
+                      </Grid>
+
+                      {/* Phone Number ID */}
+                      <Grid size={{ xs: 12 }}>
+                        <TextField
+                          fullWidth
+                          label="Kapso / Meta Phone Number ID"
+                          value={kapsoPhoneNumberId}
+                          onChange={(e) => setKapsoPhoneNumberId(e.target.value)}
+                          placeholder="647015955153740"
+                          helperText="ID numérico asignado en dashboard.kapso.ai → WhatsApp → Phone numbers"
+                        />
+                      </Grid>
+                    </Grid>
+
+                    <Divider sx={{ my: 3 }} />
+
+                    {/* Resultado del test de WhatsApp */}
+                    {whatsappTestResult && (
+                      <Alert
+                        severity={whatsappTestResult.ok ? "success" : "error"}
+                        sx={{ mb: 3 }}
+                        icon={whatsappTestResult.ok ? <CheckCircleIcon /> : <ErrorOutlineIcon />}
+                      >
+                        <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                          {whatsappTestResult.ok ? "Mensaje Enviado con Éxito a WhatsApp" : "Fallo en la Conexión de WhatsApp"}
+                        </Typography>
+                        <Typography variant="body2">{whatsappTestResult.mensaje}</Typography>
+                        {whatsappTestResult.latency_ms && (
+                          <Typography variant="caption" sx={{ display: "block", mt: 0.5, color: "#64748b" }}>
+                            Latencia de entrega a Meta: {whatsappTestResult.latency_ms} ms
+                          </Typography>
+                        )}
+                      </Alert>
+                    )}
+
+                    {/* Botones de Acción */}
+                    <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
+                      <Button
+                        variant="contained"
+                        color="primary"
+                        startIcon={<SaveIcon />}
+                        onClick={handleSaveWhatsapp}
+                        disabled={savingWhatsapp || testingWhatsapp}
+                        sx={{ fontWeight: 600, px: 3, textTransform: "none", borderRadius: "8px" }}
+                      >
+                        {savingWhatsapp ? "Guardando..." : "Guardar Configuración WhatsApp"}
+                      </Button>
+
+                      <Button
+                        variant="outlined"
+                        color="success"
+                        startIcon={testingWhatsapp ? <CircularProgress size={18} /> : <SendIcon />}
+                        onClick={handleTestWhatsapp}
+                        disabled={testingWhatsapp || savingWhatsapp || !kapsoApiKey.trim() || !kapsoPhoneNumberId.trim()}
+                        sx={{ fontWeight: 600, px: 2.5, textTransform: "none", borderRadius: "8px" }}
+                      >
+                        {testingWhatsapp ? "Enviando mensaje de prueba..." : "Enviar Mensaje de Prueba"}
+                      </Button>
+                    </Box>
+                  </CardContent>
+                </Card>
+              </Grid>
+
+              {/* Panel Lateral: Guía Rápida Kapso */}
+              <Grid size={{ xs: 12, lg: 4 }}>
+                <Card sx={{ borderRadius: "12px", boxShadow: "0 2px 6px rgba(0,0,0,0.04)", mb: 3 }}>
+                  <CardContent sx={{ p: 3 }}>
+                    <Typography variant="h6" sx={{ fontWeight: 600, mb: 2 }}>
+                      Estado del Canal
+                    </Typography>
+
+                    <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <Typography variant="body2" sx={{ color: "#64748b" }}>
+                          Proveedor Activo:
+                        </Typography>
+                        <Chip
+                          label={whatsappProvider.toUpperCase()}
+                          size="small"
+                          color={whatsappProvider === "kapso" ? "success" : "default"}
+                          sx={{ fontWeight: 700 }}
+                        />
+                      </Box>
+
+                      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <Typography variant="body2" sx={{ color: "#64748b" }}>
+                          Destino del Director:
+                        </Typography>
+                        <Typography variant="body2" sx={{ fontWeight: 600, fontFamily: "monospace" }}>
+                          +{directorWhatsappPhone}
+                        </Typography>
+                      </Box>
+
+                      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <Typography variant="body2" sx={{ color: "#64748b" }}>
+                          Infraestructura:
+                        </Typography>
+                        <Chip label="Meta Cloud API v24.0" size="small" variant="outlined" color="primary" sx={{ fontWeight: 600 }} />
+                      </Box>
+                    </Box>
+                  </CardContent>
+                </Card>
+
+                <Card sx={{ borderRadius: "12px", boxShadow: "0 2px 6px rgba(0,0,0,0.04)", backgroundColor: "#f0fdf4", border: "1px solid #bbf7d0" }}>
+                  <CardContent sx={{ p: 3 }}>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 700, color: "#166534", mb: 1, display: "flex", alignItems: "center", gap: 0.5 }}>
+                      🚀 Cómo obtener tus credenciales de Kapso:
+                    </Typography>
+
+                    <Typography variant="body2" sx={{ color: "#14532d", mb: 1.5, lineHeight: 1.5 }}>
+                      1. Entra a <strong><a href="https://dashboard.kapso.ai" target="_blank" rel="noopener noreferrer" style={{ color: "#15803d" }}>dashboard.kapso.ai <LaunchIcon sx={{ fontSize: 13 }} /></a></strong> y crea tu cuenta gratuita.
+                    </Typography>
+
+                    <Typography variant="body2" sx={{ color: "#14532d", mb: 1.5, lineHeight: 1.5 }}>
+                      2. Ve a <strong>Integrations → API keys</strong> y copia tu clave.
+                    </Typography>
+
+                    <Typography variant="body2" sx={{ color: "#14532d", mb: 1.5, lineHeight: 1.5 }}>
+                      3. Ve a <strong>WhatsApp → Phone numbers</strong> y copia el <strong>Phone Number ID</strong> (puedes usar el número de prueba gratuito o tu propio número).
+                    </Typography>
+
+                    <Typography variant="body2" sx={{ color: "#14532d", lineHeight: 1.5 }}>
+                      4. Pégalos aquí y haz clic en <strong>"Enviar Mensaje de Prueba"</strong>.
                     </Typography>
                   </CardContent>
                 </Card>

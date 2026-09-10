@@ -177,4 +177,11 @@ export const ApiService = {
       method: 'POST',
       body: JSON.stringify({ model }),
     }),
+
+  testWhatsapp: (payload: { phone?: string; message?: string } = {}) =>
+    apiFetch<any>('/configuracion/test-whatsapp', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
 };
+

@@ -8,6 +8,7 @@ mod handlers;
 mod middleware;
 mod models;
 mod routes;
+pub mod services;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
