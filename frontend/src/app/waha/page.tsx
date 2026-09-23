@@ -41,10 +41,20 @@ export default function CanalWhatsAppPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
+  // Valores activos consolidados (API + localStorage)
+  const [activeKey, setActiveKey] = useState<string>("");
+  const [activePhoneId, setActivePhoneId] = useState<string>("");
+  const [activeDirectorPhone, setActiveDirectorPhone] = useState<string>("");
+
   const loadData = async () => {
     try {
       setLoading(true);
       setError(null);
+
+      // Respaldo en localStorage
+      const localKey = typeof window !== "undefined" ? localStorage.getItem("exposureiq_kapso_api_key") || "" : "";
+      const localPhoneId = typeof window !== "undefined" ? localStorage.getItem("exposureiq_kapso_phone_id") || "" : "";
+      const localDirectorPhone = typeof window !== "undefined" ? localStorage.getItem("exposureiq_director_phone") || "" : "";
 
       const [cfg, dests, historial] = await Promise.all([
         ApiService.getConfiguraciones().catch(() => null),
@@ -52,9 +62,27 @@ export default function CanalWhatsAppPage() {
         ApiService.getHistorialMensajes().catch(() => []),
       ]);
 
+      const resolvedKey = (cfg?.kapso_api_key && cfg.kapso_api_key.trim()) ? cfg.kapso_api_key.trim() : localKey;
+      const resolvedPhoneId = (cfg?.kapso_phone_number_id && cfg.kapso_phone_number_id.trim()) ? cfg.kapso_phone_number_id.trim() : localPhoneId;
+      const rawCandidatePhone = (cfg?.director_whatsapp_phone && cfg.director_whatsapp_phone.trim()) ? cfg.director_whatsapp_phone.trim() : localDirectorPhone;
+      const resolvedDirectorPhone = (rawCandidatePhone && rawCandidatePhone !== "5215512345678") ? rawCandidatePhone : "";
+
+      setActiveKey(resolvedKey);
+      setActivePhoneId(resolvedPhoneId);
+      setActiveDirectorPhone(resolvedDirectorPhone);
+
       setConfig(cfg);
       setDestinatarios(dests || []);
       setMensajes(historial || []);
+
+      // Auto-sincronizar a la base de datos si estaba en localStorage pero ausente en backend
+      if ((!cfg?.kapso_api_key || !cfg?.kapso_phone_number_id) && (resolvedKey && resolvedPhoneId)) {
+        ApiService.updateConfiguracion({
+          kapso_api_key: resolvedKey,
+          kapso_phone_number_id: resolvedPhoneId,
+          director_whatsapp_phone: resolvedDirectorPhone || undefined,
+        }).catch(() => {});
+      }
     } catch (err: any) {
       setError(err.message || "Error al cargar la información del canal WhatsApp");
     } finally {
@@ -64,7 +92,7 @@ export default function CanalWhatsAppPage() {
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, 20000); // Refresco cada 20s
+    const interval = setInterval(loadData, 20000);
     return () => clearInterval(interval);
   }, []);
 
@@ -74,15 +102,24 @@ export default function CanalWhatsAppPage() {
       setError(null);
       setSuccess(null);
 
-      const res = await ApiService.testWhatsapp();
-      setSuccess(
-        `✅ Mensaje de prueba despachado con éxito vía Kapso Meta Cloud API. (ID: ${
-          res.message_id || res.id || "Entregado"
-        })`
-      );
+      const res = await ApiService.testWhatsapp({
+        phone: activeDirectorPhone,
+        api_key: activeKey,
+        phone_number_id: activePhoneId,
+      });
+
+      if (res.ok) {
+        setSuccess(
+          `✅ Mensaje de prueba despachado con éxito. (ID: ${
+            res.message_id || res.id || "Entregado"
+          })`
+        );
+      } else {
+        setError(`Fallo al enviar mensaje de prueba: ${res.error || res.mensaje || "Error desconocido"}`);
+      }
       setTimeout(loadData, 2000);
     } catch (err: any) {
-      setError(`Error en prueba de envío: ${err.message || "Revisa tus credenciales de Kapso"}`);
+      setError(`Error en prueba de envío: ${err.message || "Revisa tus credenciales de WhatsApp"}`);
     } finally {
       setTesting(false);
     }
@@ -91,7 +128,7 @@ export default function CanalWhatsAppPage() {
   const getEstadoMensajeChip = (estado: string) => {
     switch (estado) {
       case "confirmado":
-        return <Chip label="Entregado (Meta Cloud)" color="success" size="small" icon={<CheckCircleOutlineIcon />} />;
+        return <Chip label="Entregado" color="success" size="small" icon={<CheckCircleOutlineIcon />} />;
       case "entregado_a_n8n":
       case "procesando":
         return <Chip label="Enviando..." color="info" size="small" icon={<HourglassEmptyIcon />} />;
@@ -102,12 +139,7 @@ export default function CanalWhatsAppPage() {
     }
   };
 
-  const isConnected = Boolean(
-    config?.kapso_api_key &&
-    config?.kapso_phone_number_id &&
-    config.kapso_phone_number_id.trim() !== ""
-  );
-
+  const isConnected = Boolean(activePhoneId && (activeKey || config?.kapso_api_key));
   const activeDestinatariosCount = destinatarios.filter((d) => d.activo).length;
 
   return (
@@ -116,10 +148,10 @@ export default function CanalWhatsAppPage() {
       <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 3 }}>
         <Box>
           <Typography variant="h5" sx={{ fontWeight: 700, color: "#1e293b" }}>
-            Canal WhatsApp — Monitoreo de Entrega (Kapso)
+            Canal WhatsApp
           </Typography>
           <Typography variant="body2" sx={{ color: "#64748b" }}>
-            Despacho oficial de alertas y síntesis de boletines mediante WhatsApp Cloud API (Meta Oficial).
+            Monitoreo de entregas y estado del servicio de mensajería ejecutiva.
           </Typography>
         </Box>
         <Button
@@ -146,18 +178,18 @@ export default function CanalWhatsAppPage() {
       )}
 
       <Grid container spacing={3}>
-        {/* Tarjeta de Estado del Canal Kapso */}
+        {/* Tarjeta de Estado del Canal */}
         <Grid size={{ xs: 12, md: 4 }}>
           <Card sx={{ borderRadius: "12px", boxShadow: "0 2px 6px rgba(0,0,0,0.04)" }}>
             <CardContent>
-              <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 2 }}>
+              <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, mb: 2 }}>
                 <WhatsAppIcon sx={{ color: "#25D366", fontSize: 32 }} />
                 <Box>
                   <Typography variant="h6" sx={{ fontWeight: 600, lineHeight: 1.2 }}>
-                    Meta Cloud API
+                    WhatsApp Business Cloud
                   </Typography>
                   <Typography variant="caption" sx={{ color: "#64748b" }}>
-                    Gateway Corporativo Kapso
+                    Conexión Oficial
                   </Typography>
                 </Box>
               </Box>
@@ -169,16 +201,11 @@ export default function CanalWhatsAppPage() {
                 <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 0.5 }}>
                   <Chip
                     icon={isConnected ? <CloudDoneIcon /> : <ErrorOutlineIcon />}
-                    label={isConnected ? "CONEXIÓN ACTIVA (NUBE)" : "CONFIGURACIÓN PENDIENTE"}
+                    label={isConnected ? "CONECTADO" : "PENDIENTE"}
                     color={isConnected ? "success" : "warning"}
                     sx={{ fontWeight: 700 }}
                   />
                 </Box>
-                <Typography variant="body2" sx={{ color: "#475569", fontSize: "0.82rem", mt: 1 }}>
-                  {isConnected
-                    ? "Canal en la nube operativo. Mensajes se entregan directamente a través de los servidores de Meta."
-                    : "Falta configurar la API Key de Kapso o el Phone Number ID en Ajustes."}
-                </Typography>
               </Box>
 
               <Box sx={{ mb: 2.5, display: "flex", flexDirection: "column", gap: 1.5 }}>
@@ -187,7 +214,7 @@ export default function CanalWhatsAppPage() {
                     Proveedor:
                   </Typography>
                   <Typography variant="body2" sx={{ fontWeight: 600, color: "#1e293b" }}>
-                    Meta Cloud API (Kapso)
+                    WhatsApp Business Cloud API
                   </Typography>
                 </Box>
                 <Divider />
@@ -206,7 +233,7 @@ export default function CanalWhatsAppPage() {
                       borderRadius: "4px",
                     }}
                   >
-                    {config?.kapso_phone_number_id || "No asignado"}
+                    {activePhoneId || "No asignado"}
                   </Typography>
                 </Box>
                 <Divider />
@@ -215,16 +242,16 @@ export default function CanalWhatsAppPage() {
                     Destino Principal:
                   </Typography>
                   <Typography variant="body2" sx={{ fontWeight: 600, fontFamily: "monospace" }}>
-                    {config?.director_whatsapp_phone || "No configurado"}
+                    {activeDirectorPhone || "No configurado"}
                   </Typography>
                 </Box>
                 <Divider />
                 <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <Typography variant="body2" sx={{ color: "#64748b", display: "flex", alignItems: "center", gap: 0.5 }}>
-                    <ContactPhoneIcon sx={{ fontSize: 16 }} /> Contactos Activos:
+                    <ContactPhoneIcon sx={{ fontSize: 16 }} /> Contactos en Lista:
                   </Typography>
                   <Chip
-                    label={`${activeDestinatariosCount} en lista`}
+                    label={`${activeDestinatariosCount} activos`}
                     size="small"
                     color={activeDestinatariosCount > 0 ? "primary" : "default"}
                     sx={{ fontWeight: 600 }}
@@ -257,17 +284,8 @@ export default function CanalWhatsAppPage() {
                   startIcon={<SettingsIcon />}
                   sx={{ fontWeight: 600, color: "#475569", borderColor: "#cbd5e1" }}
                 >
-                  Editar Configuración
+                  Configurar Parámetros
                 </Button>
-              </Box>
-
-              <Box sx={{ mt: 3, p: 2, backgroundColor: "#f0fdf4", borderRadius: "8px", border: "1px solid #bbf7d0" }}>
-                <Typography variant="caption" sx={{ fontWeight: 700, color: "#166534", display: "block", mb: 0.5 }}>
-                  🛡️ INFRAESTRUCTURA OFICIAL CLOUD
-                </Typography>
-                <Typography variant="body2" sx={{ fontSize: "0.78rem", color: "#15803d" }}>
-                  Al operar directamente con la API Oficial de Meta vía Kapso, no se requieren códigos QR ni mantener celulares conectados. El despacho es 100% cloud y desatendido.
-                </Typography>
               </Box>
             </CardContent>
           </Card>
@@ -280,10 +298,10 @@ export default function CanalWhatsAppPage() {
               <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 2 }}>
                 <Box>
                   <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                    Registro de Despachos WhatsApp
+                    Registro de Despachos
                   </Typography>
                   <Typography variant="caption" sx={{ color: "#64748b" }}>
-                    Historial de mensajes emitidos en tiempo real vía Kapso Meta Cloud API
+                    Historial de mensajes emitidos en tiempo real
                   </Typography>
                 </Box>
               </Box>

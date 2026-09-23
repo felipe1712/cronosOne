@@ -142,7 +142,7 @@ const LeftSidebarMenu: React.FC<LeftSidebarProps> = ({ toggleActive }) => {
                       pathname === "/waha" ? "active" : ""
                     }`}
                   >
-                    Canal WhatsApp (Kapso)
+                    Canal WhatsApp
                   </Link>
                 </li>
                 <li className="sidemenu-item">

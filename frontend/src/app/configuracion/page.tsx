@@ -498,7 +498,7 @@ export default function ConfiguracionPage() {
           <Tab
             icon={<WhatsAppIcon sx={{ color: "#25D366" }} />}
             iconPosition="start"
-            label="Canal WhatsApp (Kapso)"
+            label="Canal WhatsApp"
             sx={{ fontWeight: 600, textTransform: "none", fontSize: "0.95rem" }}
           />
           <Tab

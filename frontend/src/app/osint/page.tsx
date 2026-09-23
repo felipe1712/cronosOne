@@ -707,7 +707,7 @@ export default function OsintPage() {
             color={actionType === "validar" ? "error" : "inherit"}
             onClick={handleConfirmValidation}
           >
-            {actionType === "validar" ? "Validar y Enviar vía WhatsApp (Kapso)" : "Confirmar Descarte"}
+            {actionType === "validar" ? "Validar y Enviar vía WhatsApp" : "Confirmar Descarte"}
           </Button>
         </DialogActions>
       </Dialog>
