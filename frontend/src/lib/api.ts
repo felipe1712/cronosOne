@@ -144,8 +144,20 @@ export const ApiService = {
       body: JSON.stringify({ texto }),
     }),
 
-  // Mensajería y WAHA
+  // Mensajería y Despacho WhatsApp
   getHistorialMensajes: () => apiFetch<any[]>('/mensajes/historial'),
+
+  enviarMensajeCola: (id: string, payload: { telefono?: string; api_key?: string; phone_number_id?: string } = {}) =>
+    apiFetch<any>(`/mensajes/${id}/enviar`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  despacharColaPendiente: (payload: { telefono?: string; api_key?: string; phone_number_id?: string } = {}) =>
+    apiFetch<any>('/mensajes/despachar-cola', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
 
   getWahaStatus: () => apiFetch<any>('/waha/status'),
 

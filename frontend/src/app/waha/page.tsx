@@ -38,6 +38,8 @@ export default function CanalWhatsAppPage() {
   const [mensajes, setMensajes] = useState<any[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [testing, setTesting] = useState<boolean>(false);
+  const [sendingId, setSendingId] = useState<string | null>(null);
+  const [dispatchingAll, setDispatchingAll] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -125,6 +127,61 @@ export default function CanalWhatsAppPage() {
     }
   };
 
+  const handleEnviarMensaje = async (m: any) => {
+    try {
+      setSendingId(m.id);
+      setError(null);
+      setSuccess(null);
+
+      // Si el destinatario registrado es el número dummy previo, enviar al director real
+      const target = (m.destinatario && m.destinatario !== "5215512345678")
+        ? m.destinatario
+        : activeDirectorPhone;
+
+      const res = await ApiService.enviarMensajeCola(m.id, {
+        telefono: target,
+        api_key: activeKey,
+        phone_number_id: activePhoneId,
+      });
+
+      if (res.ok) {
+        setSuccess(`✅ Mensaje enviado exitosamente a ${res.destinatario || target}.`);
+      } else {
+        setError(`Error enviando mensaje: ${res.error || "No se pudo entregar"}`);
+      }
+      setTimeout(loadData, 1500);
+    } catch (err: any) {
+      setError(`Error despachando mensaje: ${err.message || "Error de red"}`);
+    } finally {
+      setSendingId(null);
+    }
+  };
+
+  const handleDespacharCola = async () => {
+    try {
+      setDispatchingAll(true);
+      setError(null);
+      setSuccess(null);
+
+      const res = await ApiService.despacharColaPendiente({
+        telefono: activeDirectorPhone,
+        api_key: activeKey,
+        phone_number_id: activePhoneId,
+      });
+
+      if (res.ok) {
+        setSuccess(res.mensaje || "Mensajes en cola despachados exitosamente.");
+      } else {
+        setError(res.error || "Error al procesar la cola.");
+      }
+      setTimeout(loadData, 1500);
+    } catch (err: any) {
+      setError(`Error procesando cola: ${err.message}`);
+    } finally {
+      setDispatchingAll(false);
+    }
+  };
+
   const getEstadoMensajeChip = (estado: string) => {
     switch (estado) {
       case "confirmado":
@@ -141,6 +198,7 @@ export default function CanalWhatsAppPage() {
 
   const isConnected = Boolean(activePhoneId && (activeKey || config?.kapso_api_key));
   const activeDestinatariosCount = destinatarios.filter((d) => d.activo).length;
+  const pendientesCount = mensajes.filter((m) => m.estado === "pendiente" || m.estado === "entregado_a_n8n").length;
 
   return (
     <Box sx={{ p: 3 }}>
@@ -304,6 +362,24 @@ export default function CanalWhatsAppPage() {
                     Historial de mensajes emitidos en tiempo real
                   </Typography>
                 </Box>
+                {pendientesCount > 0 && (
+                  <Button
+                    variant="contained"
+                    color="success"
+                    size="small"
+                    startIcon={dispatchingAll ? <CircularProgress size={16} color="inherit" /> : <SendIcon />}
+                    disabled={dispatchingAll || !isConnected}
+                    onClick={handleDespacharCola}
+                    sx={{
+                      fontWeight: 600,
+                      backgroundColor: "#16a34a",
+                      "&:hover": { backgroundColor: "#15803d" },
+                      textTransform: "none",
+                    }}
+                  >
+                    {dispatchingAll ? "Despachando..." : `Despachar Cola (${pendientesCount})`}
+                  </Button>
+                )}
               </Box>
 
               {loading ? (
@@ -324,43 +400,86 @@ export default function CanalWhatsAppPage() {
                         <TableCell sx={{ fontWeight: 600 }}>Contenido / Mensaje</TableCell>
                         <TableCell sx={{ fontWeight: 600 }}>Estado</TableCell>
                         <TableCell sx={{ fontWeight: 600 }}>Fecha Creación</TableCell>
+                        <TableCell sx={{ fontWeight: 600, textAlign: "center" }}>Acción</TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {mensajes.map((m) => (
-                        <TableRow key={m.id} hover>
-                          <TableCell>
-                            <Chip
-                              label={m.tipo === "alerta" ? "ALERTA" : "BRIEF"}
-                              color={m.tipo === "alerta" ? "error" : "primary"}
-                              size="small"
-                              sx={{ fontWeight: 700 }}
-                            />
-                          </TableCell>
-                          <TableCell sx={{ fontFamily: "monospace", fontSize: "0.85rem" }}>
-                            {m.destinatario}
-                          </TableCell>
-                          <TableCell sx={{ maxWidth: 300 }}>
-                            <Typography
-                              variant="body2"
-                              sx={{
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                display: "-webkit-box",
-                                WebkitLineClamp: 2,
-                                WebkitBoxOrient: "vertical",
-                                fontSize: "0.82rem",
-                              }}
-                            >
-                              {m.texto}
-                            </Typography>
-                          </TableCell>
-                          <TableCell>{getEstadoMensajeChip(m.estado)}</TableCell>
-                          <TableCell sx={{ fontSize: "0.8rem", whiteSpace: "nowrap" }}>
-                            {new Date(m.creado_en).toLocaleString()}
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                      {mensajes.map((m) => {
+                        const isPending = m.estado === "pendiente" || m.estado === "entregado_a_n8n";
+                        const isSending = sendingId === m.id;
+
+                        return (
+                          <TableRow key={m.id} hover>
+                            <TableCell>
+                              <Chip
+                                label={m.tipo === "alerta" ? "ALERTA" : "BRIEF"}
+                                color={m.tipo === "alerta" ? "error" : "primary"}
+                                size="small"
+                                sx={{ fontWeight: 700 }}
+                              />
+                            </TableCell>
+                            <TableCell sx={{ fontFamily: "monospace", fontSize: "0.85rem" }}>
+                              {m.destinatario}
+                            </TableCell>
+                            <TableCell sx={{ maxWidth: 280 }}>
+                              <Typography
+                                variant="body2"
+                                sx={{
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  display: "-webkit-box",
+                                  WebkitLineClamp: 2,
+                                  WebkitBoxOrient: "vertical",
+                                  fontSize: "0.82rem",
+                                }}
+                              >
+                                {m.texto}
+                              </Typography>
+                            </TableCell>
+                            <TableCell>{getEstadoMensajeChip(m.estado)}</TableCell>
+                            <TableCell sx={{ fontSize: "0.8rem", whiteSpace: "nowrap" }}>
+                              {new Date(m.creado_en).toLocaleString()}
+                            </TableCell>
+                            <TableCell sx={{ textAlign: "center", whiteSpace: "nowrap" }}>
+                              {isPending ? (
+                                <Button
+                                  variant="contained"
+                                  color="success"
+                                  size="small"
+                                  startIcon={
+                                    isSending ? (
+                                      <CircularProgress size={14} color="inherit" />
+                                    ) : (
+                                      <SendIcon sx={{ fontSize: "0.85rem" }} />
+                                    )
+                                  }
+                                  disabled={isSending || !isConnected}
+                                  onClick={() => handleEnviarMensaje(m)}
+                                  sx={{
+                                    textTransform: "none",
+                                    fontWeight: 600,
+                                    px: 1.5,
+                                    py: 0.4,
+                                    fontSize: "0.78rem",
+                                    backgroundColor: "#16a34a",
+                                    "&:hover": { backgroundColor: "#15803d" },
+                                  }}
+                                >
+                                  {isSending ? "Enviando..." : "Enviar Ahora"}
+                                </Button>
+                              ) : (
+                                <Chip
+                                  label="Entregado"
+                                  size="small"
+                                  variant="outlined"
+                                  color="success"
+                                  sx={{ fontSize: "0.72rem", fontWeight: 600 }}
+                                />
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 </TableContainer>

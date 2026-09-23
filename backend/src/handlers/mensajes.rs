@@ -14,6 +14,7 @@ use crate::{
     config::Config,
     db::DbPool,
     models::{ConfirmarMensajeRequest, MensajePendiente},
+    services::kapso::{get_whatsapp_config, KapsoClient},
 };
 
 #[derive(Debug, Deserialize)]
@@ -162,4 +163,204 @@ pub async fn list_historial_mensajes(
     })?;
 
     Ok((StatusCode::OK, Json(mensajes)))
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct EnviarMensajeRequest {
+    pub telefono: Option<String>,
+    pub api_key: Option<String>,
+    pub phone_number_id: Option<String>,
+}
+
+/// Despacha un mensaje específico de la cola vía WhatsApp Cloud API
+pub async fn enviar_mensaje_directo(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+    Path(id): Path<Uuid>,
+    Json(payload): Json<Option<EnviarMensajeRequest>>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let req = payload.unwrap_or_default();
+
+    let mensaje = sqlx::query_as::<_, MensajePendiente>(
+        "SELECT id, tipo, referencia_id, texto, destinatario, estado, 
+                intento_conteo, error_mensaje, creado_en, entregado_en, confirmado_en
+         FROM mensajes_pendientes
+         WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error consultando mensaje: {}", e)})),
+        )
+    })?;
+
+    let m = match mensaje {
+        Some(m) => m,
+        None => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "Mensaje no encontrado en cola"})),
+            ));
+        }
+    };
+
+    let cfg = get_whatsapp_config(&pool).await;
+    let api_key = req.api_key.filter(|k| !k.trim().is_empty()).unwrap_or(cfg.api_key);
+    let phone_number_id = req.phone_number_id.filter(|p| !p.trim().is_empty()).unwrap_or(cfg.phone_number_id);
+
+    if api_key.trim().is_empty() || phone_number_id.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "No hay credenciales de WhatsApp Cloud API configuradas"})),
+        ));
+    }
+
+    // Resolver destino: si payload provee teléfono válido, o si el destinatario guardado es válido (no dummy), o usar el del director
+    let target_phone = if let Some(p) = req.telefono.filter(|p| !p.trim().is_empty() && p.trim() != "5215512345678") {
+        p
+    } else if !m.destinatario.trim().is_empty() && m.destinatario.trim() != "5215512345678" {
+        m.destinatario.clone()
+    } else if !cfg.director_phone.trim().is_empty() && cfg.director_phone.trim() != "5215512345678" {
+        cfg.director_phone.clone()
+    } else {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "No hay número de teléfono de destino válido para este mensaje"})),
+        ));
+    };
+
+    let client = KapsoClient::new(api_key, phone_number_id);
+    match client.send_text(&target_phone, &m.texto).await {
+        Ok(msg_id) => {
+            let _ = sqlx::query(
+                "UPDATE mensajes_pendientes 
+                 SET estado = 'confirmado', confirmado_en = now(), destinatario = $1, proveedor = 'kapso', kapso_message_id = $2, meta_status = 'sent', error_mensaje = NULL 
+                 WHERE id = $3",
+            )
+            .bind(&target_phone)
+            .bind(&msg_id)
+            .bind(id)
+            .execute(&pool)
+            .await;
+
+            Ok((
+                StatusCode::OK,
+                Json(json!({
+                    "ok": true,
+                    "mensaje": format!("Mensaje despachado y entregado exitosamente a {}", target_phone),
+                    "id": id,
+                    "kapso_message_id": msg_id,
+                    "destinatario": target_phone,
+                    "estado": "confirmado"
+                })),
+            ))
+        }
+        Err(err) => {
+            let _ = sqlx::query(
+                "UPDATE mensajes_pendientes 
+                 SET estado = 'error', error_mensaje = $1, intento_conteo = intento_conteo + 1 
+                 WHERE id = $2",
+            )
+            .bind(&err)
+            .bind(id)
+            .execute(&pool)
+            .await;
+
+            Err((
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "ok": false,
+                    "error": format!("Error enviando mensaje: {}", err),
+                    "id": id
+                })),
+            ))
+        }
+    }
+}
+
+/// Despacha todos los mensajes pendientes en cola vía WhatsApp Cloud API
+pub async fn despachar_cola(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+    Json(payload): Json<Option<EnviarMensajeRequest>>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let req = payload.unwrap_or_default();
+    let cfg = get_whatsapp_config(&pool).await;
+
+    let api_key = req.api_key.filter(|k| !k.trim().is_empty()).unwrap_or(cfg.api_key);
+    let phone_number_id = req.phone_number_id.filter(|p| !p.trim().is_empty()).unwrap_or(cfg.phone_number_id);
+
+    if api_key.trim().is_empty() || phone_number_id.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "No hay credenciales de WhatsApp Cloud API configuradas"})),
+        ));
+    }
+
+    let client = KapsoClient::new(api_key, phone_number_id);
+
+    let pendientes = sqlx::query_as::<_, MensajePendiente>(
+        "SELECT id, tipo, referencia_id, texto, destinatario, estado, 
+                intento_conteo, error_mensaje, creado_en, entregado_en, confirmado_en
+         FROM mensajes_pendientes
+         WHERE estado IN ('pendiente', 'entregado_a_n8n')
+         ORDER BY creado_en ASC",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+
+    let mut enviados = 0;
+    let mut errores = 0;
+
+    for m in pendientes {
+        let target_phone = if !m.destinatario.trim().is_empty() && m.destinatario.trim() != "5215512345678" {
+            m.destinatario.clone()
+        } else if !cfg.director_phone.trim().is_empty() && cfg.director_phone.trim() != "5215512345678" {
+            cfg.director_phone.clone()
+        } else if let Some(ref p) = req.telefono.filter(|p| !p.trim().is_empty() && p.trim() != "5215512345678") {
+            p.clone()
+        } else {
+            continue;
+        };
+
+        match client.send_text(&target_phone, &m.texto).await {
+            Ok(msg_id) => {
+                let _ = sqlx::query(
+                    "UPDATE mensajes_pendientes 
+                     SET estado = 'confirmado', confirmado_en = now(), destinatario = $1, proveedor = 'kapso', kapso_message_id = $2, meta_status = 'sent', error_mensaje = NULL 
+                     WHERE id = $3",
+                )
+                .bind(&target_phone)
+                .bind(&msg_id)
+                .bind(m.id)
+                .execute(&pool)
+                .await;
+                enviados += 1;
+            }
+            Err(e) => {
+                let _ = sqlx::query(
+                    "UPDATE mensajes_pendientes 
+                     SET estado = 'error', error_mensaje = $1, intento_conteo = intento_conteo + 1 
+                     WHERE id = $2",
+                )
+                .bind(&e)
+                .bind(m.id)
+                .execute(&pool)
+                .await;
+                errores += 1;
+            }
+        }
+    }
+
+    Ok((
+        StatusCode::OK,
+        Json(json!({
+            "ok": true,
+            "enviados": enviados,
+            "errores": errores,
+            "mensaje": format!("Se procesaron {} mensajes ({} exitosos, {} con error)", enviados + errores, enviados, errores)
+        })),
+    ))
 }

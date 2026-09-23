@@ -31,8 +31,10 @@ pub fn create_router(pool: DbPool, config: Arc<Config>) -> Router {
         .route("/api/boletines/:id/procesar", post(boletines::procesar_boletin))
         .route("/api/boletines/:id/sintesis", put(boletines::actualizar_sintesis))
         .route("/api/boletines/:id/aprobar", post(boletines::aprobar_boletin))
-        // Mensajería (historial en panel)
+        // Mensajería (historial y despacho en panel)
         .route("/api/mensajes/historial", get(mensajes::list_historial_mensajes))
+        .route("/api/mensajes/:id/enviar", post(mensajes::enviar_mensaje_directo))
+        .route("/api/mensajes/despachar-cola", post(mensajes::despachar_cola))
         // WAHA
         .route("/api/waha/status", get(waha::get_waha_status))
         .route("/api/waha/qr", get(waha::get_waha_qr))
