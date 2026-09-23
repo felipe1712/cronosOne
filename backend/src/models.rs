@@ -242,3 +242,37 @@ pub struct WebhookWhatsappSessionPayload {
     pub qr: Option<String>,
     pub detalles: Option<serde_json::Value>,
 }
+
+// ============================================================================
+// 6. Lista de Distribución de Destinatarios WhatsApp
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct Destinatario {
+    pub id: Uuid,
+    pub nombre: String,
+    pub telefono: String,
+    pub cargo: Option<String>,
+    pub activo: bool,
+    pub notas: Option<String>,
+    pub creado_en: DateTime<Utc>,
+    pub actualizado_en: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateDestinatarioRequest {
+    pub nombre: String,
+    pub telefono: String,
+    pub cargo: Option<String>,
+    pub notas: Option<String>,
+    pub activo: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateDestinatarioRequest {
+    pub nombre: String,
+    pub telefono: String,
+    pub cargo: Option<String>,
+    pub notas: Option<String>,
+    pub activo: bool,
+}

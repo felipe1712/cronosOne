@@ -52,6 +52,12 @@ pub fn create_router(pool: DbPool, config: Arc<Config>) -> Router {
         .route("/api/configuracion", put(configuracion::update_configuracion))
         .route("/api/configuracion/test-claude", post(configuracion::test_claude))
         .route("/api/configuracion/test-whatsapp", post(configuracion::test_whatsapp))
+        // Lista de Distribución WhatsApp (Destinatarios)
+        .route("/api/configuracion/destinatarios", get(configuracion::list_destinatarios))
+        .route("/api/configuracion/destinatarios", post(configuracion::create_destinatario))
+        .route("/api/configuracion/destinatarios/:id", put(configuracion::update_destinatario))
+        .route("/api/configuracion/destinatarios/:id", delete(configuracion::delete_destinatario))
+        .route("/api/configuracion/destinatarios/:id/toggle", patch(configuracion::toggle_destinatario))
         .layer(middleware::from_fn_with_state(config.clone(), require_auth));
 
     // Rutas públicas (consumidas por frontend login y cron n8n)

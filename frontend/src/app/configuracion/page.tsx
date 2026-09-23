@@ -25,6 +25,18 @@ import {
   Tooltip,
   IconButton,
   InputAdornment,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Switch,
+  FormControlLabel,
 } from "@mui/material";
 import SettingsIcon from "@mui/icons-material/Settings";
 import SmartToyIcon from "@mui/icons-material/SmartToy";
@@ -43,7 +55,14 @@ import SendIcon from "@mui/icons-material/Send";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
 import LaunchIcon from "@mui/icons-material/Launch";
-import { ApiService } from "@/lib/api";
+import GroupIcon from "@mui/icons-material/Group";
+import AddIcon from "@mui/icons-material/Add";
+import EditIcon from "@mui/icons-material/Edit";
+import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
+import PhoneIcon from "@mui/icons-material/Phone";
+import PersonIcon from "@mui/icons-material/Person";
+import PauseCircleOutlineIcon from "@mui/icons-material/PauseCircleOutline";
+import { ApiService, Destinatario } from "@/lib/api";
 
 interface AvailableModel {
   id: string;
@@ -82,6 +101,20 @@ export default function ConfiguracionPage() {
     error?: string;
   } | null>(null);
 
+  // Estados para Lista de Distribución
+  const [destinatarios, setDestinatarios] = useState<Destinatario[]>([]);
+  const [loadingDestinatarios, setLoadingDestinatarios] = useState<boolean>(false);
+  const [modalOpen, setModalOpen] = useState<boolean>(false);
+  const [editingDestinatario, setEditingDestinatario] = useState<Destinatario | null>(null);
+  const [formNombre, setFormNombre] = useState<string>("");
+  const [formTelefono, setFormTelefono] = useState<string>("");
+  const [formCargo, setFormCargo] = useState<string>("");
+  const [formNotas, setFormNotas] = useState<string>("");
+  const [formActivo, setFormActivo] = useState<boolean>(true);
+  const [savingDestinatario, setSavingDestinatario] = useState<boolean>(false);
+  const [testingPhoneId, setTestingPhoneId] = useState<string | null>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+
   // Estados generales
   const [loading, setLoading] = useState<boolean>(true);
   const [savingModel, setSavingModel] = useState<boolean>(false);
@@ -104,7 +137,10 @@ export default function ConfiguracionPage() {
     try {
       setLoading(true);
       setErrorMsg(null);
-      const data = await ApiService.getConfiguraciones();
+      const [data, dests] = await Promise.all([
+        ApiService.getConfiguraciones(),
+        ApiService.getDestinatarios().catch(() => []),
+      ]);
       if (data) {
         if (data.claude_model) {
           setActiveModel(data.claude_model);
@@ -133,11 +169,134 @@ export default function ConfiguracionPage() {
           setDirectorWhatsappPhone(data.director_whatsapp_phone);
         }
       }
+      if (dests) {
+        setDestinatarios(dests);
+      }
     } catch (err: any) {
       console.error("Error cargando configuración:", err);
       setErrorMsg(err.message || "No se pudo cargar la configuración.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadDestinatarios = async () => {
+    try {
+      setLoadingDestinatarios(true);
+      const dests = await ApiService.getDestinatarios();
+      setDestinatarios(dests || []);
+    } catch (err: any) {
+      console.error("Error cargando lista de distribución:", err);
+      setErrorMsg(err.message || "No se pudo cargar la lista de distribución.");
+    } finally {
+      setLoadingDestinatarios(false);
+    }
+  };
+
+  const handleOpenAddModal = () => {
+    setEditingDestinatario(null);
+    setFormNombre("");
+    setFormTelefono("+52");
+    setFormCargo("");
+    setFormNotas("");
+    setFormActivo(true);
+    setModalOpen(true);
+  };
+
+  const handleOpenEditModal = (d: Destinatario) => {
+    setEditingDestinatario(d);
+    setFormNombre(d.nombre);
+    setFormTelefono(d.telefono);
+    setFormCargo(d.cargo || "");
+    setFormNotas(d.notas || "");
+    setFormActivo(d.activo);
+    setModalOpen(true);
+  };
+
+  const handleSaveDestinatario = async () => {
+    if (!formNombre.trim()) {
+      setErrorMsg("El nombre del destinatario es obligatorio.");
+      return;
+    }
+    if (!formTelefono.trim()) {
+      setErrorMsg("El número de teléfono WhatsApp es obligatorio.");
+      return;
+    }
+
+    try {
+      setSavingDestinatario(true);
+      setErrorMsg(null);
+      if (editingDestinatario) {
+        await ApiService.updateDestinatario(editingDestinatario.id, {
+          nombre: formNombre.trim(),
+          telefono: formTelefono.trim(),
+          cargo: formCargo.trim() || undefined,
+          notas: formNotas.trim() || undefined,
+          activo: formActivo,
+        });
+        setSuccessMsg(`Destinatario "${formNombre}" actualizado exitosamente.`);
+      } else {
+        await ApiService.createDestinatario({
+          nombre: formNombre.trim(),
+          telefono: formTelefono.trim(),
+          cargo: formCargo.trim() || undefined,
+          notas: formNotas.trim() || undefined,
+          activo: formActivo,
+        });
+        setSuccessMsg(`Destinatario "${formNombre}" agregado a la lista de distribución.`);
+      }
+      setModalOpen(false);
+      await loadDestinatarios();
+    } catch (err: any) {
+      console.error("Error guardando destinatario:", err);
+      setErrorMsg(err.message || "Error al guardar el destinatario.");
+    } finally {
+      setSavingDestinatario(false);
+    }
+  };
+
+  const handleToggleDestinatario = async (id: string, nombre: string) => {
+    try {
+      setErrorMsg(null);
+      await ApiService.toggleDestinatario(id);
+      setSuccessMsg(`Estado de "${nombre}" actualizado.`);
+      await loadDestinatarios();
+    } catch (err: any) {
+      console.error("Error cambiando estado:", err);
+      setErrorMsg(err.message || "Error al actualizar estado del destinatario.");
+    }
+  };
+
+  const handleDeleteDestinatario = async (id: string, nombre: string) => {
+    try {
+      setErrorMsg(null);
+      await ApiService.deleteDestinatario(id);
+      setSuccessMsg(`Destinatario "${nombre}" eliminado de la lista.`);
+      setDeleteConfirmId(null);
+      await loadDestinatarios();
+    } catch (err: any) {
+      console.error("Error eliminando destinatario:", err);
+      setErrorMsg(err.message || "Error al eliminar destinatario.");
+    }
+  };
+
+  const handleTestIndividualWhatsapp = async (d: Destinatario) => {
+    try {
+      setTestingPhoneId(d.id);
+      setErrorMsg(null);
+      const res = await ApiService.testWhatsapp({
+        phone: d.telefono,
+        message: `🔔 *Prueba Directa ExposureIQ — WhatsApp Oficial*\n\nHola *${d.nombre}*,\nEste es un mensaje de prueba para verificar que tu línea está correctamente dada de alta en la lista de distribución ejecutiva.`,
+      });
+      if (res.ok) {
+        setSuccessMsg(`Mensaje de prueba entregado a ${d.nombre} (${d.telefono}) vía Kapso (${res.latency_ms}ms).`);
+      } else {
+        setErrorMsg(`Fallo en el envío a ${d.nombre}: ${res.error || res.mensaje}`);
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || "Error enviando mensaje de prueba.");
+    } finally {
+      setTestingPhoneId(null);
     }
   };
 
@@ -248,7 +407,7 @@ export default function ConfiguracionPage() {
             Configuración del Sistema
           </Typography>
           <Typography variant="body2" sx={{ color: "#64748b" }}>
-            Modelos de IA, Directrices de Prompt y Canal de Entrega WhatsApp (Kapso Cloud API)
+            Modelos de IA, Directrices de Prompt, Canal WhatsApp y Lista de Distribución
           </Typography>
         </Box>
 
@@ -291,6 +450,12 @@ export default function ConfiguracionPage() {
             icon={<WhatsAppIcon sx={{ color: "#25D366" }} />}
             iconPosition="start"
             label="Canal WhatsApp (Kapso)"
+            sx={{ fontWeight: 600, textTransform: "none", fontSize: "0.95rem" }}
+          />
+          <Tab
+            icon={<GroupIcon sx={{ color: "#0284c7" }} />}
+            iconPosition="start"
+            label="Lista de Distribución"
             sx={{ fontWeight: 600, textTransform: "none", fontSize: "0.95rem" }}
           />
         </Tabs>
@@ -882,8 +1047,422 @@ export default function ConfiguracionPage() {
               </Grid>
             </Grid>
           )}
+
+          {/* ================================================================= */}
+          {/* PESTAÑA 3: LISTA DE DISTRIBUCIÓN WHATSAPP                         */}
+          {/* ================================================================= */}
+          {tabIndex === 3 && (
+            <Box>
+              {/* Barra superior de acciones */}
+              <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 3, flexWrap: "wrap", gap: 2 }}>
+                <Box>
+                  <Typography variant="h6" sx={{ fontWeight: 700, color: "#1e293b", display: "flex", alignItems: "center", gap: 1 }}>
+                    <GroupIcon sx={{ color: "#0284c7" }} />
+                    Lista de Distribución WhatsApp
+                  </Typography>
+                  <Typography variant="body2" sx={{ color: "#64748b" }}>
+                    Administra los destinatarios ejecutivos que recibirán los briefings y alertas en tiempo real vía Kapso / Meta Cloud API.
+                  </Typography>
+                </Box>
+                <Box sx={{ display: "flex", gap: 1.5 }}>
+                  <Button
+                    variant="outlined"
+                    startIcon={<RefreshIcon />}
+                    onClick={loadDestinatarios}
+                    disabled={loadingDestinatarios}
+                    sx={{ textTransform: "none" }}
+                  >
+                    Actualizar
+                  </Button>
+                  <Button
+                    variant="contained"
+                    startIcon={<AddIcon />}
+                    onClick={handleOpenAddModal}
+                    sx={{
+                      backgroundColor: "#0284c7",
+                      "&:hover": { backgroundColor: "#0369a1" },
+                      textTransform: "none",
+                      fontWeight: 600,
+                    }}
+                  >
+                    Nuevo Destinatario
+                  </Button>
+                </Box>
+              </Box>
+
+              {/* Tarjetas resumen KPI */}
+              <Grid container spacing={2.5} sx={{ mb: 3 }}>
+                <Grid item xs={12} sm={4}>
+                  <Card sx={{ borderRadius: "12px", border: "1px solid #e2e8f0", boxShadow: "0 2px 4px rgba(0,0,0,0.03)" }}>
+                    <CardContent sx={{ p: 2.5, display: "flex", alignItems: "center", gap: 2 }}>
+                      <Box sx={{ p: 1.5, borderRadius: "10px", backgroundColor: "#f0f9ff", color: "#0284c7" }}>
+                        <GroupIcon sx={{ fontSize: 32 }} />
+                      </Box>
+                      <Box>
+                        <Typography variant="body2" sx={{ color: "#64748b", fontWeight: 500 }}>
+                          Total Destinatarios
+                        </Typography>
+                        <Typography variant="h4" sx={{ fontWeight: 700, color: "#1e293b" }}>
+                          {destinatarios.length}
+                        </Typography>
+                      </Box>
+                    </CardContent>
+                  </Card>
+                </Grid>
+
+                <Grid item xs={12} sm={4}>
+                  <Card sx={{ borderRadius: "12px", border: "1px solid #bbf7d0", backgroundColor: "#f0fdf4", boxShadow: "0 2px 4px rgba(0,0,0,0.03)" }}>
+                    <CardContent sx={{ p: 2.5, display: "flex", alignItems: "center", gap: 2 }}>
+                      <Box sx={{ p: 1.5, borderRadius: "10px", backgroundColor: "#dcfce7", color: "#16a34a" }}>
+                        <CheckCircleIcon sx={{ fontSize: 32 }} />
+                      </Box>
+                      <Box>
+                        <Typography variant="body2" sx={{ color: "#166534", fontWeight: 500 }}>
+                          Receptores Activos
+                        </Typography>
+                        <Typography variant="h4" sx={{ fontWeight: 700, color: "#15803d" }}>
+                          {destinatarios.filter((d) => d.activo).length}
+                        </Typography>
+                      </Box>
+                    </CardContent>
+                  </Card>
+                </Grid>
+
+                <Grid item xs={12} sm={4}>
+                  <Card sx={{ borderRadius: "12px", border: "1px solid #fed7aa", backgroundColor: "#fffbeb", boxShadow: "0 2px 4px rgba(0,0,0,0.03)" }}>
+                    <CardContent sx={{ p: 2.5, display: "flex", alignItems: "center", gap: 2 }}>
+                      <Box sx={{ p: 1.5, borderRadius: "10px", backgroundColor: "#fef3c7", color: "#d97706" }}>
+                        <PauseCircleOutlineIcon sx={{ fontSize: 32 }} />
+                      </Box>
+                      <Box>
+                        <Typography variant="body2" sx={{ color: "#92400e", fontWeight: 500 }}>
+                          Pausados / Inactivos
+                        </Typography>
+                        <Typography variant="h4" sx={{ fontWeight: 700, color: "#b45309" }}>
+                          {destinatarios.filter((d) => !d.activo).length}
+                        </Typography>
+                      </Box>
+                    </CardContent>
+                  </Card>
+                </Grid>
+              </Grid>
+
+              {/* Tabla de Destinatarios */}
+              <Card sx={{ borderRadius: "12px", border: "1px solid #e2e8f0", boxShadow: "0 2px 6px rgba(0,0,0,0.04)" }}>
+                {loadingDestinatarios ? (
+                  <Box sx={{ display: "flex", justifyContent: "center", p: 6 }}>
+                    <CircularProgress />
+                  </Box>
+                ) : destinatarios.length === 0 ? (
+                  <Box sx={{ p: 6, textAlign: "center" }}>
+                    <GroupIcon sx={{ fontSize: 48, color: "#cbd5e1", mb: 1.5 }} />
+                    <Typography variant="h6" sx={{ color: "#475569", fontWeight: 600 }}>
+                      No hay destinatarios registrados
+                    </Typography>
+                    <Typography variant="body2" sx={{ color: "#94a3b8", mb: 2.5 }}>
+                      Agrega los números telefónicos y nombres de los directivos que deben recibir las síntesis y alertas.
+                    </Typography>
+                    <Button
+                      variant="contained"
+                      startIcon={<AddIcon />}
+                      onClick={handleOpenAddModal}
+                      sx={{ backgroundColor: "#0284c7", "&:hover": { backgroundColor: "#0369a1" }, textTransform: "none" }}
+                    >
+                      Agregar Primer Destinatario
+                    </Button>
+                  </Box>
+                ) : (
+                  <TableContainer>
+                    <Table>
+                      <TableHead sx={{ backgroundColor: "#f8fafc" }}>
+                        <TableRow>
+                          <TableCell sx={{ fontWeight: 600, color: "#475569" }}>Destinatario</TableCell>
+                          <TableCell sx={{ fontWeight: 600, color: "#475569" }}>Teléfono WhatsApp</TableCell>
+                          <TableCell sx={{ fontWeight: 600, color: "#475569" }}>Cargo / Área</TableCell>
+                          <TableCell sx={{ fontWeight: 600, color: "#475569" }}>Notas</TableCell>
+                          <TableCell sx={{ fontWeight: 600, color: "#475569" }} align="center">Estado</TableCell>
+                          <TableCell sx={{ fontWeight: 600, color: "#475569" }} align="right">Acciones</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {destinatarios.map((d) => (
+                          <TableRow key={d.id} hover sx={{ "&:last-child td, &:last-child th": { border: 0 } }}>
+                            <TableCell>
+                              <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+                                <Box
+                                  sx={{
+                                    width: 36,
+                                    height: 36,
+                                    borderRadius: "50%",
+                                    backgroundColor: d.activo ? "#e0f2fe" : "#f1f5f9",
+                                    color: d.activo ? "#0284c7" : "#94a3b8",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    fontWeight: 700,
+                                    fontSize: "0.9rem",
+                                  }}
+                                >
+                                  {d.nombre.charAt(0).toUpperCase()}
+                                </Box>
+                                <Box>
+                                  <Typography variant="subtitle2" sx={{ fontWeight: 600, color: "#1e293b" }}>
+                                    {d.nombre}
+                                  </Typography>
+                                  <Typography variant="caption" sx={{ color: "#94a3b8" }}>
+                                    ID: {d.id.substring(0, 8)}...
+                                  </Typography>
+                                </Box>
+                              </Box>
+                            </TableCell>
+
+                            <TableCell>
+                              <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
+                                <WhatsAppIcon sx={{ color: "#25D366", fontSize: 18 }} />
+                                <Typography variant="body2" sx={{ fontFamily: "monospace", fontWeight: 600, color: "#334155" }}>
+                                  {d.telefono.startsWith("+") ? d.telefono : `+${d.telefono}`}
+                                </Typography>
+                              </Box>
+                            </TableCell>
+
+                            <TableCell>
+                              {d.cargo ? (
+                                <Chip
+                                  label={d.cargo}
+                                  size="small"
+                                  variant="outlined"
+                                  sx={{
+                                    borderColor: "#cbd5e1",
+                                    color: "#334155",
+                                    fontWeight: 500,
+                                    fontSize: "0.75rem",
+                                  }}
+                                />
+                              ) : (
+                                <Typography variant="caption" sx={{ color: "#94a3b8", fontStyle: "italic" }}>
+                                  Sin cargo especificado
+                                </Typography>
+                              )}
+                            </TableCell>
+
+                            <TableCell>
+                              <Typography variant="body2" sx={{ color: "#64748b", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {d.notas || "—"}
+                              </Typography>
+                            </TableCell>
+
+                            <TableCell align="center">
+                              <Box sx={{ display: "inline-flex", alignItems: "center", gap: 0.5 }}>
+                                <Switch
+                                  checked={d.activo}
+                                  onChange={() => handleToggleDestinatario(d.id, d.nombre)}
+                                  size="small"
+                                  color="success"
+                                />
+                                <Chip
+                                  label={d.activo ? "Activo" : "Pausado"}
+                                  size="small"
+                                  sx={{
+                                    backgroundColor: d.activo ? "#dcfce7" : "#f1f5f9",
+                                    color: d.activo ? "#15803d" : "#64748b",
+                                    fontWeight: 600,
+                                    fontSize: "0.72rem",
+                                    height: 22,
+                                  }}
+                                />
+                              </Box>
+                            </TableCell>
+
+                            <TableCell align="right">
+                              <Box sx={{ display: "flex", justifyContent: "flex-end", gap: 0.5 }}>
+                                <Tooltip title="Enviar mensaje de prueba vía Kapso">
+                                  <span>
+                                    <IconButton
+                                      size="small"
+                                      color="primary"
+                                      disabled={testingPhoneId === d.id}
+                                      onClick={() => handleTestIndividualWhatsapp(d)}
+                                      sx={{ color: "#25D366" }}
+                                    >
+                                      {testingPhoneId === d.id ? <CircularProgress size={16} /> : <SendIcon fontSize="small" />}
+                                    </IconButton>
+                                  </span>
+                                </Tooltip>
+                                <Tooltip title="Editar datos">
+                                  <IconButton
+                                    size="small"
+                                    onClick={() => handleOpenEditModal(d)}
+                                    sx={{ color: "#64748b" }}
+                                  >
+                                    <EditIcon fontSize="small" />
+                                  </IconButton>
+                                </Tooltip>
+                                <Tooltip title="Eliminar de la lista">
+                                  <IconButton
+                                    size="small"
+                                    onClick={() => setDeleteConfirmId(d.id)}
+                                    sx={{ color: "#ef4444" }}
+                                  >
+                                    <DeleteOutlineIcon fontSize="small" />
+                                  </IconButton>
+                                </Tooltip>
+                              </Box>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                )}
+              </Card>
+            </Box>
+          )}
         </>
       )}
+
+      {/* Modal Agregar / Editar Destinatario */}
+      <Dialog
+        open={modalOpen}
+        onClose={() => !savingDestinatario && setModalOpen(false)}
+        maxWidth="sm"
+        fullWidth
+        PaperProps={{ sx: { borderRadius: "12px", p: 1 } }}
+      >
+        <DialogTitle sx={{ fontWeight: 700, color: "#1e293b", display: "flex", alignItems: "center", gap: 1 }}>
+          <GroupIcon sx={{ color: "#0284c7" }} />
+          {editingDestinatario ? "Editar Destinatario" : "Nuevo Destinatario de Distribución"}
+        </DialogTitle>
+        <DialogContent dividers>
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 2.5, pt: 1 }}>
+            <TextField
+              label="Nombre Completo *"
+              placeholder="Ej. Lic. Carlos Mendoza / Director de Operaciones"
+              value={formNombre}
+              onChange={(e) => setFormNombre(e.target.value)}
+              fullWidth
+              size="small"
+              autoFocus
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <PersonIcon sx={{ color: "#94a3b8" }} />
+                  </InputAdornment>
+                ),
+              }}
+            />
+
+            <TextField
+              label="Número de Teléfono WhatsApp *"
+              placeholder="+52 1 55 1234 5678"
+              value={formTelefono}
+              onChange={(e) => setFormTelefono(e.target.value)}
+              fullWidth
+              size="small"
+              helperText="Escribe el número con código internacional de país (ej. +52 para México). Solo dígitos tras el signo +."
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <PhoneIcon sx={{ color: "#25D366" }} />
+                  </InputAdornment>
+                ),
+              }}
+            />
+
+            <TextField
+              label="Cargo / Área de Operación"
+              placeholder="Ej. Dirección General, Riesgos, Siniestros..."
+              value={formCargo}
+              onChange={(e) => setFormCargo(e.target.value)}
+              fullWidth
+              size="small"
+            />
+
+            <TextField
+              label="Notas Internas / Referencia"
+              placeholder="Observaciones de horario o rol institucional..."
+              value={formNotas}
+              onChange={(e) => setFormNotas(e.target.value)}
+              fullWidth
+              size="small"
+              multiline
+              rows={2}
+            />
+
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={formActivo}
+                  onChange={(e) => setFormActivo(e.target.checked)}
+                  color="success"
+                />
+              }
+              label={
+                <Typography variant="body2" sx={{ fontWeight: 600, color: "#334155" }}>
+                  Habilitado para recibir briefings y alertas de inmediato
+                </Typography>
+              }
+            />
+          </Box>
+        </DialogContent>
+        <DialogActions sx={{ p: 2, gap: 1 }}>
+          <Button
+            onClick={() => setModalOpen(false)}
+            disabled={savingDestinatario}
+            sx={{ textTransform: "none", color: "#64748b" }}
+          >
+            Cancelar
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleSaveDestinatario}
+            disabled={savingDestinatario}
+            sx={{
+              backgroundColor: "#0284c7",
+              "&:hover": { backgroundColor: "#0369a1" },
+              textTransform: "none",
+              fontWeight: 600,
+            }}
+          >
+            {savingDestinatario ? <CircularProgress size={20} color="inherit" /> : editingDestinatario ? "Guardar Cambios" : "Agregar Destinatario"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Modal Confirmar Eliminación */}
+      <Dialog
+        open={Boolean(deleteConfirmId)}
+        onClose={() => setDeleteConfirmId(null)}
+        maxWidth="xs"
+        fullWidth
+        PaperProps={{ sx: { borderRadius: "12px", p: 1 } }}
+      >
+        <DialogTitle sx={{ fontWeight: 700, color: "#dc2626" }}>
+          ¿Eliminar destinatario?
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" sx={{ color: "#475569" }}>
+            ¿Estás seguro de que deseas eliminar a{" "}
+            <strong>{destinatarios.find((d) => d.id === deleteConfirmId)?.nombre}</strong> de la lista de distribución?
+            Ya no recibirá los reportes de WhatsApp.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ p: 2, gap: 1 }}>
+          <Button onClick={() => setDeleteConfirmId(null)} sx={{ textTransform: "none", color: "#64748b" }}>
+            Cancelar
+          </Button>
+          <Button
+            variant="contained"
+            color="error"
+            onClick={() => {
+              const target = destinatarios.find((d) => d.id === deleteConfirmId);
+              if (target) handleDeleteDestinatario(target.id, target.nombre);
+            }}
+            sx={{ textTransform: "none", fontWeight: 600 }}
+          >
+            Sí, eliminar
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

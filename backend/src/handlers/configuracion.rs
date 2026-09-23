@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Json, State},
+    extract::{Json, Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -7,8 +7,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::FromRow;
 use std::sync::Arc;
+use uuid::Uuid;
 
-use crate::{config::Config, db::DbPool};
+use crate::{
+    config::Config,
+    db::DbPool,
+    models::{CreateDestinatarioRequest, Destinatario, UpdateDestinatarioRequest},
+};
 
 #[derive(Debug, Serialize, Deserialize, FromRow)]
 pub struct ConfiguracionRow {
@@ -389,4 +394,171 @@ pub async fn test_claude(
     })?;
 
     Ok((StatusCode::OK, Json(body)))
+}
+
+// ============================================================================
+// CRUD Lista de Distribución de Destinatarios WhatsApp
+// ============================================================================
+
+pub async fn list_destinatarios(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let list = sqlx::query_as::<_, Destinatario>(
+        "SELECT id, nombre, telefono, cargo, activo, notas, creado_en, actualizado_en
+         FROM lista_distribucion
+         ORDER BY creado_en ASC",
+    )
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error consultando lista de distribución: {}", e)})),
+        )
+    })?;
+
+    Ok((StatusCode::OK, Json(json!(list))))
+}
+
+pub async fn create_destinatario(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+    Json(payload): Json<CreateDestinatarioRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let nombre = payload.nombre.trim();
+    let telefono = payload.telefono.trim();
+
+    if nombre.is_empty() || telefono.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "El nombre y el teléfono son obligatorios"})),
+        ));
+    }
+
+    let activo = payload.activo.unwrap_or(true);
+
+    let destinatario = sqlx::query_as::<_, Destinatario>(
+        "INSERT INTO lista_distribucion (nombre, telefono, cargo, activo, notas)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING id, nombre, telefono, cargo, activo, notas, creado_en, actualizado_en",
+    )
+    .bind(nombre)
+    .bind(telefono)
+    .bind(payload.cargo.as_deref().map(|s| s.trim()))
+    .bind(activo)
+    .bind(payload.notas.as_deref().map(|s| s.trim()))
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error registrando destinatario: {}", e)})),
+        )
+    })?;
+
+    Ok((StatusCode::CREATED, Json(json!(destinatario))))
+}
+
+pub async fn update_destinatario(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+    Path(id): Path<Uuid>,
+    Json(payload): Json<UpdateDestinatarioRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let nombre = payload.nombre.trim();
+    let telefono = payload.telefono.trim();
+
+    if nombre.is_empty() || telefono.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "El nombre y el teléfono son obligatorios"})),
+        ));
+    }
+
+    let destinatario = sqlx::query_as::<_, Destinatario>(
+        "UPDATE lista_distribucion
+         SET nombre = $1, telefono = $2, cargo = $3, activo = $4, notas = $5, actualizado_en = now()
+         WHERE id = $6
+         RETURNING id, nombre, telefono, cargo, activo, notas, creado_en, actualizado_en",
+    )
+    .bind(nombre)
+    .bind(telefono)
+    .bind(payload.cargo.as_deref().map(|s| s.trim()))
+    .bind(payload.activo)
+    .bind(payload.notas.as_deref().map(|s| s.trim()))
+    .bind(id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error actualizando destinatario: {}", e)})),
+        )
+    })?
+    .ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "Destinatario no encontrado"})),
+        )
+    })?;
+
+    Ok((StatusCode::OK, Json(json!(destinatario))))
+}
+
+pub async fn toggle_destinatario(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+    Path(id): Path<Uuid>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let destinatario = sqlx::query_as::<_, Destinatario>(
+        "UPDATE lista_distribucion
+         SET activo = NOT activo, actualizado_en = now()
+         WHERE id = $1
+         RETURNING id, nombre, telefono, cargo, activo, notas, creado_en, actualizado_en",
+    )
+    .bind(id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error modificando estado del destinatario: {}", e)})),
+        )
+    })?
+    .ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "Destinatario no encontrado"})),
+        )
+    })?;
+
+    Ok((StatusCode::OK, Json(json!(destinatario))))
+}
+
+pub async fn delete_destinatario(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+    Path(id): Path<Uuid>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let rows_affected = sqlx::query(
+        "DELETE FROM lista_distribucion WHERE id = $1",
+    )
+    .bind(id)
+    .execute(&pool)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error eliminando destinatario: {}", e)})),
+        )
+    })?
+    .rows_affected();
+
+    if rows_affected == 0 {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "Destinatario no encontrado"})),
+        ));
+    }
+
+    Ok((
+        StatusCode::OK,
+        Json(json!({"mensaje": "Destinatario eliminado de la lista de distribución"})),
+    ))
 }

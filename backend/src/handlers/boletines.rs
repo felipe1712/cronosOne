@@ -374,28 +374,77 @@ pub async fn aprobar_boletin(
         let cfg = get_whatsapp_config(&pool_clone).await;
         if cfg.provider == "kapso" && !cfg.api_key.trim().is_empty() && !cfg.phone_number_id.trim().is_empty() {
             let client = KapsoClient::new(cfg.api_key, cfg.phone_number_id);
-            match client.send_text(&cfg.director_phone, &texto_clone).await {
-                Ok(msg_id) => {
-                    let _ = sqlx::query(
-                        "UPDATE mensajes_pendientes 
-                         SET estado = 'confirmado', proveedor = 'kapso', kapso_message_id = $1, meta_status = 'sent', confirmado_en = now()
-                         WHERE referencia_id = $2"
-                    )
-                    .bind(&msg_id)
-                    .bind(b_id)
-                    .execute(&pool_clone)
-                    .await;
-                }
-                Err(e) => {
-                    let _ = sqlx::query(
-                        "UPDATE mensajes_pendientes 
-                         SET estado = 'error', error_mensaje = $1, proveedor = 'kapso'
-                         WHERE referencia_id = $2"
-                    )
-                    .bind(e)
-                    .bind(b_id)
-                    .execute(&pool_clone)
-                    .await;
+
+            #[derive(sqlx::FromRow)]
+            struct DestinatarioRow {
+                telefono: String,
+            }
+
+            let destinatarios = sqlx::query_as::<_, DestinatarioRow>(
+                "SELECT telefono FROM lista_distribucion WHERE activo = true"
+            )
+            .fetch_all(&pool_clone)
+            .await
+            .unwrap_or_default();
+
+            let targets: Vec<String> = if destinatarios.is_empty() {
+                vec![cfg.director_phone.clone()]
+            } else {
+                destinatarios.into_iter().map(|d| d.telefono).collect()
+            };
+
+            for (idx, phone) in targets.iter().enumerate() {
+                match client.send_text(phone, &texto_clone).await {
+                    Ok(msg_id) => {
+                        if idx == 0 {
+                            let _ = sqlx::query(
+                                "UPDATE mensajes_pendientes 
+                                 SET destinatario = $1, estado = 'confirmado', proveedor = 'kapso', kapso_message_id = $2, meta_status = 'sent', confirmado_en = now()
+                                 WHERE referencia_id = $3"
+                            )
+                            .bind(phone)
+                            .bind(&msg_id)
+                            .bind(b_id)
+                            .execute(&pool_clone)
+                            .await;
+                        } else {
+                            let _ = sqlx::query(
+                                "INSERT INTO mensajes_pendientes (tipo, referencia_id, texto, destinatario, estado, proveedor, kapso_message_id, meta_status, confirmado_en)
+                                 VALUES ('brief', $1, $2, $3, 'confirmado', 'kapso', $4, 'sent', now())"
+                            )
+                            .bind(b_id)
+                            .bind(&texto_clone)
+                            .bind(phone)
+                            .bind(&msg_id)
+                            .execute(&pool_clone)
+                            .await;
+                        }
+                    }
+                    Err(e) => {
+                        if idx == 0 {
+                            let _ = sqlx::query(
+                                "UPDATE mensajes_pendientes 
+                                 SET destinatario = $1, estado = 'error', error_mensaje = $2, proveedor = 'kapso'
+                                 WHERE referencia_id = $3"
+                            )
+                            .bind(phone)
+                            .bind(&e)
+                            .bind(b_id)
+                            .execute(&pool_clone)
+                            .await;
+                        } else {
+                            let _ = sqlx::query(
+                                "INSERT INTO mensajes_pendientes (tipo, referencia_id, texto, destinatario, estado, proveedor, error_mensaje)
+                                 VALUES ('brief', $1, $2, $3, 'error', 'kapso', $4)"
+                            )
+                            .bind(b_id)
+                            .bind(&texto_clone)
+                            .bind(phone)
+                            .bind(&e)
+                            .execute(&pool_clone)
+                            .await;
+                        }
+                    }
                 }
             }
         }

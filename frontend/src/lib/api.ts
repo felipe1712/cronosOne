@@ -74,6 +74,33 @@ export interface UpdateConfiguracionPayload {
   director_whatsapp_phone?: string;
 }
 
+export interface Destinatario {
+  id: string;
+  nombre: string;
+  telefono: string;
+  cargo?: string;
+  activo: boolean;
+  notas?: string;
+  creado_en?: string;
+  actualizado_en?: string;
+}
+
+export interface CreateDestinatarioPayload {
+  nombre: string;
+  telefono: string;
+  cargo?: string;
+  notas?: string;
+  activo?: boolean;
+}
+
+export interface UpdateDestinatarioPayload {
+  nombre: string;
+  telefono: string;
+  cargo?: string;
+  notas?: string;
+  activo: boolean;
+}
+
 // ============================================================================
 // Servicios de API
 // ============================================================================
@@ -195,6 +222,31 @@ export const ApiService = {
     apiFetch<any>('/configuracion/test-whatsapp', {
       method: 'POST',
       body: JSON.stringify(payload),
+    }),
+
+  // Lista de Distribución WhatsApp (Destinatarios)
+  getDestinatarios: () => apiFetch<Destinatario[]>('/configuracion/destinatarios'),
+
+  createDestinatario: (payload: CreateDestinatarioPayload) =>
+    apiFetch<Destinatario>('/configuracion/destinatarios', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  updateDestinatario: (id: string, payload: UpdateDestinatarioPayload) =>
+    apiFetch<Destinatario>(`/configuracion/destinatarios/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+
+  toggleDestinatario: (id: string) =>
+    apiFetch<Destinatario>(`/configuracion/destinatarios/${id}/toggle`, {
+      method: 'PATCH',
+    }),
+
+  deleteDestinatario: (id: string) =>
+    apiFetch<{ mensaje: string }>(`/configuracion/destinatarios/${id}`, {
+      method: 'DELETE',
     }),
 };
 
