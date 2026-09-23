@@ -90,7 +90,7 @@ export default function ConfiguracionPage() {
   const [whatsappProvider, setWhatsappProvider] = useState<string>("kapso");
   const [kapsoApiKey, setKapsoApiKey] = useState<string>("");
   const [kapsoPhoneNumberId, setKapsoPhoneNumberId] = useState<string>("");
-  const [directorWhatsappPhone, setDirectorWhatsappPhone] = useState<string>("5215512345678");
+  const [directorWhatsappPhone, setDirectorWhatsappPhone] = useState<string>("");
   const [showApiKey, setShowApiKey] = useState<boolean>(false);
   const [savingWhatsapp, setSavingWhatsapp] = useState<boolean>(false);
   const [testingWhatsapp, setTestingWhatsapp] = useState<boolean>(false);

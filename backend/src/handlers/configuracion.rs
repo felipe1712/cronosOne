@@ -285,47 +285,71 @@ pub async fn update_configuracion(
     }
 
     if let Some(ref provider) = payload.whatsapp_provider {
-        let _ = sqlx::query(
+        let clean_provider = provider.trim();
+        if let Err(e) = sqlx::query(
             "INSERT INTO configuraciones_sistema (clave, valor, descripcion, categoria, actualizado_en)
              VALUES ('WHATSAPP_PROVIDER', $1, 'Proveedor activo de WhatsApp: kapso o waha', 'whatsapp', now())
              ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, actualizado_en = now()"
         )
-        .bind(provider.trim())
+        .bind(clean_provider)
         .execute(&pool)
-        .await;
+        .await {
+            tracing::error!("Error guardando WHATSAPP_PROVIDER: {}", e);
+        }
     }
 
     if let Some(ref key) = payload.kapso_api_key {
-        let _ = sqlx::query(
+        let clean_key = key.trim();
+        if let Err(e) = sqlx::query(
             "INSERT INTO configuraciones_sistema (clave, valor, descripcion, categoria, actualizado_en)
              VALUES ('KAPSO_API_KEY', $1, 'Clave de API del proyecto en Kapso (X-API-Key)', 'whatsapp', now())
              ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, actualizado_en = now()"
         )
-        .bind(key.trim())
+        .bind(clean_key)
         .execute(&pool)
-        .await;
+        .await {
+            tracing::error!("Error guardando KAPSO_API_KEY: {}", e);
+        }
     }
 
     if let Some(ref phone_id) = payload.kapso_phone_number_id {
-        let _ = sqlx::query(
+        let clean_id = phone_id.trim();
+        if let Err(e) = sqlx::query(
             "INSERT INTO configuraciones_sistema (clave, valor, descripcion, categoria, actualizado_en)
              VALUES ('KAPSO_PHONE_NUMBER_ID', $1, 'Identificador de número telefónico de WhatsApp en Kapso / Meta', 'whatsapp', now())
              ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, actualizado_en = now()"
         )
-        .bind(phone_id.trim())
+        .bind(clean_id)
         .execute(&pool)
-        .await;
+        .await {
+            tracing::error!("Error guardando KAPSO_PHONE_NUMBER_ID: {}", e);
+        }
     }
 
     if let Some(ref phone) = payload.director_whatsapp_phone {
-        let _ = sqlx::query(
-            "INSERT INTO configuraciones_sistema (clave, valor, descripcion, categoria, actualizado_en)
-             VALUES ('DIRECTOR_WHATSAPP_PHONE', $1, 'Número de WhatsApp de destino del Director en formato E.164', 'whatsapp', now())
-             ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, actualizado_en = now()"
-        )
-        .bind(phone.trim())
-        .execute(&pool)
-        .await;
+        let clean_phone = phone.trim();
+        if !clean_phone.is_empty() {
+            if let Err(e) = sqlx::query(
+                "INSERT INTO configuraciones_sistema (clave, valor, descripcion, categoria, actualizado_en)
+                 VALUES ('DIRECTOR_WHATSAPP_PHONE', $1, 'Número de WhatsApp de destino del Director en formato E.164', 'whatsapp', now())
+                 ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, actualizado_en = now()"
+            )
+            .bind(clean_phone)
+            .execute(&pool)
+            .await {
+                tracing::error!("Error guardando DIRECTOR_WHATSAPP_PHONE: {}", e);
+            }
+
+            // Sincronizar también en lista_distribucion
+            let _ = sqlx::query(
+                "UPDATE lista_distribucion 
+                 SET telefono = $1, actualizado_en = now()
+                 WHERE nombre ILIKE '%Director%'"
+            )
+            .bind(clean_phone)
+            .execute(&pool)
+            .await;
+        }
     }
 
     Ok((
