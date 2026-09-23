@@ -183,6 +183,7 @@ pub async fn get_configuraciones(
         )",
     )
     .execute(&pool)
+    .await;
     // Asegurar limpieza automática de cualquier valor dummy previo en base de datos
     let _ = sqlx::query(
         "UPDATE configuraciones_sistema SET valor = '' WHERE clave = 'DIRECTOR_WHATSAPP_PHONE' AND valor = '5215512345678'"
