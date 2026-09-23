@@ -912,26 +912,20 @@ export default function ConfiguracionPage() {
                     <Grid container spacing={2.5}>
                       {/* Proveedor activo */}
                       <Grid size={{ xs: 12, sm: 6 }}>
-                        <FormControl fullWidth>
-                          <InputLabel id="whatsapp-provider-label">Proveedor de Entrega</InputLabel>
-                          <Select
-                            labelId="whatsapp-provider-label"
-                            value={whatsappProvider}
-                            label="Proveedor de Entrega"
-                            onChange={(e) => setWhatsappProvider(e.target.value)}
-                          >
-                            <MenuItem value="kapso">
-                              <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                                <strong>Kapso</strong> (Cloud API Oficial Meta · Recomendado)
-                              </Box>
-                            </MenuItem>
-                            <MenuItem value="waha">
-                              <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                                <span>WAHA</span> (WhatsApp Web Local / n8n)
-                              </Box>
-                            </MenuItem>
-                          </Select>
-                        </FormControl>
+                        <Box sx={{ p: 1.8, border: "1px solid #cbd5e1", borderRadius: "8px", bgcolor: "#f8fafc", height: "56px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                            <WhatsAppIcon sx={{ color: "#25D366" }} />
+                            <Box>
+                              <Typography variant="caption" sx={{ color: "#64748b", display: "block", lineHeight: 1.1, fontWeight: 600 }}>
+                                PROVEEDOR EXCLUSIVO
+                              </Typography>
+                              <Typography variant="body2" sx={{ fontWeight: 700, color: "#0f172a" }}>
+                                Kapso Cloud API (Oficial Meta)
+                              </Typography>
+                            </Box>
+                          </Box>
+                          <Chip label="ACTIVO" size="small" color="success" sx={{ fontWeight: 800, height: 22 }} />
+                        </Box>
                       </Grid>
 
                       {/* Teléfono del Director */}

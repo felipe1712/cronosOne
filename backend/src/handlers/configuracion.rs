@@ -15,6 +15,7 @@ use crate::{
     models::{CreateDestinatarioRequest, Destinatario, UpdateDestinatarioRequest},
 };
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize, FromRow)]
 pub struct ConfiguracionRow {
     pub clave: String,

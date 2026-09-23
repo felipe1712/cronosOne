@@ -340,10 +340,10 @@ pub async fn aprobar_boletin(
         )
     })?;
 
-    // 3. Encolar en mensajes_pendientes para que n8n / WAHA lo recoja
+    // 3. Registrar en mensajes_pendientes con proveedor oficial Kapso
     sqlx::query(
-        "INSERT INTO mensajes_pendientes (tipo, referencia_id, texto, destinatario, estado)
-         VALUES ('brief', $1, $2, $3, 'pendiente')",
+        "INSERT INTO mensajes_pendientes (tipo, referencia_id, texto, destinatario, estado, proveedor)
+         VALUES ('brief', $1, $2, $3, 'pendiente', 'kapso')",
     )
     .bind(id)
     .bind(&payload.texto)
@@ -364,7 +364,7 @@ pub async fn aprobar_boletin(
         )
     })?;
 
-    // Despacho en tiempo real vía Kapso si está configurado
+    // Despacho directo en tiempo real vía Kapso WhatsApp Cloud API
     let pool_clone = pool.clone();
     let texto_clone = payload.texto.clone();
     let b_id = id;
@@ -372,7 +372,7 @@ pub async fn aprobar_boletin(
     tokio::spawn(async move {
         use crate::services::kapso::{get_whatsapp_config, KapsoClient};
         let cfg = get_whatsapp_config(&pool_clone).await;
-        if cfg.provider == "kapso" && !cfg.api_key.trim().is_empty() && !cfg.phone_number_id.trim().is_empty() {
+        if !cfg.api_key.trim().is_empty() && !cfg.phone_number_id.trim().is_empty() {
             let client = KapsoClient::new(cfg.api_key, cfg.phone_number_id);
 
             #[derive(sqlx::FromRow)]
@@ -388,9 +388,13 @@ pub async fn aprobar_boletin(
             .unwrap_or_default();
 
             let targets: Vec<String> = if destinatarios.is_empty() {
-                vec![cfg.director_phone.clone()]
+                if !cfg.director_phone.trim().is_empty() && cfg.director_phone.trim() != "5215512345678" {
+                    vec![cfg.director_phone.clone()]
+                } else {
+                    vec![]
+                }
             } else {
-                destinatarios.into_iter().map(|d| d.telefono).collect()
+                destinatarios.into_iter().map(|d| d.telefono).filter(|t| !t.trim().is_empty() && t.trim() != "5215512345678").collect()
             };
 
             for (idx, phone) in targets.iter().enumerate() {

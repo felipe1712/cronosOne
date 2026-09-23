@@ -220,7 +220,7 @@ export default function BoletinesPage() {
     try {
       setApproving(true);
       await ApiService.aprobarBoletin(selectedBoletin.boletin.id, editedText);
-      setSuccess("✅ Boletín aprobado con éxito. El brief ha sido puesto en cola de salida para WhatsApp (WAHA).");
+      setSuccess("✅ Boletín aprobado con éxito. El brief se envió vía WhatsApp oficial (Kapso Cloud API) a la lista de distribución.");
       setEditorModalOpen(false);
       fetchBoletines();
     } catch (err: any) {
@@ -847,7 +847,7 @@ export default function BoletinesPage() {
                   <span>Aprobando...</span>
                 </Box>
               ) : (
-                "Aprobar y Encolar para WhatsApp"
+                "Aprobar y Enviar vía WhatsApp (Kapso)"
               )}
             </Button>
           </Box>

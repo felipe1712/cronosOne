@@ -79,9 +79,9 @@ export default function WahaPage() {
   const getEstadoMensajeChip = (estado: string) => {
     switch (estado) {
       case "confirmado":
-        return <Chip label="Entregado (WAHA)" color="success" size="small" icon={<CheckCircleOutlineIcon />} />;
+        return <Chip label="Entregado (Kapso)" color="success" size="small" icon={<CheckCircleOutlineIcon />} />;
       case "entregado_a_n8n":
-        return <Chip label="Enviando con n8n..." color="info" size="small" icon={<HourglassEmptyIcon />} />;
+        return <Chip label="Procesando envío..." color="info" size="small" icon={<HourglassEmptyIcon />} />;
       case "pendiente":
         return <Chip label="En cola de salida" color="warning" size="small" />;
       default:
@@ -100,10 +100,10 @@ export default function WahaPage() {
       <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 3 }}>
         <Box>
           <Typography variant="h5" sx={{ fontWeight: 700, color: "#1e293b" }}>
-            Canal WhatsApp & WAHA — Monitoreo de Entrega
+            Canal WhatsApp — Monitoreo de Entrega
           </Typography>
           <Typography variant="body2" sx={{ color: "#64748b" }}>
-            Estado de sesión del bot de WhatsApp, vinculación por código QR y registro de despachos ejecutivos.
+            Registro de despachos ejecutivos y estado de entrega vía Kapso WhatsApp Cloud API (Meta Oficial).
           </Typography>
         </Box>
         <Button variant="outlined" startIcon={<RefreshIcon />} onClick={loadWahaData} disabled={loading}>
@@ -203,10 +203,10 @@ export default function WahaPage() {
             <CardContent>
               <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 2 }}>
                 <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                  Cola y Registro de Despachos (n8n ➔ WAHA)
+                  Registro de Despachos (Kapso WhatsApp Cloud API)
                 </Typography>
                 <Typography variant="caption" sx={{ color: "#64748b" }}>
-                  Sondeo automático por cron de n8n
+                  Entrega en tiempo real a través de la infraestructura oficial de Meta
                 </Typography>
               </Box>
 

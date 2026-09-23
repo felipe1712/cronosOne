@@ -138,7 +138,9 @@ pub async fn validar_alerta(
         )
     })?;
 
-    // Si fue validada por el analista, se inserta inmediatamente en la cola de mensajes pendientes para WAHA
+    // Si fue validada por el analista, se registra y se despacha de inmediato vía Kapso WhatsApp Cloud API
+    let mut alerta_para_enviar: Option<(uuid::Uuid, String)> = None;
+
     if nuevo_estado == "validada" {
         let mensaje_texto = format!(
             "🚨 *ALERTA URGENTE DE EXPOSICIÓN — ExposureIQ*\n\n\
@@ -154,8 +156,8 @@ pub async fn validar_alerta(
         );
 
         sqlx::query(
-            "INSERT INTO mensajes_pendientes (tipo, referencia_id, texto, destinatario, estado)
-             VALUES ('alerta', $1, $2, $3, 'pendiente')",
+            "INSERT INTO mensajes_pendientes (tipo, referencia_id, texto, destinatario, estado, proveedor)
+             VALUES ('alerta', $1, $2, $3, 'pendiente', 'kapso')",
         )
         .bind(alerta.id)
         .bind(&mensaje_texto)
@@ -168,6 +170,8 @@ pub async fn validar_alerta(
                 Json(json!({"error": format!("Error encolando alerta en mensajes: {}", e)})),
             )
         })?;
+
+        alerta_para_enviar = Some((alerta.id, mensaje_texto));
     }
 
     tx.commit().await.map_err(|e| {
@@ -176,6 +180,72 @@ pub async fn validar_alerta(
             Json(json!({"error": format!("Error confirmando transacción: {}", e)})),
         )
     })?;
+
+    if let Some((a_id, texto)) = alerta_para_enviar {
+        let pool_clone = pool.clone();
+        tokio::spawn(async move {
+            use crate::services::kapso::{get_whatsapp_config, KapsoClient};
+            let cfg = get_whatsapp_config(&pool_clone).await;
+            if !cfg.api_key.trim().is_empty() && !cfg.phone_number_id.trim().is_empty() {
+                let client = KapsoClient::new(cfg.api_key, cfg.phone_number_id);
+
+                #[derive(sqlx::FromRow)]
+                struct DestinatarioRow {
+                    telefono: String,
+                }
+
+                let destinatarios = sqlx::query_as::<_, DestinatarioRow>(
+                    "SELECT telefono FROM lista_distribucion WHERE activo = true"
+                )
+                .fetch_all(&pool_clone)
+                .await
+                .unwrap_or_default();
+
+                let targets: Vec<String> = if destinatarios.is_empty() {
+                    if !cfg.director_phone.trim().is_empty() && cfg.director_phone.trim() != "5215512345678" {
+                        vec![cfg.director_phone.clone()]
+                    } else {
+                        vec![]
+                    }
+                } else {
+                    destinatarios.into_iter().map(|d| d.telefono).filter(|t| !t.trim().is_empty() && t.trim() != "5215512345678").collect()
+                };
+
+                for (idx, phone) in targets.iter().enumerate() {
+                    match client.send_text(phone, &texto).await {
+                        Ok(msg_id) => {
+                            if idx == 0 {
+                                let _ = sqlx::query(
+                                    "UPDATE mensajes_pendientes 
+                                     SET destinatario = $1, estado = 'confirmado', proveedor = 'kapso', kapso_message_id = $2, meta_status = 'sent', confirmado_en = now()
+                                     WHERE referencia_id = $3"
+                                )
+                                .bind(phone)
+                                .bind(&msg_id)
+                                .bind(a_id)
+                                .execute(&pool_clone)
+                                .await;
+                            } else {
+                                let _ = sqlx::query(
+                                    "INSERT INTO mensajes_pendientes (tipo, referencia_id, texto, destinatario, estado, proveedor, kapso_message_id, meta_status, confirmado_en)
+                                     VALUES ('alerta', $1, $2, $3, 'confirmado', 'kapso', $4, 'sent', now())"
+                                )
+                                .bind(a_id)
+                                .bind(&texto)
+                                .bind(phone)
+                                .bind(&msg_id)
+                                .execute(&pool_clone)
+                                .await;
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Error enviando alerta OSINT por Kapso a {}: {}", phone, e);
+                        }
+                    }
+                }
+            }
+        });
+    }
 
     Ok((
         StatusCode::OK,

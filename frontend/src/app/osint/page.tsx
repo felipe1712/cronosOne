@@ -283,7 +283,7 @@ export default function OsintPage() {
                 Hallazgos y Alertas Detectadas
               </Typography>
               <Typography variant="caption" sx={{ color: "#64748b" }}>
-                🔒 Las alertas validadas se despachan prioritariamente vía WAHA al Director de Operaciones.
+                🔒 Las alertas validadas se despachan prioritariamente vía WhatsApp (Kapso Cloud API) a la lista de distribución.
               </Typography>
             </Box>
 
@@ -707,7 +707,7 @@ export default function OsintPage() {
             color={actionType === "validar" ? "error" : "inherit"}
             onClick={handleConfirmValidation}
           >
-            {actionType === "validar" ? "Validar y Notificar WAHA" : "Confirmar Descarte"}
+            {actionType === "validar" ? "Validar y Enviar vía WhatsApp (Kapso)" : "Confirmar Descarte"}
           </Button>
         </DialogActions>
       </Dialog>
