@@ -60,6 +60,11 @@ pub fn create_router(pool: DbPool, config: Arc<Config>) -> Router {
         .route("/api/configuracion/destinatarios/:id", put(configuracion::update_destinatario))
         .route("/api/configuracion/destinatarios/:id", delete(configuracion::delete_destinatario))
         .route("/api/configuracion/destinatarios/:id/toggle", patch(configuracion::toggle_destinatario))
+        // Grupos / Listas de Distribución
+        .route("/api/configuracion/grupos", get(configuracion::list_grupos))
+        .route("/api/configuracion/grupos", post(configuracion::create_grupo))
+        .route("/api/configuracion/grupos/:id", put(configuracion::update_grupo))
+        .route("/api/configuracion/grupos/:id", delete(configuracion::delete_grupo))
         .layer(middleware::from_fn_with_state(config.clone(), require_auth));
 
     // Rutas públicas (consumidas por frontend login y cron n8n)

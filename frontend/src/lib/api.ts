@@ -74,6 +74,36 @@ export interface UpdateConfiguracionPayload {
   director_whatsapp_phone?: string;
 }
 
+export interface GrupoDistribucion {
+  id: string;
+  nombre: string;
+  descripcion?: string;
+  color: string;
+  activo: boolean;
+  creado_en?: string;
+  total_miembros?: number;
+}
+
+export interface CreateGrupoPayload {
+  nombre: string;
+  descripcion?: string;
+  color?: string;
+  activo?: boolean;
+}
+
+export interface UpdateGrupoPayload {
+  nombre: string;
+  descripcion?: string;
+  color?: string;
+  activo: boolean;
+}
+
+export interface GrupoResumen {
+  id: string;
+  nombre: string;
+  color: string;
+}
+
 export interface Destinatario {
   id: string;
   nombre: string;
@@ -83,6 +113,7 @@ export interface Destinatario {
   notas?: string;
   creado_en?: string;
   actualizado_en?: string;
+  grupos?: GrupoResumen[];
 }
 
 export interface CreateDestinatarioPayload {
@@ -91,6 +122,7 @@ export interface CreateDestinatarioPayload {
   cargo?: string;
   notas?: string;
   activo?: boolean;
+  grupo_ids?: string[];
 }
 
 export interface UpdateDestinatarioPayload {
@@ -99,6 +131,7 @@ export interface UpdateDestinatarioPayload {
   cargo?: string;
   notas?: string;
   activo: boolean;
+  grupo_ids?: string[];
 }
 
 // ============================================================================
@@ -258,6 +291,26 @@ export const ApiService = {
 
   deleteDestinatario: (id: string) =>
     apiFetch<{ mensaje: string }>(`/configuracion/destinatarios/${id}`, {
+      method: 'DELETE',
+    }),
+
+  // Grupos / Listas de Distribución
+  getGrupos: () => apiFetch<GrupoDistribucion[]>('/configuracion/grupos'),
+
+  createGrupo: (payload: CreateGrupoPayload) =>
+    apiFetch<GrupoDistribucion>('/configuracion/grupos', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  updateGrupo: (id: string, payload: UpdateGrupoPayload) =>
+    apiFetch<GrupoDistribucion>(`/configuracion/grupos/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+
+  deleteGrupo: (id: string) =>
+    apiFetch<{ mensaje: string }>(`/configuracion/grupos/${id}`, {
       method: 'DELETE',
     }),
 };

@@ -62,7 +62,9 @@ import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import PhoneIcon from "@mui/icons-material/Phone";
 import PersonIcon from "@mui/icons-material/Person";
 import PauseCircleOutlineIcon from "@mui/icons-material/PauseCircleOutline";
-import { ApiService, Destinatario } from "@/lib/api";
+import LabelIcon from "@mui/icons-material/Label";
+import CheckIcon from "@mui/icons-material/Check";
+import { ApiService, Destinatario, GrupoDistribucion } from "@/lib/api";
 
 interface AvailableModel {
   id: string;
@@ -101,8 +103,10 @@ export default function ConfiguracionPage() {
     error?: string;
   } | null>(null);
 
-  // Estados para Lista de Distribución
+  // Estados para Lista de Distribución y Mini Administrador de Grupos
   const [destinatarios, setDestinatarios] = useState<Destinatario[]>([]);
+  const [grupos, setGrupos] = useState<GrupoDistribucion[]>([]);
+  const [selectedGrupoFilter, setSelectedGrupoFilter] = useState<string>("all");
   const [loadingDestinatarios, setLoadingDestinatarios] = useState<boolean>(false);
   const [modalOpen, setModalOpen] = useState<boolean>(false);
   const [editingDestinatario, setEditingDestinatario] = useState<Destinatario | null>(null);
@@ -111,9 +115,19 @@ export default function ConfiguracionPage() {
   const [formCargo, setFormCargo] = useState<string>("");
   const [formNotas, setFormNotas] = useState<string>("");
   const [formActivo, setFormActivo] = useState<boolean>(true);
+  const [formGrupoIds, setFormGrupoIds] = useState<string[]>([]);
   const [savingDestinatario, setSavingDestinatario] = useState<boolean>(false);
   const [testingPhoneId, setTestingPhoneId] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+
+  // Estados para Modal de Gestión de Listas
+  const [listasModalOpen, setListasModalOpen] = useState<boolean>(false);
+  const [formGrupoNombre, setFormGrupoNombre] = useState<string>("");
+  const [formGrupoDescripcion, setFormGrupoDescripcion] = useState<string>("");
+  const [formGrupoColor, setFormGrupoColor] = useState<string>("#0284c7");
+  const [editingGrupoId, setEditingGrupoId] = useState<string | null>(null);
+  const [savingGrupo, setSavingGrupo] = useState<boolean>(false);
+  const [deleteGrupoConfirmId, setDeleteGrupoConfirmId] = useState<string | null>(null);
 
   // Estados generales
   const [loading, setLoading] = useState<boolean>(true);
@@ -137,9 +151,10 @@ export default function ConfiguracionPage() {
     try {
       setLoading(true);
       setErrorMsg(null);
-      const [data, dests] = await Promise.all([
+      const [data, dests, grps] = await Promise.all([
         ApiService.getConfiguraciones(),
         ApiService.getDestinatarios().catch(() => []),
+        ApiService.getGrupos().catch(() => []),
       ]);
       if (data) {
         if (data.claude_model) {
@@ -189,6 +204,9 @@ export default function ConfiguracionPage() {
       if (dests) {
         setDestinatarios(dests);
       }
+      if (grps) {
+        setGrupos(grps);
+      }
     } catch (err: any) {
       console.error("Error cargando configuración:", err);
       setErrorMsg(err.message || "No se pudo cargar la configuración.");
@@ -200,8 +218,12 @@ export default function ConfiguracionPage() {
   const loadDestinatarios = async () => {
     try {
       setLoadingDestinatarios(true);
-      const dests = await ApiService.getDestinatarios();
+      const [dests, grps] = await Promise.all([
+        ApiService.getDestinatarios(),
+        ApiService.getGrupos().catch(() => []),
+      ]);
       setDestinatarios(dests || []);
+      setGrupos(grps || []);
     } catch (err: any) {
       console.error("Error cargando lista de distribución:", err);
       setErrorMsg(err.message || "No se pudo cargar la lista de distribución.");
@@ -217,6 +239,7 @@ export default function ConfiguracionPage() {
     setFormCargo("");
     setFormNotas("");
     setFormActivo(true);
+    setFormGrupoIds(selectedGrupoFilter !== "all" ? [selectedGrupoFilter] : []);
     setModalOpen(true);
   };
 
@@ -227,7 +250,14 @@ export default function ConfiguracionPage() {
     setFormCargo(d.cargo || "");
     setFormNotas(d.notas || "");
     setFormActivo(d.activo);
+    setFormGrupoIds((d.grupos || []).map((g) => g.id));
     setModalOpen(true);
+  };
+
+  const handleToggleGrupoInForm = (gid: string) => {
+    setFormGrupoIds((prev) =>
+      prev.includes(gid) ? prev.filter((id) => id !== gid) : [...prev, gid]
+    );
   };
 
   const handleSaveDestinatario = async () => {
@@ -250,6 +280,7 @@ export default function ConfiguracionPage() {
           cargo: formCargo.trim() || undefined,
           notas: formNotas.trim() || undefined,
           activo: formActivo,
+          grupo_ids: formGrupoIds,
         });
         setSuccessMsg(`Destinatario "${formNombre}" actualizado exitosamente.`);
       } else {
@@ -259,6 +290,7 @@ export default function ConfiguracionPage() {
           cargo: formCargo.trim() || undefined,
           notas: formNotas.trim() || undefined,
           activo: formActivo,
+          grupo_ids: formGrupoIds,
         });
         setSuccessMsg(`Destinatario "${formNombre}" agregado a la lista de distribución.`);
       }
@@ -266,10 +298,82 @@ export default function ConfiguracionPage() {
       await loadDestinatarios();
     } catch (err: any) {
       console.error("Error guardando destinatario:", err);
-      setErrorMsg(err.message || "Error al guardar el destinatario.");
+      setErrorMsg(err.message || "Error al guardar el destinatario en la base de datos.");
     } finally {
       setSavingDestinatario(false);
     }
+  };
+
+  const handleOpenListasModal = () => {
+    setFormGrupoNombre("");
+    setFormGrupoDescripcion("");
+    setFormGrupoColor("#0284c7");
+    setEditingGrupoId(null);
+    setListasModalOpen(true);
+  };
+
+  const handleEditGrupo = (g: GrupoDistribucion) => {
+    setEditingGrupoId(g.id);
+    setFormGrupoNombre(g.nombre);
+    setFormGrupoDescripcion(g.descripcion || "");
+    setFormGrupoColor(g.color || "#0284c7");
+  };
+
+  const handleCancelEditGrupo = () => {
+    setEditingGrupoId(null);
+    setFormGrupoNombre("");
+    setFormGrupoDescripcion("");
+    setFormGrupoColor("#0284c7");
+  };
+
+  const handleSaveGrupo = async () => {
+    if (!formGrupoNombre.trim()) {
+      setErrorMsg("El nombre de la lista de distribución es obligatorio.");
+      return;
+    }
+    try {
+      setSavingGrupo(true);
+      setErrorMsg(null);
+      if (editingGrupoId) {
+        await ApiService.updateGrupo(editingGrupoId, {
+          nombre: formGrupoNombre.trim(),
+          descripcion: formGrupoDescripcion.trim() || undefined,
+          color: formGrupoColor,
+          activo: true,
+        });
+        setSuccessMsg(`Lista "${formGrupoNombre}" actualizada exitosamente.`);
+      } else {
+        await ApiService.createGrupo({
+          nombre: formGrupoNombre.trim(),
+          descripcion: formGrupoDescripcion.trim() || undefined,
+          color: formGrupoColor,
+          activo: true,
+        });
+        setSuccessMsg(`Lista "${formGrupoNombre}" creada exitosamente.`);
+      }
+      handleCancelEditGrupo();
+      await loadDestinatarios();
+    } catch (err: any) {
+      console.error("Error guardando lista:", err);
+      setErrorMsg(err.message || "Error al guardar la lista de distribución.");
+    } finally {
+      setSavingGrupo(false);
+    }
+  };
+
+  const handleDeleteGrupo = async (id: string, nombre: string) => {
+    try {
+      setErrorMsg(null);
+      await ApiService.deleteGrupo(id);
+      setSuccessMsg(`Lista "${nombre}" eliminada exitosamente.`);
+      if (selectedGrupoFilter === id) {
+        setSelectedGrupoFilter("all");
+      }
+      setDeleteGrupoConfirmId(null);
+      await loadDestinatarios();
+    } catch (err: any) {
+      console.error("Error eliminando lista:", err);
+      setErrorMsg(err.message || "Error al eliminar la lista de distribución.");
   };
 
   const handleToggleDestinatario = async (id: string, nombre: string) => {
@@ -1125,7 +1229,21 @@ export default function ConfiguracionPage() {
                     Administra los destinatarios ejecutivos que recibirán los briefings y alertas en tiempo real vía Kapso / Meta Cloud API.
                   </Typography>
                 </Box>
-                <Box sx={{ display: "flex", gap: 1.5 }}>
+                <Box sx={{ display: "flex", gap: 1.5, flexWrap: "wrap" }}>
+                  <Button
+                    variant="outlined"
+                    startIcon={<LabelIcon />}
+                    onClick={handleOpenListasModal}
+                    sx={{
+                      borderColor: "#0284c7",
+                      color: "#0284c7",
+                      "&:hover": { borderColor: "#0369a1", backgroundColor: "#f0f9ff" },
+                      textTransform: "none",
+                      fontWeight: 600,
+                    }}
+                  >
+                    Gestionar Listas ({grupos.length})
+                  </Button>
                   <Button
                     variant="outlined"
                     startIcon={<RefreshIcon />}
@@ -1208,6 +1326,54 @@ export default function ConfiguracionPage() {
                 </Grid>
               </Grid>
 
+              {/* Filtro por Lista de Distribución (Mini Administrador) */}
+              <Box sx={{ mb: 2.5, p: 2, backgroundColor: "#f8fafc", borderRadius: "12px", border: "1px solid #e2e8f0" }}>
+                <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 1.5, flexWrap: "wrap", gap: 1 }}>
+                  <Typography variant="body2" sx={{ fontWeight: 700, color: "#334155", display: "flex", alignItems: "center", gap: 0.75 }}>
+                    <LabelIcon sx={{ fontSize: 18, color: "#0284c7" }} />
+                    Listas de Distribución Temáticas:
+                  </Typography>
+                  <Button
+                    size="small"
+                    startIcon={<AddIcon fontSize="small" />}
+                    onClick={handleOpenListasModal}
+                    sx={{ textTransform: "none", fontSize: "0.8rem", fontWeight: 600, color: "#0284c7" }}
+                  >
+                    Crear Nueva Lista
+                  </Button>
+                </Box>
+                <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center" }}>
+                  <Chip
+                    label={`Todas (${destinatarios.length})`}
+                    color={selectedGrupoFilter === "all" ? "primary" : "default"}
+                    onClick={() => setSelectedGrupoFilter("all")}
+                    clickable
+                    sx={{ fontWeight: selectedGrupoFilter === "all" ? 700 : 500 }}
+                  />
+                  {grupos.map((g) => {
+                    const count = destinatarios.filter((d) => d.grupos?.some((dg) => dg.id === g.id)).length;
+                    const isSelected = selectedGrupoFilter === g.id;
+                    return (
+                      <Chip
+                        key={g.id}
+                        label={`${g.nombre} (${count})`}
+                        onClick={() => setSelectedGrupoFilter(isSelected ? "all" : g.id)}
+                        clickable
+                        sx={{
+                          fontWeight: isSelected ? 700 : 500,
+                          backgroundColor: isSelected ? g.color : `${g.color}15`,
+                          color: isSelected ? "#ffffff" : g.color,
+                          border: `1px solid ${g.color}`,
+                          "&:hover": {
+                            backgroundColor: isSelected ? g.color : `${g.color}30`,
+                          },
+                        }}
+                      />
+                    );
+                  })}
+                </Box>
+              </Box>
+
               {/* Tabla de Destinatarios */}
               <Card sx={{ borderRadius: "12px", border: "1px solid #e2e8f0", boxShadow: "0 2px 6px rgba(0,0,0,0.04)" }}>
                 {loadingDestinatarios ? (
@@ -1240,13 +1406,16 @@ export default function ConfiguracionPage() {
                           <TableCell sx={{ fontWeight: 600, color: "#475569" }}>Destinatario</TableCell>
                           <TableCell sx={{ fontWeight: 600, color: "#475569" }}>Teléfono WhatsApp</TableCell>
                           <TableCell sx={{ fontWeight: 600, color: "#475569" }}>Cargo / Área</TableCell>
+                          <TableCell sx={{ fontWeight: 600, color: "#475569" }}>Listas Asignadas</TableCell>
                           <TableCell sx={{ fontWeight: 600, color: "#475569" }}>Notas</TableCell>
                           <TableCell sx={{ fontWeight: 600, color: "#475569" }} align="center">Estado</TableCell>
                           <TableCell sx={{ fontWeight: 600, color: "#475569" }} align="right">Acciones</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
-                        {destinatarios.map((d) => (
+                        {destinatarios
+                          .filter((d) => selectedGrupoFilter === "all" || d.grupos?.some((g) => g.id === selectedGrupoFilter))
+                          .map((d) => (
                           <TableRow key={d.id} hover sx={{ "&:last-child td, &:last-child th": { border: 0 } }}>
                             <TableCell>
                               <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
@@ -1304,6 +1473,33 @@ export default function ConfiguracionPage() {
                                   Sin cargo especificado
                                 </Typography>
                               )}
+                            </TableCell>
+
+                            <TableCell>
+                              <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap", maxWidth: 220 }}>
+                                {d.grupos && d.grupos.length > 0 ? (
+                                  d.grupos.map((g) => (
+                                    <Chip
+                                      key={g.id}
+                                      label={g.nombre}
+                                      size="small"
+                                      sx={{
+                                        fontSize: "0.72rem",
+                                        height: "22px",
+                                        fontWeight: 600,
+                                        backgroundColor: `${g.color}18`,
+                                        color: g.color,
+                                        borderColor: g.color,
+                                        border: "1px solid",
+                                      }}
+                                    />
+                                  ))
+                                ) : (
+                                  <Typography variant="caption" sx={{ color: "#94a3b8", fontStyle: "italic" }}>
+                                    Sin lista
+                                  </Typography>
+                                )}
+                              </Box>
                             </TableCell>
 
                             <TableCell>
@@ -1438,6 +1634,43 @@ export default function ConfiguracionPage() {
               size="small"
             />
 
+            {/* Asignación a 1 o varias Listas de Distribución */}
+            <Box sx={{ p: 2, backgroundColor: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+              <Typography variant="caption" sx={{ fontWeight: 700, color: "#334155", display: "flex", alignItems: "center", gap: 0.5, mb: 1 }}>
+                <LabelIcon sx={{ fontSize: 16, color: "#0284c7" }} />
+                LISTAS DE DISTRIBUCIÓN (PUEDE ESTAR EN 1 O VARIAS):
+              </Typography>
+              {grupos.length === 0 ? (
+                <Typography variant="caption" sx={{ color: "#94a3b8" }}>
+                  No hay listas creadas aún. Puedes crearlas en &quot;Gestionar Listas&quot;.
+                </Typography>
+              ) : (
+                <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
+                  {grupos.map((g) => {
+                    const isSelected = formGrupoIds.includes(g.id);
+                    return (
+                      <Chip
+                        key={g.id}
+                        label={g.nombre}
+                        icon={isSelected ? <CheckIcon sx={{ fontSize: 16, color: "#ffffff !important" }} /> : undefined}
+                        onClick={() => handleToggleGrupoInForm(g.id)}
+                        clickable
+                        sx={{
+                          fontWeight: 600,
+                          backgroundColor: isSelected ? g.color : "#ffffff",
+                          color: isSelected ? "#ffffff" : "#475569",
+                          border: `1px solid ${isSelected ? g.color : "#cbd5e1"}`,
+                          "&:hover": {
+                            backgroundColor: isSelected ? g.color : "#f1f5f9",
+                          },
+                        }}
+                      />
+                    );
+                  })}
+                </Box>
+              )}
+            </Box>
+
             <TextField
               label="Notas Internas / Referencia"
               placeholder="Observaciones de horario o rol institucional..."
@@ -1521,6 +1754,205 @@ export default function ConfiguracionPage() {
             sx={{ textTransform: "none", fontWeight: 600 }}
           >
             Sí, eliminar
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Modal Mini Administrador de Listas de Distribución */}
+      <Dialog
+        open={listasModalOpen}
+        onClose={() => !savingGrupo && setListasModalOpen(false)}
+        maxWidth="md"
+        fullWidth
+        PaperProps={{ sx: { borderRadius: "12px", p: 1 } }}
+      >
+        <DialogTitle sx={{ fontWeight: 700, color: "#1e293b", display: "flex", alignItems: "center", gap: 1 }}>
+          <LabelIcon sx={{ color: "#0284c7" }} />
+          Mini Administrador de Listas de Distribución
+        </DialogTitle>
+        <DialogContent dividers>
+          <Grid container spacing={3}>
+            {/* Formulario Crear / Editar Lista */}
+            <Grid size={{ xs: 12, md: 5 }}>
+              <Box sx={{ p: 2.5, backgroundColor: "#f8fafc", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 700, color: "#1e293b", mb: 2 }}>
+                  {editingGrupoId ? "Editar Lista de Distribución" : "Crear Nueva Lista"}
+                </Typography>
+
+                <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  <TextField
+                    label="Nombre de la Lista *"
+                    placeholder="Ej. Comité Directivo, Siniestros..."
+                    value={formGrupoNombre}
+                    onChange={(e) => setFormGrupoNombre(e.target.value)}
+                    fullWidth
+                    size="small"
+                  />
+
+                  <TextField
+                    label="Descripción / Propósito"
+                    placeholder="Ej. Briefings estratégicos para directores..."
+                    value={formGrupoDescripcion}
+                    onChange={(e) => setFormGrupoDescripcion(e.target.value)}
+                    fullWidth
+                    size="small"
+                    multiline
+                    rows={2}
+                  />
+
+                  <Box>
+                    <Typography variant="caption" sx={{ fontWeight: 600, color: "#64748b", display: "block", mb: 1 }}>
+                      Color identificador:
+                    </Typography>
+                    <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+                      {["#0284c7", "#16a34a", "#9333ea", "#ea580c", "#dc2626", "#0d9488", "#4f46e5", "#b45309"].map((c) => (
+                        <Box
+                          key={c}
+                          onClick={() => setFormGrupoColor(c)}
+                          sx={{
+                            width: 28,
+                            height: 28,
+                            borderRadius: "50%",
+                            backgroundColor: c,
+                            cursor: "pointer",
+                            border: formGrupoColor === c ? "3px solid #1e293b" : "2px solid #ffffff",
+                            boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
+                          }}
+                        />
+                      ))}
+                    </Box>
+                  </Box>
+
+                  <Box sx={{ display: "flex", gap: 1, mt: 1 }}>
+                    <Button
+                      variant="contained"
+                      onClick={handleSaveGrupo}
+                      disabled={savingGrupo}
+                      sx={{
+                        backgroundColor: "#0284c7",
+                        "&:hover": { backgroundColor: "#0369a1" },
+                        textTransform: "none",
+                        fontWeight: 600,
+                        flex: 1,
+                      }}
+                    >
+                      {savingGrupo ? <CircularProgress size={18} color="inherit" /> : editingGrupoId ? "Actualizar Lista" : "Crear Lista"}
+                    </Button>
+                    {editingGrupoId && (
+                      <Button
+                        variant="outlined"
+                        onClick={handleCancelEditGrupo}
+                        sx={{ textTransform: "none", color: "#64748b" }}
+                      >
+                        Cancelar
+                      </Button>
+                    )}
+                  </Box>
+                </Box>
+              </Box>
+            </Grid>
+
+            {/* Listas Registradas */}
+            <Grid size={{ xs: 12, md: 7 }}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 700, color: "#1e293b", mb: 1.5 }}>
+                Listas Registradas ({grupos.length})
+              </Typography>
+
+              {grupos.length === 0 ? (
+                <Box sx={{ p: 4, textAlign: "center", color: "#94a3b8" }}>
+                  <Typography variant="body2">No hay listas creadas todavía.</Typography>
+                </Box>
+              ) : (
+                <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5, maxHeight: 380, overflowY: "auto", pr: 0.5 }}>
+                  {grupos.map((g) => (
+                    <Box
+                      key={g.id}
+                      sx={{
+                        p: 1.5,
+                        borderRadius: "8px",
+                        border: "1px solid #e2e8f0",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        backgroundColor: "#ffffff",
+                      }}
+                    >
+                      <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+                        <Box
+                          sx={{
+                            width: 14,
+                            height: 14,
+                            borderRadius: "50%",
+                            backgroundColor: g.color,
+                            flexShrink: 0,
+                          }}
+                        />
+                        <Box>
+                          <Typography variant="body2" sx={{ fontWeight: 700, color: "#1e293b" }}>
+                            {g.nombre}
+                          </Typography>
+                          {g.descripcion && (
+                            <Typography variant="caption" sx={{ color: "#64748b", display: "block" }}>
+                              {g.descripcion}
+                            </Typography>
+                          )}
+                          <Chip
+                            label={`${g.total_miembros || 0} destinatarios`}
+                            size="small"
+                            sx={{ fontSize: "0.7rem", height: "20px", mt: 0.5 }}
+                          />
+                        </Box>
+                      </Box>
+                      <Box sx={{ display: "flex", gap: 0.5 }}>
+                        <IconButton size="small" onClick={() => handleEditGrupo(g)} sx={{ color: "#64748b" }}>
+                          <EditIcon fontSize="small" />
+                        </IconButton>
+                        <IconButton
+                          size="small"
+                          onClick={() => setDeleteGrupoConfirmId(g.id)}
+                          sx={{ color: "#ef4444" }}
+                        >
+                          <DeleteOutlineIcon fontSize="small" />
+                        </IconButton>
+                      </Box>
+                    </Box>
+                  ))}
+                </Box>
+              )}
+            </Grid>
+          </Grid>
+        </DialogContent>
+        <DialogActions sx={{ p: 2 }}>
+          <Button onClick={() => setListasModalOpen(false)} sx={{ textTransform: "none", color: "#64748b" }}>
+            Cerrar
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Confirmación para eliminar Grupo / Lista */}
+      <Dialog open={Boolean(deleteGrupoConfirmId)} onClose={() => setDeleteGrupoConfirmId(null)}>
+        <DialogTitle sx={{ fontWeight: 700, color: "#dc2626" }}>¿Eliminar Lista de Distribución?</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">
+            ¿Estás seguro de que deseas eliminar la lista{" "}
+            <strong>{grupos.find((g) => g.id === deleteGrupoConfirmId)?.nombre}</strong>? Los contactos asignados no se
+            borrarán, solo se retirará la asignación a esta lista.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteGrupoConfirmId(null)} sx={{ textTransform: "none", color: "#64748b" }}>
+            Cancelar
+          </Button>
+          <Button
+            variant="contained"
+            color="error"
+            onClick={() => {
+              const target = grupos.find((g) => g.id === deleteGrupoConfirmId);
+              if (target) handleDeleteGrupo(target.id, target.nombre);
+            }}
+            sx={{ textTransform: "none", fontWeight: 600 }}
+          >
+            Eliminar Lista
           </Button>
         </DialogActions>
       </Dialog>

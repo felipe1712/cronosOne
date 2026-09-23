@@ -244,8 +244,43 @@ pub struct WebhookWhatsappSessionPayload {
 }
 
 // ============================================================================
-// 6. Lista de Distribución de Destinatarios WhatsApp
+// 6. Lista de Distribución y Grupos Temáticos WhatsApp
 // ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct GrupoDistribucion {
+    pub id: Uuid,
+    pub nombre: String,
+    pub descripcion: Option<String>,
+    pub color: String,
+    pub activo: bool,
+    pub creado_en: DateTime<Utc>,
+    #[sqlx(default)]
+    pub total_miembros: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateGrupoRequest {
+    pub nombre: String,
+    pub descripcion: Option<String>,
+    pub color: Option<String>,
+    pub activo: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateGrupoRequest {
+    pub nombre: String,
+    pub descripcion: Option<String>,
+    pub color: Option<String>,
+    pub activo: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct GrupoResumen {
+    pub id: Uuid,
+    pub nombre: String,
+    pub color: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Destinatario {
@@ -257,6 +292,8 @@ pub struct Destinatario {
     pub notas: Option<String>,
     pub creado_en: DateTime<Utc>,
     pub actualizado_en: DateTime<Utc>,
+    #[sqlx(default)]
+    pub grupos: Option<Vec<GrupoResumen>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -266,6 +303,7 @@ pub struct CreateDestinatarioRequest {
     pub cargo: Option<String>,
     pub notas: Option<String>,
     pub activo: Option<bool>,
+    pub grupo_ids: Option<Vec<Uuid>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -275,4 +313,5 @@ pub struct UpdateDestinatarioRequest {
     pub cargo: Option<String>,
     pub notas: Option<String>,
     pub activo: bool,
+    pub grupo_ids: Option<Vec<Uuid>>,
 }

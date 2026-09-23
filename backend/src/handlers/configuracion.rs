@@ -12,7 +12,10 @@ use uuid::Uuid;
 use crate::{
     config::Config,
     db::DbPool,
-    models::{CreateDestinatarioRequest, Destinatario, UpdateDestinatarioRequest},
+    models::{
+        CreateDestinatarioRequest, CreateGrupoRequest, Destinatario, GrupoDistribucion,
+        GrupoResumen, UpdateDestinatarioRequest, UpdateGrupoRequest,
+    },
 };
 
 #[allow(dead_code)]
@@ -530,13 +533,59 @@ pub async fn test_claude(
 }
 
 // ============================================================================
-// CRUD Lista de Distribución de Destinatarios WhatsApp
+// CRUD Lista de Distribución y Grupos Temáticos WhatsApp
 // ============================================================================
+
+pub async fn ensure_tablas_distribucion(pool: &DbPool) {
+    let _ = sqlx::query(
+        "CREATE TABLE IF NOT EXISTS lista_distribucion (
+            id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            nombre          VARCHAR(100) NOT NULL,
+            telefono        VARCHAR(50) NOT NULL,
+            cargo           VARCHAR(100),
+            activo          BOOLEAN NOT NULL DEFAULT true,
+            notas           TEXT,
+            creado_en       TIMESTAMPTZ NOT NULL DEFAULT now(),
+            actualizado_en  TIMESTAMPTZ NOT NULL DEFAULT now()
+        )"
+    ).execute(pool).await;
+
+    let _ = sqlx::query(
+        "CREATE TABLE IF NOT EXISTS grupos_distribucion (
+            id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            nombre          VARCHAR(100) NOT NULL UNIQUE,
+            descripcion     TEXT,
+            color           VARCHAR(30) NOT NULL DEFAULT '#0284c7',
+            activo          BOOLEAN NOT NULL DEFAULT true,
+            creado_en       TIMESTAMPTZ NOT NULL DEFAULT now()
+        )"
+    ).execute(pool).await;
+
+    let _ = sqlx::query(
+        "CREATE TABLE IF NOT EXISTS destinatarios_grupos (
+            destinatario_id UUID NOT NULL REFERENCES lista_distribucion(id) ON DELETE CASCADE,
+            grupo_id        UUID NOT NULL REFERENCES grupos_distribucion(id) ON DELETE CASCADE,
+            creado_en       TIMESTAMPTZ NOT NULL DEFAULT now(),
+            PRIMARY KEY (destinatario_id, grupo_id)
+        )"
+    ).execute(pool).await;
+
+    let _ = sqlx::query(
+        "INSERT INTO grupos_distribucion (nombre, descripcion, color)
+         VALUES 
+            ('Comité Directivo', 'Recepción de briefings matutinos ejecutivos y decisiones clave', '#0284c7'),
+            ('Operaciones & Siniestros', 'Alertas tempranas de seguridad, incidentes carreteros y siniestros', '#16a34a'),
+            ('Legal & Regulatorio', 'Reformas jurídicas, CNSF, SHCP, jurisprudencia y laboral', '#9333ea')
+         ON CONFLICT (nombre) DO NOTHING"
+    ).execute(pool).await;
+}
 
 pub async fn list_destinatarios(
     State((pool, _)): State<(DbPool, Arc<Config>)>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    let list = sqlx::query_as::<_, Destinatario>(
+    ensure_tablas_distribucion(&pool).await;
+
+    let mut dests = sqlx::query_as::<_, Destinatario>(
         "SELECT id, nombre, telefono, cargo, activo, notas, creado_en, actualizado_en
          FROM lista_distribucion
          ORDER BY creado_en ASC",
@@ -550,13 +599,46 @@ pub async fn list_destinatarios(
         )
     })?;
 
-    Ok((StatusCode::OK, Json(json!(list))))
+    #[derive(sqlx::FromRow)]
+    struct RelRow {
+        destinatario_id: Uuid,
+        id: Uuid,
+        nombre: String,
+        color: String,
+    }
+
+    let rels = sqlx::query_as::<_, RelRow>(
+        "SELECT dg.destinatario_id, g.id, g.nombre, g.color
+         FROM destinatarios_grupos dg
+         JOIN grupos_distribucion g ON g.id = dg.grupo_id
+         ORDER BY g.nombre ASC"
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+
+    for d in &mut dests {
+        let matching_grupos: Vec<GrupoResumen> = rels
+            .iter()
+            .filter(|r| r.destinatario_id == d.id)
+            .map(|r| GrupoResumen {
+                id: r.id,
+                nombre: r.nombre.clone(),
+                color: r.color.clone(),
+            })
+            .collect();
+        d.grupos = Some(matching_grupos);
+    }
+
+    Ok((StatusCode::OK, Json(json!(dests))))
 }
 
 pub async fn create_destinatario(
     State((pool, _)): State<(DbPool, Arc<Config>)>,
     Json(payload): Json<CreateDestinatarioRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    ensure_tablas_distribucion(&pool).await;
+
     let nombre = payload.nombre.trim();
     let telefono = payload.telefono.trim();
 
@@ -569,7 +651,7 @@ pub async fn create_destinatario(
 
     let activo = payload.activo.unwrap_or(true);
 
-    let destinatario = sqlx::query_as::<_, Destinatario>(
+    let mut dest = sqlx::query_as::<_, Destinatario>(
         "INSERT INTO lista_distribucion (nombre, telefono, cargo, activo, notas)
          VALUES ($1, $2, $3, $4, $5)
          RETURNING id, nombre, telefono, cargo, activo, notas, creado_en, actualizado_en",
@@ -588,7 +670,30 @@ pub async fn create_destinatario(
         )
     })?;
 
-    Ok((StatusCode::CREATED, Json(json!(destinatario))))
+    let mut grupos_resumen = Vec::new();
+    if let Some(ref g_ids) = payload.grupo_ids {
+        for gid in g_ids {
+            let _ = sqlx::query(
+                "INSERT INTO destinatarios_grupos (destinatario_id, grupo_id) VALUES ($1, $2) ON CONFLICT DO NOTHING"
+            )
+            .bind(dest.id)
+            .bind(gid)
+            .execute(&pool)
+            .await;
+
+            if let Ok(Some(g)) = sqlx::query_as::<_, GrupoResumen>(
+                "SELECT id, nombre, color FROM grupos_distribucion WHERE id = $1"
+            )
+            .bind(gid)
+            .fetch_optional(&pool)
+            .await {
+                grupos_resumen.push(g);
+            }
+        }
+    }
+    dest.grupos = Some(grupos_resumen);
+
+    Ok((StatusCode::CREATED, Json(json!(dest))))
 }
 
 pub async fn update_destinatario(
@@ -596,6 +701,8 @@ pub async fn update_destinatario(
     Path(id): Path<Uuid>,
     Json(payload): Json<UpdateDestinatarioRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    ensure_tablas_distribucion(&pool).await;
+
     let nombre = payload.nombre.trim();
     let telefono = payload.telefono.trim();
 
@@ -606,7 +713,7 @@ pub async fn update_destinatario(
         ));
     }
 
-    let destinatario = sqlx::query_as::<_, Destinatario>(
+    let mut dest = sqlx::query_as::<_, Destinatario>(
         "UPDATE lista_distribucion
          SET nombre = $1, telefono = $2, cargo = $3, activo = $4, notas = $5, actualizado_en = now()
          WHERE id = $6
@@ -633,7 +740,49 @@ pub async fn update_destinatario(
         )
     })?;
 
-    Ok((StatusCode::OK, Json(json!(destinatario))))
+    if let Some(ref g_ids) = payload.grupo_ids {
+        let _ = sqlx::query("DELETE FROM destinatarios_grupos WHERE destinatario_id = $1")
+            .bind(dest.id)
+            .execute(&pool)
+            .await;
+
+        let mut grupos_resumen = Vec::new();
+        for gid in g_ids {
+            let _ = sqlx::query(
+                "INSERT INTO destinatarios_grupos (destinatario_id, grupo_id) VALUES ($1, $2) ON CONFLICT DO NOTHING"
+            )
+            .bind(dest.id)
+            .bind(gid)
+            .execute(&pool)
+            .await;
+
+            if let Ok(Some(g)) = sqlx::query_as::<_, GrupoResumen>(
+                "SELECT id, nombre, color FROM grupos_distribucion WHERE id = $1"
+            )
+            .bind(gid)
+            .fetch_optional(&pool)
+            .await {
+                grupos_resumen.push(g);
+            }
+        }
+        dest.grupos = Some(grupos_resumen);
+    } else {
+        // Cargar grupos existentes
+        let rels = sqlx::query_as::<_, GrupoResumen>(
+            "SELECT g.id, g.nombre, g.color
+             FROM destinatarios_grupos dg
+             JOIN grupos_distribucion g ON g.id = dg.grupo_id
+             WHERE dg.destinatario_id = $1
+             ORDER BY g.nombre ASC"
+        )
+        .bind(dest.id)
+        .fetch_all(&pool)
+        .await
+        .unwrap_or_default();
+        dest.grupos = Some(rels);
+    }
+
+    Ok((StatusCode::OK, Json(json!(dest))))
 }
 
 pub async fn toggle_destinatario(
@@ -693,5 +842,146 @@ pub async fn delete_destinatario(
     Ok((
         StatusCode::OK,
         Json(json!({"mensaje": "Destinatario eliminado de la lista de distribución"})),
+    ))
+}
+
+// ============================================================================
+// CRUD Listas / Grupos de Distribución
+// ============================================================================
+
+pub async fn list_grupos(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    ensure_tablas_distribucion(&pool).await;
+
+    let grupos = sqlx::query_as::<_, GrupoDistribucion>(
+        "SELECT g.id, g.nombre, g.descripcion, g.color, g.activo, g.creado_en,
+                COUNT(dg.destinatario_id) as total_miembros
+         FROM grupos_distribucion g
+         LEFT JOIN destinatarios_grupos dg ON dg.grupo_id = g.id
+         GROUP BY g.id, g.nombre, g.descripcion, g.color, g.activo, g.creado_en
+         ORDER BY g.nombre ASC",
+    )
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error consultando listas de distribución: {}", e)})),
+        )
+    })?;
+
+    Ok((StatusCode::OK, Json(json!(grupos))))
+}
+
+pub async fn create_grupo(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+    Json(payload): Json<CreateGrupoRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    ensure_tablas_distribucion(&pool).await;
+
+    let nombre = payload.nombre.trim();
+    if nombre.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "El nombre de la lista de distribución es obligatorio"})),
+        ));
+    }
+
+    let color = payload.color.as_deref().unwrap_or("#0284c7");
+    let activo = payload.activo.unwrap_or(true);
+
+    let grupo = sqlx::query_as::<_, GrupoDistribucion>(
+        "INSERT INTO grupos_distribucion (nombre, descripcion, color, activo)
+         VALUES ($1, $2, $3, $4)
+         RETURNING id, nombre, descripcion, color, activo, creado_en, 0::bigint as total_miembros",
+    )
+    .bind(nombre)
+    .bind(payload.descripcion.as_deref().map(|s| s.trim()))
+    .bind(color)
+    .bind(activo)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error creando lista de distribución (posible nombre duplicado): {}", e)})),
+        )
+    })?;
+
+    Ok((StatusCode::CREATED, Json(json!(grupo))))
+}
+
+pub async fn update_grupo(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+    Path(id): Path<Uuid>,
+    Json(payload): Json<UpdateGrupoRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let nombre = payload.nombre.trim();
+    if nombre.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "El nombre de la lista de distribución es obligatorio"})),
+        ));
+    }
+
+    let color = payload.color.as_deref().unwrap_or("#0284c7");
+
+    let grupo = sqlx::query_as::<_, GrupoDistribucion>(
+        "UPDATE grupos_distribucion
+         SET nombre = $1, descripcion = $2, color = $3, activo = $4
+         WHERE id = $5
+         RETURNING id, nombre, descripcion, color, activo, creado_en, 
+                   (SELECT COUNT(*) FROM destinatarios_grupos WHERE grupo_id = $5) as total_miembros",
+    )
+    .bind(nombre)
+    .bind(payload.descripcion.as_deref().map(|s| s.trim()))
+    .bind(color)
+    .bind(payload.activo)
+    .bind(id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error actualizando lista: {}", e)})),
+        )
+    })?
+    .ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "Lista de distribución no encontrada"})),
+        )
+    })?;
+
+    Ok((StatusCode::OK, Json(json!(grupo))))
+}
+
+pub async fn delete_grupo(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+    Path(id): Path<Uuid>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let rows_affected = sqlx::query("DELETE FROM grupos_distribucion WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("Error eliminando lista: {}", e)})),
+            )
+        })?
+        .rows_affected();
+
+    if rows_affected == 0 {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "Lista de distribución no encontrada"})),
+        ));
+    }
+
+    Ok((
+        StatusCode::OK,
+        Json(json!({"mensaje": "Lista de distribución eliminada exitosamente"})),
     ))
 }
