@@ -115,14 +115,18 @@ pub async fn get_whatsapp_config(pool: &PgPool) -> KapsoConfig {
     let mut provider = "kapso".to_string();
     let mut api_key = String::new();
     let mut phone_number_id = String::new();
-    let mut director_phone = "5215512345678".to_string();
+    let mut director_phone = String::new();
 
     for r in rows {
         match r.clave.as_str() {
             "WHATSAPP_PROVIDER" => provider = r.valor,
             "KAPSO_API_KEY" => api_key = r.valor,
             "KAPSO_PHONE_NUMBER_ID" => phone_number_id = r.valor,
-            "DIRECTOR_WHATSAPP_PHONE" => director_phone = r.valor,
+            "DIRECTOR_WHATSAPP_PHONE" => {
+                if r.valor.trim() != "5215512345678" {
+                    director_phone = r.valor;
+                }
+            }
             _ => {}
         }
     }
@@ -135,6 +139,22 @@ pub async fn get_whatsapp_config(pool: &PgPool) -> KapsoConfig {
     if phone_number_id.trim().is_empty() {
         if let Ok(env_id) = std::env::var("KAPSO_PHONE_NUMBER_ID") {
             phone_number_id = env_id;
+        }
+    }
+    if director_phone.trim().is_empty() {
+        if let Ok(env_phone) = std::env::var("DIRECTOR_WHATSAPP_PHONE") {
+            if env_phone.trim() != "5215512345678" {
+                director_phone = env_phone;
+            }
+        }
+    }
+    if director_phone.trim().is_empty() {
+        if let Ok(Some(row)) = sqlx::query_as::<_, (String,)>(
+            "SELECT telefono FROM lista_distribucion WHERE activo = true AND telefono != '5215512345678' ORDER BY creado_en ASC LIMIT 1"
+        )
+        .fetch_optional(pool)
+        .await {
+            director_phone = row.0;
         }
     }
 

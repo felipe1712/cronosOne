@@ -165,8 +165,10 @@ export default function ConfiguracionPage() {
         if (data.kapso_phone_number_id) {
           setKapsoPhoneNumberId(data.kapso_phone_number_id);
         }
-        if (data.director_whatsapp_phone) {
+        if (data.director_whatsapp_phone && data.director_whatsapp_phone !== "5215512345678") {
           setDirectorWhatsappPhone(data.director_whatsapp_phone);
+        } else {
+          setDirectorWhatsappPhone("");
         }
       }
       if (dests) {
@@ -358,7 +360,11 @@ export default function ConfiguracionPage() {
       if (data) {
         if (data.kapso_api_key) setKapsoApiKey(data.kapso_api_key);
         if (data.kapso_phone_number_id) setKapsoPhoneNumberId(data.kapso_phone_number_id);
-        if (data.director_whatsapp_phone) setDirectorWhatsappPhone(data.director_whatsapp_phone);
+        if (data.director_whatsapp_phone && data.director_whatsapp_phone !== "5215512345678") {
+          setDirectorWhatsappPhone(data.director_whatsapp_phone);
+        } else {
+          setDirectorWhatsappPhone("");
+        }
         if (data.whatsapp_provider) setWhatsappProvider(data.whatsapp_provider);
       }
     } catch (err: any) {
@@ -904,8 +910,8 @@ export default function ConfiguracionPage() {
                           label="Teléfono WhatsApp del Director"
                           value={directorWhatsappPhone}
                           onChange={(e) => setDirectorWhatsappPhone(e.target.value)}
-                          placeholder="5215512345678"
-                          helperText="Formato internacional E.164 sin signo + (ej: 5215512345678)"
+                          placeholder="52XXXXXXXXXX"
+                          helperText="Formato internacional E.164 sin signos ni espacios (ej: 5255...)"
                         />
                       </Grid>
 

@@ -42,7 +42,7 @@ impl Config {
                 .unwrap_or_else(|_| "http://127.0.0.1:8001".to_string()),
             waha_session: env::var("WAHA_SESSION").unwrap_or_else(|_| "default".to_string()),
             director_whatsapp: env::var("DIRECTOR_WHATSAPP_PHONE")
-                .unwrap_or_else(|_| "5215512345678".to_string()),
+                .unwrap_or_else(|_| "".to_string()),
             n8n_restart_webhook_url: env::var("N8N_RESTART_WEBHOOK_URL").ok(),
         }
     }

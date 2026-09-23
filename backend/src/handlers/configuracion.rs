@@ -183,6 +183,16 @@ pub async fn get_configuraciones(
         )",
     )
     .execute(&pool)
+    // Asegurar limpieza automática de cualquier valor dummy previo en base de datos
+    let _ = sqlx::query(
+        "UPDATE configuraciones_sistema SET valor = '' WHERE clave = 'DIRECTOR_WHATSAPP_PHONE' AND valor = '5215512345678'"
+    )
+    .execute(&pool)
+    .await;
+    let _ = sqlx::query(
+        "DELETE FROM lista_distribucion WHERE telefono = '5215512345678'"
+    )
+    .execute(&pool)
     .await;
 
     let rows = sqlx::query_as::<_, ConfiguracionRow>(
@@ -197,7 +207,7 @@ pub async fn get_configuraciones(
     let mut whatsapp_provider = "kapso".to_string();
     let mut kapso_api_key = String::new();
     let mut kapso_phone_number_id = String::new();
-    let mut director_whatsapp_phone = "5215512345678".to_string();
+    let mut director_whatsapp_phone = String::new();
 
     for r in &rows {
         match r.clave.as_str() {
@@ -206,8 +216,30 @@ pub async fn get_configuraciones(
             "WHATSAPP_PROVIDER" => whatsapp_provider = r.valor.clone(),
             "KAPSO_API_KEY" => kapso_api_key = r.valor.clone(),
             "KAPSO_PHONE_NUMBER_ID" => kapso_phone_number_id = r.valor.clone(),
-            "DIRECTOR_WHATSAPP_PHONE" => director_whatsapp_phone = r.valor.clone(),
+            "DIRECTOR_WHATSAPP_PHONE" => {
+                if r.valor.trim() != "5215512345678" {
+                    director_whatsapp_phone = r.valor.clone();
+                }
+            }
             _ => {}
+        }
+    }
+
+    if director_whatsapp_phone.trim().is_empty() {
+        if let Ok(env_phone) = std::env::var("DIRECTOR_WHATSAPP_PHONE") {
+            if env_phone.trim() != "5215512345678" {
+                director_whatsapp_phone = env_phone;
+            }
+        }
+    }
+
+    if director_whatsapp_phone.trim().is_empty() {
+        if let Ok(Some(row)) = sqlx::query_as::<_, (String,)>(
+            "SELECT telefono FROM lista_distribucion WHERE activo = true AND telefono != '5215512345678' ORDER BY creado_en ASC LIMIT 1"
+        )
+        .fetch_optional(&pool)
+        .await {
+            director_whatsapp_phone = row.0;
         }
     }
 
@@ -328,27 +360,40 @@ pub async fn update_configuracion(
 
     if let Some(ref phone) = payload.director_whatsapp_phone {
         let clean_phone = phone.trim();
-        if !clean_phone.is_empty() {
-            if let Err(e) = sqlx::query(
-                "INSERT INTO configuraciones_sistema (clave, valor, descripcion, categoria, actualizado_en)
-                 VALUES ('DIRECTOR_WHATSAPP_PHONE', $1, 'Número de WhatsApp de destino del Director en formato E.164', 'whatsapp', now())
-                 ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, actualizado_en = now()"
-            )
-            .bind(clean_phone)
-            .execute(&pool)
-            .await {
-                tracing::error!("Error guardando DIRECTOR_WHATSAPP_PHONE: {}", e);
-            }
+        let val_to_save = if clean_phone == "5215512345678" { "" } else { clean_phone };
+        if let Err(e) = sqlx::query(
+            "INSERT INTO configuraciones_sistema (clave, valor, descripcion, categoria, actualizado_en)
+             VALUES ('DIRECTOR_WHATSAPP_PHONE', $1, 'Número de WhatsApp de destino del Director en formato E.164', 'whatsapp', now())
+             ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, actualizado_en = now()"
+        )
+        .bind(val_to_save)
+        .execute(&pool)
+        .await {
+            tracing::error!("Error guardando DIRECTOR_WHATSAPP_PHONE: {}", e);
+        }
 
+        if !val_to_save.is_empty() {
             // Sincronizar también en lista_distribucion
-            let _ = sqlx::query(
+            let affected = sqlx::query(
                 "UPDATE lista_distribucion 
                  SET telefono = $1, actualizado_en = now()
                  WHERE nombre ILIKE '%Director%'"
             )
-            .bind(clean_phone)
+            .bind(val_to_save)
             .execute(&pool)
-            .await;
+            .await
+            .map(|r| r.rows_affected())
+            .unwrap_or(0);
+
+            if affected == 0 {
+                let _ = sqlx::query(
+                    "INSERT INTO lista_distribucion (nombre, telefono, cargo, activo, notas)
+                     VALUES ('Director General', $1, 'Dirección Ejecutiva', true, 'Contacto principal')"
+                )
+                .bind(val_to_save)
+                .execute(&pool)
+                .await;
+            }
         }
     }
 
@@ -387,8 +432,18 @@ pub async fn test_whatsapp(
         .phone
         .as_deref()
         .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
+        .filter(|s| !s.is_empty() && *s != "5215512345678")
         .unwrap_or(cfg.director_phone.trim());
+
+    if target_phone.is_empty() || target_phone == "5215512345678" {
+        return Ok((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "ok": false,
+                "error": "No se ha configurado un número de teléfono de destino válido. Ingresa el número con código de país (ej: 5255...)."
+            })),
+        ));
+    }
 
     let test_body = payload.message.unwrap_or_else(|| {
         "🔔 *Prueba de Conexión ExposureIQ — WhatsApp Cloud API via Kapso*\n\nEste es un mensaje de prueba para validar la integración oficial en tiempo real.".to_string()

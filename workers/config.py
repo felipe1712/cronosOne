@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
     claude_model: str = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5-20250929")
     surya_ocr_url: str = os.getenv("SURYA_OCR_URL", "http://127.0.0.1:8000")
-    director_whatsapp: str = os.getenv("DIRECTOR_WHATSAPP_PHONE", "5215512345678")
+    director_whatsapp: str = os.getenv("DIRECTOR_WHATSAPP_PHONE", "")
     world_intel_mcp_url: str = os.getenv("WORLD_INTEL_MCP_URL", "http://127.0.0.1:8095")
 
 settings = Settings()
