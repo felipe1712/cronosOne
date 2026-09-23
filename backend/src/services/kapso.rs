@@ -127,6 +127,17 @@ pub async fn get_whatsapp_config(pool: &PgPool) -> KapsoConfig {
         }
     }
 
+    if api_key.trim().is_empty() {
+        if let Ok(env_key) = std::env::var("KAPSO_API_KEY") {
+            api_key = env_key;
+        }
+    }
+    if phone_number_id.trim().is_empty() {
+        if let Ok(env_id) = std::env::var("KAPSO_PHONE_NUMBER_ID") {
+            phone_number_id = env_id;
+        }
+    }
+
     KapsoConfig {
         provider,
         api_key,
