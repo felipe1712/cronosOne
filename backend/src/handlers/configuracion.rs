@@ -257,12 +257,15 @@ pub async fn get_configuraciones(
     let mut kapso_phone_number_id = String::new();
     let mut director_whatsapp_phone = String::new();
 
+    let mut config_map = serde_json::Map::new();
+
     // Consulta directa de clave/valor a prueba de esquemas parciales
     if let Ok(rows) = sqlx::query("SELECT clave, valor FROM configuraciones_sistema").fetch_all(&pool).await {
         for r in rows {
             use sqlx::Row;
             let c: String = r.try_get("clave").unwrap_or_default();
             let v: String = r.try_get("valor").unwrap_or_default();
+            config_map.insert(c.clone(), json!(v));
             match c.as_str() {
                 "CLAUDE_MODEL" => current_model = v,
                 "CLAUDE_SYSTEM_PROMPT" => current_prompt = v,
@@ -321,7 +324,7 @@ pub async fn get_configuraciones(
             "kapso_api_key": kapso_api_key,
             "kapso_phone_number_id": kapso_phone_number_id,
             "director_whatsapp_phone": director_whatsapp_phone,
-            "todas": rows
+            "todas": config_map
         })),
     ))
 }
