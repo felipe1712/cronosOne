@@ -1104,7 +1104,7 @@ export default function ConfiguracionPage() {
 
               {/* Tarjetas resumen KPI */}
               <Grid container spacing={2.5} sx={{ mb: 3 }}>
-                <Grid item xs={12} sm={4}>
+                <Grid size={{ xs: 12, sm: 4 }}>
                   <Card sx={{ borderRadius: "12px", border: "1px solid #e2e8f0", boxShadow: "0 2px 4px rgba(0,0,0,0.03)" }}>
                     <CardContent sx={{ p: 2.5, display: "flex", alignItems: "center", gap: 2 }}>
                       <Box sx={{ p: 1.5, borderRadius: "10px", backgroundColor: "#f0f9ff", color: "#0284c7" }}>
@@ -1122,7 +1122,7 @@ export default function ConfiguracionPage() {
                   </Card>
                 </Grid>
 
-                <Grid item xs={12} sm={4}>
+                <Grid size={{ xs: 12, sm: 4 }}>
                   <Card sx={{ borderRadius: "12px", border: "1px solid #bbf7d0", backgroundColor: "#f0fdf4", boxShadow: "0 2px 4px rgba(0,0,0,0.03)" }}>
                     <CardContent sx={{ p: 2.5, display: "flex", alignItems: "center", gap: 2 }}>
                       <Box sx={{ p: 1.5, borderRadius: "10px", backgroundColor: "#dcfce7", color: "#16a34a" }}>
@@ -1140,7 +1140,7 @@ export default function ConfiguracionPage() {
                   </Card>
                 </Grid>
 
-                <Grid item xs={12} sm={4}>
+                <Grid size={{ xs: 12, sm: 4 }}>
                   <Card sx={{ borderRadius: "12px", border: "1px solid #fed7aa", backgroundColor: "#fffbeb", boxShadow: "0 2px 4px rgba(0,0,0,0.03)" }}>
                     <CardContent sx={{ p: 2.5, display: "flex", alignItems: "center", gap: 2 }}>
                       <Box sx={{ p: 1.5, borderRadius: "10px", backgroundColor: "#fef3c7", color: "#d97706" }}>
