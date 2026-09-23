@@ -13,8 +13,8 @@ use crate::{
     config::Config,
     db::DbPool,
     models::{
-        CreateDestinatarioRequest, CreateGrupoRequest, Destinatario, GrupoDistribucion,
-        GrupoResumen, UpdateDestinatarioRequest, UpdateGrupoRequest,
+        CreateDestinatarioRequest, CreateGrupoRequest, Destinatario, DestinatarioRow,
+        GrupoDistribucion, GrupoResumen, UpdateDestinatarioRequest, UpdateGrupoRequest,
     },
 };
 
@@ -585,7 +585,7 @@ pub async fn list_destinatarios(
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     ensure_tablas_distribucion(&pool).await;
 
-    let mut dests = sqlx::query_as::<_, Destinatario>(
+    let dest_rows = sqlx::query_as::<_, DestinatarioRow>(
         "SELECT id, nombre, telefono, cargo, activo, notas, creado_en, actualizado_en
          FROM lista_distribucion
          ORDER BY creado_en ASC",
@@ -598,6 +598,8 @@ pub async fn list_destinatarios(
             Json(json!({"error": format!("Error consultando lista de distribución: {}", e)})),
         )
     })?;
+
+    let mut dests: Vec<Destinatario> = dest_rows.into_iter().map(Destinatario::from).collect();
 
     #[derive(sqlx::FromRow)]
     struct RelRow {
@@ -651,7 +653,7 @@ pub async fn create_destinatario(
 
     let activo = payload.activo.unwrap_or(true);
 
-    let mut dest = sqlx::query_as::<_, Destinatario>(
+    let dest_row = sqlx::query_as::<_, DestinatarioRow>(
         "INSERT INTO lista_distribucion (nombre, telefono, cargo, activo, notas)
          VALUES ($1, $2, $3, $4, $5)
          RETURNING id, nombre, telefono, cargo, activo, notas, creado_en, actualizado_en",
@@ -669,6 +671,8 @@ pub async fn create_destinatario(
             Json(json!({"error": format!("Error registrando destinatario: {}", e)})),
         )
     })?;
+
+    let mut dest = Destinatario::from(dest_row);
 
     let mut grupos_resumen = Vec::new();
     if let Some(ref g_ids) = payload.grupo_ids {
@@ -713,7 +717,7 @@ pub async fn update_destinatario(
         ));
     }
 
-    let mut dest = sqlx::query_as::<_, Destinatario>(
+    let dest_row = sqlx::query_as::<_, DestinatarioRow>(
         "UPDATE lista_distribucion
          SET nombre = $1, telefono = $2, cargo = $3, activo = $4, notas = $5, actualizado_en = now()
          WHERE id = $6
@@ -739,6 +743,8 @@ pub async fn update_destinatario(
             Json(json!({"error": "Destinatario no encontrado"})),
         )
     })?;
+
+    let mut dest = Destinatario::from(dest_row);
 
     if let Some(ref g_ids) = payload.grupo_ids {
         let _ = sqlx::query("DELETE FROM destinatarios_grupos WHERE destinatario_id = $1")
@@ -789,7 +795,7 @@ pub async fn toggle_destinatario(
     State((pool, _)): State<(DbPool, Arc<Config>)>,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    let destinatario = sqlx::query_as::<_, Destinatario>(
+    let row = sqlx::query_as::<_, DestinatarioRow>(
         "UPDATE lista_distribucion
          SET activo = NOT activo, actualizado_en = now()
          WHERE id = $1
@@ -810,6 +816,8 @@ pub async fn toggle_destinatario(
             Json(json!({"error": "Destinatario no encontrado"})),
         )
     })?;
+
+    let destinatario = Destinatario::from(row);
 
     Ok((StatusCode::OK, Json(json!(destinatario))))
 }

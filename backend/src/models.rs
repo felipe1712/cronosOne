@@ -282,7 +282,19 @@ pub struct GrupoResumen {
     pub color: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, FromRow)]
+pub struct DestinatarioRow {
+    pub id: Uuid,
+    pub nombre: String,
+    pub telefono: String,
+    pub cargo: Option<String>,
+    pub activo: bool,
+    pub notas: Option<String>,
+    pub creado_en: DateTime<Utc>,
+    pub actualizado_en: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Destinatario {
     pub id: Uuid,
     pub nombre: String,
@@ -292,8 +304,23 @@ pub struct Destinatario {
     pub notas: Option<String>,
     pub creado_en: DateTime<Utc>,
     pub actualizado_en: DateTime<Utc>,
-    #[sqlx(default)]
     pub grupos: Option<Vec<GrupoResumen>>,
+}
+
+impl From<DestinatarioRow> for Destinatario {
+    fn from(r: DestinatarioRow) -> Self {
+        Self {
+            id: r.id,
+            nombre: r.nombre,
+            telefono: r.telefono,
+            cargo: r.cargo,
+            activo: r.activo,
+            notas: r.notas,
+            creado_en: r.creado_en,
+            actualizado_en: r.actualizado_en,
+            grupos: None,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
