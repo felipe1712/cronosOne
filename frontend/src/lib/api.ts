@@ -62,6 +62,19 @@ export async function apiFetch<T>(endpoint: string, options: RequestInit = {}): 
 }
 
 // ============================================================================
+// Tipos y Modelos
+// ============================================================================
+
+export interface UpdateConfiguracionPayload {
+  claude_model?: string;
+  system_prompt?: string;
+  whatsapp_provider?: string;
+  kapso_api_key?: string;
+  kapso_phone_number_id?: string;
+  director_whatsapp_phone?: string;
+}
+
+// ============================================================================
 // Servicios de API
 // ============================================================================
 
@@ -164,7 +177,7 @@ export const ApiService = {
   // Configuración del Sistema & Modelos de IA
   getConfiguraciones: () => apiFetch<any>('/configuracion'),
 
-  updateConfiguracion: (payload: { claude_model?: string; system_prompt?: string } | string) => {
+  updateConfiguracion: (payload: UpdateConfiguracionPayload | string) => {
     const body = typeof payload === 'string' ? { claude_model: payload } : payload;
     return apiFetch<any>('/configuracion', {
       method: 'PUT',
