@@ -286,6 +286,8 @@ export default function ConfiguracionPage() {
       setErrorMsg(null);
       const res = await ApiService.testWhatsapp({
         phone: d.telefono,
+        api_key: kapsoApiKey,
+        phone_number_id: kapsoPhoneNumberId,
         message: `🔔 *Prueba Directa ExposureIQ — WhatsApp Oficial*\n\nHola *${d.nombre}*,\nEste es un mensaje de prueba para verificar que tu línea está correctamente dada de alta en la lista de distribución ejecutiva.`,
       });
       if (res.ok) {
@@ -346,11 +348,19 @@ export default function ConfiguracionPage() {
       setSuccessMsg(null);
       await ApiService.updateConfiguracion({
         whatsapp_provider: whatsappProvider,
-        kapso_api_key: kapsoApiKey,
-        kapso_phone_number_id: kapsoPhoneNumberId,
-        director_whatsapp_phone: directorWhatsappPhone,
+        kapso_api_key: kapsoApiKey.trim(),
+        kapso_phone_number_id: kapsoPhoneNumberId.trim(),
+        director_whatsapp_phone: directorWhatsappPhone.trim(),
       });
       setSuccessMsg("Configuración de WhatsApp guardada exitosamente en el sistema.");
+      // Recargar para confirmar persistencia en UI
+      const data = await ApiService.getConfiguraciones();
+      if (data) {
+        if (data.kapso_api_key) setKapsoApiKey(data.kapso_api_key);
+        if (data.kapso_phone_number_id) setKapsoPhoneNumberId(data.kapso_phone_number_id);
+        if (data.director_whatsapp_phone) setDirectorWhatsappPhone(data.director_whatsapp_phone);
+        if (data.whatsapp_provider) setWhatsappProvider(data.whatsapp_provider);
+      }
     } catch (err: any) {
       console.error("Error guardando configuración de WhatsApp:", err);
       setErrorMsg(err.message || "Error al guardar configuración de WhatsApp.");
@@ -366,6 +376,8 @@ export default function ConfiguracionPage() {
       setErrorMsg(null);
       const res = await ApiService.testWhatsapp({
         phone: directorWhatsappPhone,
+        api_key: kapsoApiKey,
+        phone_number_id: kapsoPhoneNumberId,
         message: "🔔 *Prueba de Conexión ExposureIQ — WhatsApp Cloud API via Kapso*\n\nSi estás leyendo esto, la entrega oficial de mensajes está 100% activa y funcionando.",
       });
       setWhatsappTestResult(res);

@@ -72,6 +72,8 @@ pub struct TestClaudePayload {
 pub struct TestWhatsappPayload {
     pub phone: Option<String>,
     pub message: Option<String>,
+    pub api_key: Option<String>,
+    pub phone_number_id: Option<String>,
 }
 
 pub fn get_available_claude_models() -> Vec<AvailableModel> {
@@ -209,6 +211,17 @@ pub async fn get_configuraciones(
         }
     }
 
+    if kapso_api_key.trim().is_empty() {
+        if let Ok(env_key) = std::env::var("KAPSO_API_KEY") {
+            kapso_api_key = env_key;
+        }
+    }
+    if kapso_phone_number_id.trim().is_empty() {
+        if let Ok(env_id) = std::env::var("KAPSO_PHONE_NUMBER_ID") {
+            kapso_phone_number_id = env_id;
+        }
+    }
+
     let available_models = get_available_claude_models();
 
     Ok((
@@ -231,6 +244,18 @@ pub async fn update_configuracion(
     State((pool, _config)): State<(DbPool, Arc<Config>)>,
     Json(payload): Json<UpdateConfiguracionPayload>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let _ = sqlx::query(
+        "CREATE TABLE IF NOT EXISTS configuraciones_sistema (
+            clave VARCHAR(100) PRIMARY KEY,
+            valor TEXT NOT NULL,
+            descripcion TEXT,
+            categoria VARCHAR(50) DEFAULT 'ia',
+            actualizado_en TIMESTAMPTZ NOT NULL DEFAULT now()
+        )",
+    )
+    .execute(&pool)
+    .await;
+
     if let Some(ref model) = payload.claude_model {
         let m = model.trim();
         if !m.is_empty() {
@@ -320,17 +345,32 @@ pub async fn test_whatsapp(
 
     let cfg = get_whatsapp_config(&pool).await;
 
+    let api_key = payload
+        .api_key
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(cfg.api_key.trim());
+
+    let phone_number_id = payload
+        .phone_number_id
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(cfg.phone_number_id.trim());
+
     let target_phone = payload
         .phone
         .as_deref()
-        .filter(|p| !p.trim().is_empty())
-        .unwrap_or(&cfg.director_phone);
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(cfg.director_phone.trim());
 
     let test_body = payload.message.unwrap_or_else(|| {
         "🔔 *Prueba de Conexión ExposureIQ — WhatsApp Cloud API via Kapso*\n\nEste es un mensaje de prueba para validar la integración oficial en tiempo real.".to_string()
     });
 
-    let client = KapsoClient::new(cfg.api_key.clone(), cfg.phone_number_id.clone());
+    let client = KapsoClient::new(api_key.to_string(), phone_number_id.to_string());
     let start = Instant::now();
 
     match client.send_text(target_phone, &test_body).await {

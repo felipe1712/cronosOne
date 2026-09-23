@@ -218,7 +218,7 @@ export const ApiService = {
       body: JSON.stringify({ model }),
     }),
 
-  testWhatsapp: (payload: { phone?: string; message?: string } = {}) =>
+  testWhatsapp: (payload: { phone?: string; message?: string; api_key?: string; phone_number_id?: string } = {}) =>
     apiFetch<any>('/configuracion/test-whatsapp', {
       method: 'POST',
       body: JSON.stringify(payload),
