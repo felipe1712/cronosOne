@@ -374,6 +374,7 @@ export default function ConfiguracionPage() {
     } catch (err: any) {
       console.error("Error eliminando lista:", err);
       setErrorMsg(err.message || "Error al eliminar la lista de distribución.");
+    }
   };
 
   const handleToggleDestinatario = async (id: string, nombre: string) => {
