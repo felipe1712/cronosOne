@@ -326,7 +326,15 @@ pub async fn aprobar_boletin(
         })?;
     }
 
-    // 2. Marcar boletín como aprobado
+    // 2. Asegurar que la restricción CHECK admita el estado 'aprobado'
+    let _ = sqlx::query("ALTER TABLE boletines DROP CONSTRAINT IF EXISTS boletines_estado_check")
+        .execute(&mut *tx)
+        .await;
+    let _ = sqlx::query("ALTER TABLE boletines ADD CONSTRAINT boletines_estado_check CHECK (estado IN ('pendiente_ocr', 'en_ocr', 'ocr_completo', 'error_ocr', 'sintesis_lista', 'error_sintesis', 'aprobado', 'enviado'))")
+        .execute(&mut *tx)
+        .await;
+
+    // Marcar boletín como aprobado
     sqlx::query(
         "UPDATE boletines SET estado = 'aprobado', actualizado_en = now() WHERE id = $1",
     )
