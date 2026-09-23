@@ -153,6 +153,37 @@ async def test_claude_endpoint(payload: TestClaudeRequest):
             "mensaje": f"Fallo al conectar con {target_model}: {str(e)}"
         }
 
+class ScrapeSenadoRequest(BaseModel):
+    fecha: Optional[str] = None
+
+@app.post("/api/scrape-senado")
+async def scrape_senado_endpoint(payload: Optional[ScrapeSenadoRequest] = None, background_tasks: BackgroundTasks = None):
+    from senado_scraper import run_senado_scraper_pipeline, get_scraper_status
+    status = get_scraper_status()
+    if status["en_progreso"]:
+        return {
+            "status": "en_progreso",
+            "mensaje": "El scraper del Senado ya se encuentra en ejecución",
+            "detalles": status
+        }
+    fecha = payload.fecha if payload else None
+    if background_tasks:
+        background_tasks.add_task(run_senado_scraper_pipeline, fecha)
+    else:
+        import asyncio
+        asyncio.create_task(run_senado_scraper_pipeline(fecha))
+
+    return {
+        "status": "encolado",
+        "mensaje": f"Scraper del Senado iniciado en segundo plano para la fecha {fecha or 'más reciente'}",
+        "fecha": fecha
+    }
+
+@app.get("/api/scrape-senado/status")
+def scrape_senado_status_endpoint():
+    from senado_scraper import get_scraper_status
+    return get_scraper_status()
+
 
 if __name__ == "__main__":
     import uvicorn

@@ -313,5 +313,25 @@ export const ApiService = {
     apiFetch<{ mensaje: string }>(`/configuracion/grupos/${id}`, {
       method: 'DELETE',
     }),
+
+  // Scraper Automatizado Senado de la República
+  ejecutarScraperSenado: (fecha?: string) =>
+    apiFetch<{ status: string; mensaje: string; fecha?: string }>('/scraper/senado/ejecutar', {
+      method: 'POST',
+      body: JSON.stringify({ fecha }),
+    }),
+
+  getScraperSenadoStatus: () =>
+    apiFetch<{
+      en_progreso: boolean;
+      fecha_objetivo?: string;
+      navegador_usado?: string;
+      archivos_descargados: Array<{ seccion: string; archivo: string; bytes: number; hash: string }>;
+      archivos_procesados: Array<{ boletin_id: string; seccion: string; estado: string }>;
+      errores: string[];
+      ultimo_inicio?: string;
+      ultimo_fin?: string;
+      mensaje: string;
+    }>('/scraper/senado/status'),
 };
 

@@ -10,7 +10,7 @@ use tower_http::trace::TraceLayer;
 use crate::{
     config::Config,
     db::DbPool,
-    handlers::{auth, boletines, configuracion, mensajes, osint, waha},
+    handlers::{auth, boletines, configuracion, mensajes, osint, scraper, waha},
     middleware::auth::require_auth,
 };
 
@@ -65,6 +65,9 @@ pub fn create_router(pool: DbPool, config: Arc<Config>) -> Router {
         .route("/api/configuracion/grupos", post(configuracion::create_grupo))
         .route("/api/configuracion/grupos/:id", put(configuracion::update_grupo))
         .route("/api/configuracion/grupos/:id", delete(configuracion::delete_grupo))
+        // Scraper Automatizado Senado de la República
+        .route("/api/scraper/senado/ejecutar", post(scraper::ejecutar_scraper_senado))
+        .route("/api/scraper/senado/status", get(scraper::get_scraper_senado_status))
         .layer(middleware::from_fn_with_state(config.clone(), require_auth));
 
     // Rutas públicas (consumidas por frontend login y cron n8n)

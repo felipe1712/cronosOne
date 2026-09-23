@@ -22,6 +22,7 @@ import {
   DialogContent,
   DialogActions,
   CircularProgress,
+  LinearProgress,
   Alert,
   IconButton,
   Tooltip,
@@ -50,6 +51,8 @@ import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import DoneAllIcon from "@mui/icons-material/DoneAll";
 import WhatsAppIcon from "@mui/icons-material/WhatsApp";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
+import AccountBalanceIcon from "@mui/icons-material/AccountBalance";
+import HourglassEmptyIcon from "@mui/icons-material/HourglassEmpty";
 import { ApiService } from "@/lib/api";
 
 export default function BoletinesPage() {
@@ -71,6 +74,12 @@ export default function BoletinesPage() {
   const [savingDraft, setSavingDraft] = useState<boolean>(false);
   const [approving, setApproving] = useState<boolean>(false);
 
+  // Estado y polling para Scraper automatizado del Senado
+  const [scrapingModalOpen, setScrapingModalOpen] = useState<boolean>(false);
+  const [scrapingStatus, setScrapingStatus] = useState<any>(null);
+  const [startingScrape, setStartingScrape] = useState<boolean>(false);
+  const scraperPollingRef = useRef<NodeJS.Timeout | null>(null);
+
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const fetchBoletines = async () => {
@@ -86,8 +95,60 @@ export default function BoletinesPage() {
     }
   };
 
+  const checkScraperStatus = async () => {
+    try {
+      const status = await ApiService.getScraperSenadoStatus();
+      setScrapingStatus(status);
+      return status;
+    } catch (err) {
+      console.error("Error al consultar estado del scraper:", err);
+      return null;
+    }
+  };
+
+  const startScraperPolling = () => {
+    if (scraperPollingRef.current) {
+      clearInterval(scraperPollingRef.current);
+    }
+    scraperPollingRef.current = setInterval(async () => {
+      const st = await checkScraperStatus();
+      if (st && !st.en_progreso) {
+        if (scraperPollingRef.current) {
+          clearInterval(scraperPollingRef.current);
+          scraperPollingRef.current = null;
+        }
+        fetchBoletines();
+      }
+    }, 2500);
+  };
+
+  const handleTriggerScraper = async () => {
+    try {
+      setStartingScrape(true);
+      setError(null);
+      await ApiService.ejecutarScraperSenado(fechaBoletin);
+      setScrapingModalOpen(true);
+      await checkScraperStatus();
+      startScraperPolling();
+    } catch (err: any) {
+      setError(err.message || "Error al iniciar sincronización del Senado.");
+    } finally {
+      setStartingScrape(false);
+    }
+  };
+
   useEffect(() => {
     fetchBoletines();
+    checkScraperStatus().then((st) => {
+      if (st && st.en_progreso) {
+        startScraperPolling();
+      }
+    });
+    return () => {
+      if (scraperPollingRef.current) {
+        clearInterval(scraperPollingRef.current);
+      }
+    };
   }, []);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -270,24 +331,84 @@ export default function BoletinesPage() {
   return (
     <Box sx={{ p: 3 }}>
       {/* Encabezado */}
-      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 3 }}>
+      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 3, flexWrap: "wrap", gap: 2 }}>
         <Box>
           <Typography variant="h5" sx={{ fontWeight: 700, color: "#1e293b" }}>
-            Boletines Coparmex — Ingesta & Síntesis Ejecutiva
+            Boletines & Síntesis Informativa
           </Typography>
           <Typography variant="body2" sx={{ color: "#64748b" }}>
-            Carga manual del PDF diario, procesamiento OCR con Claude y visto bueno humano antes del envío por WhatsApp.
+            Ingesta automatizada del Senado de la República (Headless Browser) y carga manual de boletines, con OCR Surya y visto bueno para WhatsApp.
           </Typography>
         </Box>
-        <Button
-          variant="outlined"
-          startIcon={<RefreshIcon />}
-          onClick={fetchBoletines}
-          disabled={loading}
-        >
-          Actualizar
-        </Button>
+        <Box sx={{ display: "flex", gap: 1.5, alignItems: "center" }}>
+          <Button
+            variant="contained"
+            startIcon={
+              startingScrape || scrapingStatus?.en_progreso ? (
+                <CircularProgress size={18} color="inherit" />
+              ) : (
+                <AccountBalanceIcon />
+              )
+            }
+            onClick={() => {
+              if (scrapingStatus?.en_progreso) {
+                setScrapingModalOpen(true);
+              } else {
+                handleTriggerScraper();
+              }
+            }}
+            disabled={startingScrape}
+            sx={{
+              backgroundColor: scrapingStatus?.en_progreso ? "#0284c7" : "#0f172a",
+              color: "#ffffff",
+              fontWeight: 600,
+              textTransform: "none",
+              borderRadius: "8px",
+              boxShadow: "0 2px 6px rgba(0,0,0,0.12)",
+              "&:hover": {
+                backgroundColor: scrapingStatus?.en_progreso ? "#0369a1" : "#1e293b",
+              },
+            }}
+          >
+            {scrapingStatus?.en_progreso
+              ? "Sincronizando Senado..."
+              : "Sincronizar Síntesis del Senado"}
+          </Button>
+          <Button
+            variant="outlined"
+            startIcon={<RefreshIcon />}
+            onClick={fetchBoletines}
+            disabled={loading}
+          >
+            Actualizar
+          </Button>
+        </Box>
       </Box>
+
+      {/* Banner de progreso en vivo del Scraper del Senado */}
+      {scrapingStatus?.en_progreso && (
+        <Alert
+          severity="info"
+          icon={<CircularProgress size={20} color="inherit" />}
+          action={
+            <Button
+              color="inherit"
+              size="small"
+              variant="outlined"
+              onClick={() => setScrapingModalOpen(true)}
+              sx={{ fontWeight: 600, textTransform: "none" }}
+            >
+              Ver Detalle
+            </Button>
+          }
+          sx={{ mb: 3, borderRadius: "10px", alignItems: "center" }}
+        >
+          <strong>Sincronización desatendida del Senado en curso:</strong>{" "}
+          {scrapingStatus.mensaje || "Navegando y extrayendo PDFs..."}{" "}
+          ({scrapingStatus.archivos_descargados?.length || 0} descargados,{" "}
+          {scrapingStatus.archivos_procesados?.length || 0}/10 sintetizados)
+        </Alert>
+      )}
 
       {error && (
         <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>
@@ -851,6 +972,197 @@ export default function BoletinesPage() {
               )}
             </Button>
           </Box>
+        </DialogActions>
+      </Dialog>
+
+      {/* ===================================================================== */}
+      {/* MODAL DE PROGRESO Y CONTROL: SCRAPER SÍNTESIS SENADO DE LA REPÚBLICA */}
+      {/* ===================================================================== */}
+      <Dialog
+        open={scrapingModalOpen}
+        onClose={() => {
+          if (!scrapingStatus?.en_progreso) {
+            setScrapingModalOpen(false);
+          }
+        }}
+        maxWidth="md"
+        fullWidth
+        sx={{
+          "& .MuiDialog-paper": {
+            borderRadius: "14px",
+            p: 1,
+          },
+        }}
+      >
+        <DialogTitle sx={{ pb: 1 }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+            <AccountBalanceIcon sx={{ color: "#0284c7", fontSize: 32 }} />
+            <Box>
+              <Typography variant="h6" sx={{ fontWeight: 700, color: "#0f172a" }}>
+                Sincronización Automatizada — Síntesis Senado
+              </Typography>
+              <Typography variant="caption" sx={{ color: "#64748b" }}>
+                Navegación desatendida, descarga de 10 secciones (excluye Cartones), OCR y síntesis IA.
+              </Typography>
+            </Box>
+          </Box>
+        </DialogTitle>
+
+        <DialogContent dividers sx={{ py: 2.5 }}>
+          {scrapingStatus?.en_progreso ? (
+            <Box sx={{ mb: 3 }}>
+              <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 1 }}>
+                <Typography variant="body2" sx={{ fontWeight: 600, color: "#0284c7" }}>
+                  {scrapingStatus.mensaje || "Ejecutando proceso de extracción y síntesis..."}
+                </Typography>
+                <CircularProgress size={18} />
+              </Box>
+              <LinearProgress
+                color="info"
+                sx={{ height: 8, borderRadius: 4, backgroundColor: "#e2e8f0" }}
+              />
+            </Box>
+          ) : scrapingStatus?.archivos_procesados?.length > 0 ? (
+            <Alert severity="success" sx={{ mb: 2.5, borderRadius: "8px" }}>
+              <strong>¡Sincronización y síntesis completada!</strong> Se descargaron y procesaron{" "}
+              {scrapingStatus.archivos_procesados.length} secciones del Senado. Todas se encuentran en estado{" "}
+              <strong>"Pendiente de Visto Bueno"</strong> (Opción A), listas para su revisión y aprobación.
+            </Alert>
+          ) : scrapingStatus?.errores?.length > 0 ? (
+            <Alert severity="error" sx={{ mb: 2.5, borderRadius: "8px" }}>
+              Hubo observaciones durante la sincronización: {scrapingStatus.errores.join(", ")}
+            </Alert>
+          ) : (
+            <Alert severity="info" sx={{ mb: 2.5, borderRadius: "8px" }}>
+              {scrapingStatus?.mensaje || "Scraper listo para sincronizar."}
+            </Alert>
+          )}
+
+          <Grid container spacing={2} sx={{ mb: 2 }}>
+            <Grid size={{ xs: 12, sm: 4 }}>
+              <Paper variant="outlined" sx={{ p: 1.5, borderRadius: "8px", textAlign: "center" }}>
+                <Typography variant="caption" sx={{ color: "#64748b", fontWeight: 600 }}>
+                  FECHA CONSULTADA
+                </Typography>
+                <Typography variant="body1" sx={{ fontWeight: 700, color: "#1e293b", mt: 0.5 }}>
+                  {scrapingStatus?.fecha_objetivo || fechaBoletin || "Hoy"}
+                </Typography>
+              </Paper>
+            </Grid>
+            <Grid size={{ xs: 12, sm: 4 }}>
+              <Paper variant="outlined" sx={{ p: 1.5, borderRadius: "8px", textAlign: "center" }}>
+                <Typography variant="caption" sx={{ color: "#64748b", fontWeight: 600 }}>
+                  DESCARGADOS
+                </Typography>
+                <Typography variant="body1" sx={{ fontWeight: 700, color: "#0284c7", mt: 0.5 }}>
+                  {scrapingStatus?.archivos_descargados?.length || 0} / 10 secciones
+                </Typography>
+              </Paper>
+            </Grid>
+            <Grid size={{ xs: 12, sm: 4 }}>
+              <Paper variant="outlined" sx={{ p: 1.5, borderRadius: "8px", textAlign: "center" }}>
+                <Typography variant="caption" sx={{ color: "#64748b", fontWeight: 600 }}>
+                  SÍNTESIS GENERADAS
+                </Typography>
+                <Typography variant="body1" sx={{ fontWeight: 700, color: "#16a34a", mt: 0.5 }}>
+                  {scrapingStatus?.archivos_procesados?.length || 0} / 10 listos
+                </Typography>
+              </Paper>
+            </Grid>
+          </Grid>
+
+          {/* Lista de secciones procesadas o descargadas */}
+          <Typography variant="subtitle2" sx={{ fontWeight: 700, color: "#334155", mb: 1 }}>
+            Detalle de Secciones del Senado (10 solicitadas - Cartones Excluida):
+          </Typography>
+
+          <Box
+            sx={{
+              maxHeight: 240,
+              overflowY: "auto",
+              border: "1px solid #e2e8f0",
+              borderRadius: "8px",
+              backgroundColor: "#f8fafc",
+              p: 1,
+            }}
+          >
+            {scrapingStatus?.archivos_descargados && scrapingStatus.archivos_descargados.length > 0 ? (
+              scrapingStatus.archivos_descargados.map((item: any, idx: number) => {
+                const procesado = scrapingStatus.archivos_procesados?.some(
+                  (p: any) => p.archivo === item.archivo
+                );
+                return (
+                  <Box
+                    key={idx}
+                    sx={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      p: 1,
+                      borderBottom:
+                        idx < scrapingStatus.archivos_descargados.length - 1
+                          ? "1px solid #e2e8f0"
+                          : "none",
+                    }}
+                  >
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                      {procesado ? (
+                        <CheckCircleIcon sx={{ color: "#16a34a", fontSize: 20 }} />
+                      ) : (
+                        <HourglassEmptyIcon sx={{ color: "#f59e0b", fontSize: 20 }} />
+                      )}
+                      <Typography variant="body2" sx={{ fontWeight: 600, color: "#1e293b" }}>
+                        {item.nombre || item.archivo}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: "#64748b" }}>
+                        ({item.archivo} - {(item.tamano_kb || 0).toFixed(0)} KB)
+                      </Typography>
+                    </Box>
+                    <Chip
+                      size="small"
+                      label={procesado ? "Síntesis Lista" : "En Procesamiento"}
+                      color={procesado ? "success" : "warning"}
+                      variant="outlined"
+                    />
+                  </Box>
+                );
+              })
+            ) : (
+              <Box sx={{ p: 2, textAlign: "center", color: "#64748b" }}>
+                <Typography variant="body2">
+                  {scrapingStatus?.en_progreso
+                    ? "Iniciando navegación con Headless Browser..."
+                    : "No hay descargas registradas en esta sesión."}
+                </Typography>
+              </Box>
+            )}
+          </Box>
+        </DialogContent>
+
+        <DialogActions sx={{ p: 2, justifyContent: "space-between" }}>
+          <Button
+            onClick={() => setScrapingModalOpen(false)}
+            color="inherit"
+          >
+            {scrapingStatus?.en_progreso ? "Ocultar y Dejar en Segundo Plano" : "Cerrar"}
+          </Button>
+
+          <Button
+            variant="contained"
+            onClick={() => {
+              setScrapingModalOpen(false);
+              fetchBoletines();
+            }}
+            disabled={scrapingStatus?.en_progreso}
+            sx={{
+              backgroundColor: "#0284c7",
+              "&:hover": { backgroundColor: "#0369a1" },
+              fontWeight: 600,
+              textTransform: "none",
+            }}
+          >
+            Ver Boletines en Tabla
+          </Button>
         </DialogActions>
       </Dialog>
     </Box>

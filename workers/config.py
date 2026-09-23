@@ -18,5 +18,8 @@ class Settings(BaseSettings):
     surya_ocr_url: str = os.getenv("SURYA_OCR_URL", "http://127.0.0.1:8000")
     director_whatsapp: str = os.getenv("DIRECTOR_WHATSAPP_PHONE", "")
     world_intel_mcp_url: str = os.getenv("WORLD_INTEL_MCP_URL", "http://127.0.0.1:8095")
+    senado_sintesis_url: str = os.getenv("SENADO_SINTESIS_URL", "https://comunicacionsocial.senado.gob.mx/sintesiss")
+    lightpanda_cdp_url: str = os.getenv("LIGHTPANDA_CDP_URL", "http://127.0.0.1:9222")
+    auto_ingest_dir: str = os.getenv("AUTO_INGEST_DIR", "")
 
 settings = Settings()
