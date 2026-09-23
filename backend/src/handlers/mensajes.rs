@@ -218,8 +218,8 @@ pub async fn enviar_mensaje_directo(
     }
 
     // Resolver destino: si payload provee teléfono válido, o si el destinatario guardado es válido (no dummy), o usar el del director
-    let target_phone = if let Some(p) = req.telefono.filter(|p| !p.trim().is_empty() && p.trim() != "5215512345678") {
-        p
+    let target_phone = if let Some(p) = req.telefono.as_deref().filter(|p| !p.trim().is_empty() && *p != "5215512345678") {
+        p.to_string()
     } else if !m.destinatario.trim().is_empty() && m.destinatario.trim() != "5215512345678" {
         m.destinatario.clone()
     } else if !cfg.director_phone.trim().is_empty() && cfg.director_phone.trim() != "5215512345678" {
@@ -311,16 +311,26 @@ pub async fn despachar_cola(
     .await
     .unwrap_or_default();
 
+    let default_phone = req
+        .telefono
+        .as_deref()
+        .filter(|p| !p.trim().is_empty() && p.trim() != "5215512345678")
+        .or_else(|| {
+            if !cfg.director_phone.trim().is_empty() && cfg.director_phone.trim() != "5215512345678" {
+                Some(cfg.director_phone.as_str())
+            } else {
+                None
+            }
+        });
+
     let mut enviados = 0;
     let mut errores = 0;
 
     for m in pendientes {
         let target_phone = if !m.destinatario.trim().is_empty() && m.destinatario.trim() != "5215512345678" {
             m.destinatario.clone()
-        } else if !cfg.director_phone.trim().is_empty() && cfg.director_phone.trim() != "5215512345678" {
-            cfg.director_phone.clone()
-        } else if let Some(ref p) = req.telefono.filter(|p| !p.trim().is_empty() && p.trim() != "5215512345678") {
-            p.clone()
+        } else if let Some(p) = default_phone {
+            p.to_string()
         } else {
             continue;
         };
