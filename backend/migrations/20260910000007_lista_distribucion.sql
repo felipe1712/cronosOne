@@ -25,5 +25,4 @@ FROM configuraciones_sistema
 WHERE clave = 'DIRECTOR_WHATSAPP_PHONE'
   AND valor IS NOT NULL 
   AND valor != ''
-  AND valor != '5215512345678'
   AND NOT EXISTS (SELECT 1 FROM lista_distribucion LIMIT 1);

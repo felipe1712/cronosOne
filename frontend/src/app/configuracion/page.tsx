@@ -159,14 +159,29 @@ export default function ConfiguracionPage() {
         if (data.whatsapp_provider) {
           setWhatsappProvider(data.whatsapp_provider);
         }
-        if (data.kapso_api_key) {
-          setKapsoApiKey(data.kapso_api_key);
+
+        // Kapso API Key: API primero, con respaldo en localStorage
+        const localKey = typeof window !== "undefined" ? localStorage.getItem("exposureiq_kapso_api_key") || "" : "";
+        const activeKey = (data.kapso_api_key && data.kapso_api_key.trim()) ? data.kapso_api_key : localKey;
+        if (activeKey) {
+          setKapsoApiKey(activeKey);
+          if (typeof window !== "undefined") localStorage.setItem("exposureiq_kapso_api_key", activeKey);
         }
-        if (data.kapso_phone_number_id) {
-          setKapsoPhoneNumberId(data.kapso_phone_number_id);
+
+        // Kapso Phone Number ID: API primero, con respaldo en localStorage
+        const localPhoneId = typeof window !== "undefined" ? localStorage.getItem("exposureiq_kapso_phone_id") || "" : "";
+        const activePhoneId = (data.kapso_phone_number_id && data.kapso_phone_number_id.trim()) ? data.kapso_phone_number_id : localPhoneId;
+        if (activePhoneId) {
+          setKapsoPhoneNumberId(activePhoneId);
+          if (typeof window !== "undefined") localStorage.setItem("exposureiq_kapso_phone_id", activePhoneId);
         }
-        if (data.director_whatsapp_phone && data.director_whatsapp_phone !== "5215512345678") {
-          setDirectorWhatsappPhone(data.director_whatsapp_phone);
+
+        // Teléfono del Director: API primero, con respaldo en localStorage (filtrando siempre el dummy)
+        const localDirectorPhone = typeof window !== "undefined" ? localStorage.getItem("exposureiq_director_phone") || "" : "";
+        const candidatePhone = (data.director_whatsapp_phone && data.director_whatsapp_phone.trim()) ? data.director_whatsapp_phone.trim() : localDirectorPhone;
+        if (candidatePhone && candidatePhone !== "5215512345678") {
+          setDirectorWhatsappPhone(candidatePhone);
+          if (typeof window !== "undefined") localStorage.setItem("exposureiq_director_phone", candidatePhone);
         } else {
           setDirectorWhatsappPhone("");
         }
@@ -347,23 +362,39 @@ export default function ConfiguracionPage() {
     try {
       setSavingWhatsapp(true);
       setErrorMsg(null);
-      setSuccessMsg(null);
+      const cleanKey = kapsoApiKey.trim();
+      const cleanPhoneId = kapsoPhoneNumberId.trim();
+      const cleanPhone = directorWhatsappPhone.trim();
+
+      // Guardar de inmediato en localStorage como respaldo local garantizado
+      if (typeof window !== "undefined") {
+        if (cleanKey) localStorage.setItem("exposureiq_kapso_api_key", cleanKey);
+        if (cleanPhoneId) localStorage.setItem("exposureiq_kapso_phone_id", cleanPhoneId);
+        if (cleanPhone && cleanPhone !== "5215512345678") localStorage.setItem("exposureiq_director_phone", cleanPhone);
+      }
+
       await ApiService.updateConfiguracion({
         whatsapp_provider: whatsappProvider,
-        kapso_api_key: kapsoApiKey.trim(),
-        kapso_phone_number_id: kapsoPhoneNumberId.trim(),
-        director_whatsapp_phone: directorWhatsappPhone.trim(),
+        kapso_api_key: cleanKey,
+        kapso_phone_number_id: cleanPhoneId,
+        director_whatsapp_phone: cleanPhone,
       });
       setSuccessMsg("Configuración de WhatsApp guardada exitosamente en el sistema.");
+
       // Recargar para confirmar persistencia en UI
       const data = await ApiService.getConfiguraciones();
       if (data) {
-        if (data.kapso_api_key) setKapsoApiKey(data.kapso_api_key);
-        if (data.kapso_phone_number_id) setKapsoPhoneNumberId(data.kapso_phone_number_id);
-        if (data.director_whatsapp_phone && data.director_whatsapp_phone !== "5215512345678") {
+        if (data.kapso_api_key && data.kapso_api_key.trim()) {
+          setKapsoApiKey(data.kapso_api_key);
+          if (typeof window !== "undefined") localStorage.setItem("exposureiq_kapso_api_key", data.kapso_api_key);
+        }
+        if (data.kapso_phone_number_id && data.kapso_phone_number_id.trim()) {
+          setKapsoPhoneNumberId(data.kapso_phone_number_id);
+          if (typeof window !== "undefined") localStorage.setItem("exposureiq_kapso_phone_id", data.kapso_phone_number_id);
+        }
+        if (data.director_whatsapp_phone && data.director_whatsapp_phone.trim() && data.director_whatsapp_phone !== "5215512345678") {
           setDirectorWhatsappPhone(data.director_whatsapp_phone);
-        } else {
-          setDirectorWhatsappPhone("");
+          if (typeof window !== "undefined") localStorage.setItem("exposureiq_director_phone", data.director_whatsapp_phone);
         }
         if (data.whatsapp_provider) setWhatsappProvider(data.whatsapp_provider);
       }
@@ -909,7 +940,13 @@ export default function ConfiguracionPage() {
                           fullWidth
                           label="Teléfono WhatsApp del Director"
                           value={directorWhatsappPhone}
-                          onChange={(e) => setDirectorWhatsappPhone(e.target.value)}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setDirectorWhatsappPhone(val);
+                            if (typeof window !== "undefined" && val !== "5215512345678") {
+                              localStorage.setItem("exposureiq_director_phone", val);
+                            }
+                          }}
                           placeholder="52XXXXXXXXXX"
                           helperText="Formato internacional E.164 sin signos ni espacios (ej: 5255...)"
                         />
@@ -922,7 +959,13 @@ export default function ConfiguracionPage() {
                           label="Kapso API Key (X-API-Key)"
                           type={showApiKey ? "text" : "password"}
                           value={kapsoApiKey}
-                          onChange={(e) => setKapsoApiKey(e.target.value)}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setKapsoApiKey(val);
+                            if (typeof window !== "undefined") {
+                              localStorage.setItem("exposureiq_kapso_api_key", val);
+                            }
+                          }}
                           placeholder="kapso_live_..."
                           helperText="Obtenla en dashboard.kapso.ai → Integrations → API keys"
                           InputProps={{
@@ -943,7 +986,13 @@ export default function ConfiguracionPage() {
                           fullWidth
                           label="Kapso / Meta Phone Number ID"
                           value={kapsoPhoneNumberId}
-                          onChange={(e) => setKapsoPhoneNumberId(e.target.value)}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setKapsoPhoneNumberId(val);
+                            if (typeof window !== "undefined") {
+                              localStorage.setItem("exposureiq_kapso_phone_id", val);
+                            }
+                          }}
                           placeholder="647015955153740"
                           helperText="ID numérico asignado en dashboard.kapso.ai → WhatsApp → Phone numbers"
                         />

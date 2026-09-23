@@ -169,10 +169,59 @@ pub fn get_available_claude_models() -> Vec<AvailableModel> {
     ]
 }
 
+async fn upsert_config(
+    pool: &DbPool,
+    clave: &str,
+    valor: &str,
+    descripcion: &str,
+    categoria: &str,
+) {
+    let clean_val = valor.trim();
+    // 1. Intentar actualizar si ya existe la clave
+    let update_res = sqlx::query(
+        "UPDATE configuraciones_sistema SET valor = $1, actualizado_en = now() WHERE clave = $2"
+    )
+    .bind(clean_val)
+    .bind(clave)
+    .execute(pool)
+    .await;
+
+    match update_res {
+        Ok(res) if res.rows_affected() > 0 => {
+            tracing::info!("Configuración {} actualizada a '{}'", clave, clean_val);
+        }
+        _ => {
+            // 2. Si no existía, insertar
+            let insert_res = sqlx::query(
+                "INSERT INTO configuraciones_sistema (clave, valor, descripcion, categoria, actualizado_en)
+                 VALUES ($1, $2, $3, $4, now())"
+            )
+            .bind(clave)
+            .bind(clean_val)
+            .bind(descripcion)
+            .bind(categoria)
+            .execute(pool)
+            .await;
+
+            if let Err(e) = insert_res {
+                tracing::warn!("Insert completo falló para {}: {}, intentando inserción básica", clave, e);
+                let _ = sqlx::query(
+                    "INSERT INTO configuraciones_sistema (clave, valor) VALUES ($1, $2)
+                     ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor"
+                )
+                .bind(clave)
+                .bind(clean_val)
+                .execute(pool)
+                .await;
+            }
+        }
+    }
+}
+
 pub async fn get_configuraciones(
     State((pool, _config)): State<(DbPool, Arc<Config>)>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    // Asegurar tabla si no existe
+    // Asegurar tabla y columnas si no existen
     let _ = sqlx::query(
         "CREATE TABLE IF NOT EXISTS configuraciones_sistema (
             clave VARCHAR(100) PRIMARY KEY,
@@ -184,6 +233,11 @@ pub async fn get_configuraciones(
     )
     .execute(&pool)
     .await;
+
+    let _ = sqlx::query("ALTER TABLE configuraciones_sistema ADD COLUMN IF NOT EXISTS descripcion TEXT").execute(&pool).await;
+    let _ = sqlx::query("ALTER TABLE configuraciones_sistema ADD COLUMN IF NOT EXISTS categoria VARCHAR(50) DEFAULT 'ia'").execute(&pool).await;
+    let _ = sqlx::query("ALTER TABLE configuraciones_sistema ADD COLUMN IF NOT EXISTS actualizado_en TIMESTAMPTZ NOT NULL DEFAULT now()").execute(&pool).await;
+
     // Asegurar limpieza automática de cualquier valor dummy previo en base de datos
     let _ = sqlx::query(
         "UPDATE configuraciones_sistema SET valor = '' WHERE clave = 'DIRECTOR_WHATSAPP_PHONE' AND valor = '5215512345678'"
@@ -196,13 +250,6 @@ pub async fn get_configuraciones(
     .execute(&pool)
     .await;
 
-    let rows = sqlx::query_as::<_, ConfiguracionRow>(
-        "SELECT clave, valor, descripcion, categoria FROM configuraciones_sistema",
-    )
-    .fetch_all(&pool)
-    .await
-    .unwrap_or_default();
-
     let mut current_model = "claude-sonnet-4-5-20250929".to_string();
     let mut current_prompt = DEFAULT_SYSTEM_PROMPT.to_string();
     let mut whatsapp_provider = "kapso".to_string();
@@ -210,19 +257,25 @@ pub async fn get_configuraciones(
     let mut kapso_phone_number_id = String::new();
     let mut director_whatsapp_phone = String::new();
 
-    for r in &rows {
-        match r.clave.as_str() {
-            "CLAUDE_MODEL" => current_model = r.valor.clone(),
-            "CLAUDE_SYSTEM_PROMPT" => current_prompt = r.valor.clone(),
-            "WHATSAPP_PROVIDER" => whatsapp_provider = r.valor.clone(),
-            "KAPSO_API_KEY" => kapso_api_key = r.valor.clone(),
-            "KAPSO_PHONE_NUMBER_ID" => kapso_phone_number_id = r.valor.clone(),
-            "DIRECTOR_WHATSAPP_PHONE" => {
-                if r.valor.trim() != "5215512345678" {
-                    director_whatsapp_phone = r.valor.clone();
+    // Consulta directa de clave/valor a prueba de esquemas parciales
+    if let Ok(rows) = sqlx::query("SELECT clave, valor FROM configuraciones_sistema").fetch_all(&pool).await {
+        for r in rows {
+            use sqlx::Row;
+            let c: String = r.try_get("clave").unwrap_or_default();
+            let v: String = r.try_get("valor").unwrap_or_default();
+            match c.as_str() {
+                "CLAUDE_MODEL" => current_model = v,
+                "CLAUDE_SYSTEM_PROMPT" => current_prompt = v,
+                "WHATSAPP_PROVIDER" => whatsapp_provider = v,
+                "KAPSO_API_KEY" => kapso_api_key = v,
+                "KAPSO_PHONE_NUMBER_ID" => kapso_phone_number_id = v,
+                "DIRECTOR_WHATSAPP_PHONE" => {
+                    if v.trim() != "5215512345678" {
+                        director_whatsapp_phone = v;
+                    }
                 }
+                _ => {}
             }
-            _ => {}
         }
     }
 
@@ -292,86 +345,42 @@ pub async fn update_configuracion(
     if let Some(ref model) = payload.claude_model {
         let m = model.trim();
         if !m.is_empty() {
-            let _ = sqlx::query(
-                "INSERT INTO configuraciones_sistema (clave, valor, descripcion, categoria, actualizado_en)
-                 VALUES ('CLAUDE_MODEL', $1, 'Modelo de Anthropic Claude seleccionado para la síntesis de boletines', 'ia', now())
-                 ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, actualizado_en = now()"
-            )
-            .bind(m)
-            .execute(&pool)
-            .await;
+            upsert_config(&pool, "CLAUDE_MODEL", m, "Modelo de Anthropic Claude seleccionado para la síntesis de boletines", "ia").await;
         }
     }
 
     if let Some(ref prompt) = payload.system_prompt {
         let p = prompt.trim();
         if !p.is_empty() {
-            let _ = sqlx::query(
-                "INSERT INTO configuraciones_sistema (clave, valor, descripcion, categoria, actualizado_en)
-                 VALUES ('CLAUDE_SYSTEM_PROMPT', $1, 'Instrucciones del sistema para el análisis y síntesis de boletines', 'ia', now())
-                 ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, actualizado_en = now()"
-            )
-            .bind(p)
-            .execute(&pool)
-            .await;
+            upsert_config(&pool, "CLAUDE_SYSTEM_PROMPT", p, "Instrucciones del sistema para el análisis y síntesis de boletines", "ia").await;
         }
     }
 
     if let Some(ref provider) = payload.whatsapp_provider {
         let clean_provider = provider.trim();
-        if let Err(e) = sqlx::query(
-            "INSERT INTO configuraciones_sistema (clave, valor, descripcion, categoria, actualizado_en)
-             VALUES ('WHATSAPP_PROVIDER', $1, 'Proveedor activo de WhatsApp: kapso o waha', 'whatsapp', now())
-             ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, actualizado_en = now()"
-        )
-        .bind(clean_provider)
-        .execute(&pool)
-        .await {
-            tracing::error!("Error guardando WHATSAPP_PROVIDER: {}", e);
+        if !clean_provider.is_empty() {
+            upsert_config(&pool, "WHATSAPP_PROVIDER", clean_provider, "Proveedor activo de WhatsApp: kapso o waha", "whatsapp").await;
         }
     }
 
     if let Some(ref key) = payload.kapso_api_key {
         let clean_key = key.trim();
-        if let Err(e) = sqlx::query(
-            "INSERT INTO configuraciones_sistema (clave, valor, descripcion, categoria, actualizado_en)
-             VALUES ('KAPSO_API_KEY', $1, 'Clave de API del proyecto en Kapso (X-API-Key)', 'whatsapp', now())
-             ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, actualizado_en = now()"
-        )
-        .bind(clean_key)
-        .execute(&pool)
-        .await {
-            tracing::error!("Error guardando KAPSO_API_KEY: {}", e);
+        if !clean_key.is_empty() {
+            upsert_config(&pool, "KAPSO_API_KEY", clean_key, "Clave de API del proyecto en Kapso (X-API-Key)", "whatsapp").await;
         }
     }
 
     if let Some(ref phone_id) = payload.kapso_phone_number_id {
         let clean_id = phone_id.trim();
-        if let Err(e) = sqlx::query(
-            "INSERT INTO configuraciones_sistema (clave, valor, descripcion, categoria, actualizado_en)
-             VALUES ('KAPSO_PHONE_NUMBER_ID', $1, 'Identificador de número telefónico de WhatsApp en Kapso / Meta', 'whatsapp', now())
-             ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, actualizado_en = now()"
-        )
-        .bind(clean_id)
-        .execute(&pool)
-        .await {
-            tracing::error!("Error guardando KAPSO_PHONE_NUMBER_ID: {}", e);
+        if !clean_id.is_empty() {
+            upsert_config(&pool, "KAPSO_PHONE_NUMBER_ID", clean_id, "Identificador de número telefónico de WhatsApp en Kapso / Meta", "whatsapp").await;
         }
     }
 
     if let Some(ref phone) = payload.director_whatsapp_phone {
         let clean_phone = phone.trim();
         let val_to_save = if clean_phone == "5215512345678" { "" } else { clean_phone };
-        if let Err(e) = sqlx::query(
-            "INSERT INTO configuraciones_sistema (clave, valor, descripcion, categoria, actualizado_en)
-             VALUES ('DIRECTOR_WHATSAPP_PHONE', $1, 'Número de WhatsApp de destino del Director en formato E.164', 'whatsapp', now())
-             ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, actualizado_en = now()"
-        )
-        .bind(val_to_save)
-        .execute(&pool)
-        .await {
-            tracing::error!("Error guardando DIRECTOR_WHATSAPP_PHONE: {}", e);
-        }
+        upsert_config(&pool, "DIRECTOR_WHATSAPP_PHONE", val_to_save, "Número de WhatsApp de destino del Director en formato E.164", "whatsapp").await;
 
         if !val_to_save.is_empty() {
             // Sincronizar también en lista_distribucion
