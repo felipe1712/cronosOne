@@ -11,7 +11,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgrespassword
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5437:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./backend/migrations/20260908000001_init_schema.sql:/docker-entrypoint-initdb.d/01_init.sql
@@ -26,6 +26,8 @@ services:
       dockerfile: Dockerfile
     container_name: exposureiq-backend
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       HOST: 0.0.0.0
       PORT: 8080
@@ -35,7 +37,7 @@ services:
       WAHA_SESSION: default
       DIRECTOR_WHATSAPP_PHONE: ${DIRECTOR_WHATSAPP_PHONE:-}
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8090:8080"
     depends_on:
       - postgres
     volumes:
@@ -50,6 +52,8 @@ services:
       dockerfile: Dockerfile
     container_name: exposureiq-workers
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       HOST: 0.0.0.0
       PORT: 8001
@@ -59,7 +63,7 @@ services:
       DIRECTOR_WHATSAPP_PHONE: ${DIRECTOR_WHATSAPP_PHONE:-}
       LIGHTPANDA_CDP_URL: http://lightpanda:9222
     ports:
-      - "8001:8001"
+      - "127.0.0.1:8091:8001"
     depends_on:
       - postgres
       - lightpanda
@@ -74,7 +78,7 @@ services:
     container_name: exposureiq-lightpanda
     restart: unless-stopped
     ports:
-      - "9222:9222"
+      - "127.0.0.1:9222:9222"
     networks:
       - exposureiq-net
 
@@ -86,9 +90,9 @@ services:
     container_name: exposureiq-frontend
     restart: unless-stopped
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8080/api
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8090/api}
     ports:
-      - "3001:3000"
+      - "127.0.0.1:3008:3000"
     depends_on:
       - backend
     networks:
