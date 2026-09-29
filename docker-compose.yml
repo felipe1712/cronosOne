@@ -37,7 +37,7 @@ services:
       WAHA_SESSION: default
       DIRECTOR_WHATSAPP_PHONE: ${DIRECTOR_WHATSAPP_PHONE:-}
     ports:
-      - "127.0.0.1:8090:8080"
+      - "127.0.0.1:8180:8080"
     depends_on:
       - postgres
     volumes:
@@ -63,7 +63,7 @@ services:
       DIRECTOR_WHATSAPP_PHONE: ${DIRECTOR_WHATSAPP_PHONE:-}
       LIGHTPANDA_CDP_URL: http://lightpanda:9222
     ports:
-      - "127.0.0.1:8091:8001"
+      - "127.0.0.1:8181:8001"
     depends_on:
       - postgres
       - lightpanda
@@ -90,9 +90,9 @@ services:
     container_name: exposureiq-frontend
     restart: unless-stopped
     environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8090/api}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8180/api}
     ports:
-      - "127.0.0.1:3008:3000"
+      - "127.0.0.1:3100:3000"
     depends_on:
       - backend
     networks:
