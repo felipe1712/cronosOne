@@ -348,22 +348,59 @@ pub async fn aprobar_boletin(
         )
     })?;
 
-    // 3. Registrar en mensajes_pendientes con proveedor oficial Kapso
-    sqlx::query(
-        "INSERT INTO mensajes_pendientes (tipo, referencia_id, texto, destinatario, estado, proveedor)
-         VALUES ('brief', $1, $2, $3, 'pendiente', 'kapso')",
+    // 3. Resolver destinatarios reales (lista de distribución o teléfono del director configurado)
+    use crate::services::kapso::{get_whatsapp_config, KapsoClient};
+    let whatsapp_cfg = get_whatsapp_config(&pool).await;
+
+    #[derive(sqlx::FromRow)]
+    struct DestRow {
+        telefono: String,
+    }
+
+    let destinatarios_db = sqlx::query_as::<_, DestRow>(
+        "SELECT telefono FROM lista_distribucion WHERE activo = true AND telefono != '5215512345678' AND trim(telefono) != ''"
     )
-    .bind(id)
-    .bind(&payload.texto)
-    .bind(&config.director_whatsapp)
-    .execute(&mut *tx)
+    .fetch_all(&mut *tx)
     .await
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("Error encolando mensaje para WhatsApp: {}", e)})),
+    .unwrap_or_default();
+
+    let mut target_phones: Vec<String> = if destinatarios_db.is_empty() {
+        if !whatsapp_cfg.director_phone.trim().is_empty() && whatsapp_cfg.director_phone.trim() != "5215512345678" {
+            vec![whatsapp_cfg.director_phone.trim().to_string()]
+        } else if !config.director_whatsapp.trim().is_empty() && config.director_whatsapp.trim() != "5215512345678" {
+            vec![config.director_whatsapp.trim().to_string()]
+        } else {
+            vec![]
+        }
+    } else {
+        destinatarios_db
+            .into_iter()
+            .map(|d| d.telefono)
+            .filter(|t| !t.trim().is_empty() && t.trim() != "5215512345678")
+            .collect()
+    };
+
+    if target_phones.is_empty() {
+        target_phones.push("Sin destinatario configurado".to_string());
+    }
+
+    for phone in &target_phones {
+        sqlx::query(
+            "INSERT INTO mensajes_pendientes (tipo, referencia_id, texto, destinatario, estado, proveedor)
+             VALUES ('brief', $1, $2, $3, 'pendiente', 'kapso')",
         )
-    })?;
+        .bind(id)
+        .bind(&payload.texto)
+        .bind(phone)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("Error encolando mensaje para WhatsApp: {}", e)})),
+            )
+        })?;
+    }
 
     tx.commit().await.map_err(|e| {
         (
@@ -376,87 +413,54 @@ pub async fn aprobar_boletin(
     let pool_clone = pool.clone();
     let texto_clone = payload.texto.clone();
     let b_id = id;
+    let targets_clone = target_phones.clone();
 
     tokio::spawn(async move {
-        use crate::services::kapso::{get_whatsapp_config, KapsoClient};
         let cfg = get_whatsapp_config(&pool_clone).await;
-        if !cfg.api_key.trim().is_empty() && !cfg.phone_number_id.trim().is_empty() {
-            let client = KapsoClient::new(cfg.api_key, cfg.phone_number_id);
+        if cfg.api_key.trim().is_empty() || cfg.phone_number_id.trim().is_empty() {
+            tracing::warn!("KAPSO_API_KEY o PHONE_NUMBER_ID no configurados. Mensajes en cola marcados como pendientes de credenciales.");
+            let _ = sqlx::query(
+                "UPDATE mensajes_pendientes 
+                 SET estado = 'error', error_mensaje = 'WhatsApp Cloud API / Kapso no configurado (Falta API Key o Phone ID)', proveedor = 'kapso'
+                 WHERE referencia_id = $1 AND estado = 'pendiente'"
+            )
+            .bind(b_id)
+            .execute(&pool_clone)
+            .await;
+            return;
+        }
 
-            #[derive(sqlx::FromRow)]
-            struct DestinatarioRow {
-                telefono: String,
+        let client = KapsoClient::new(cfg.api_key, cfg.phone_number_id);
+
+        for phone in &targets_clone {
+            if phone == "Sin destinatario configurado" || phone == "5215512345678" {
+                continue;
             }
 
-            let destinatarios = sqlx::query_as::<_, DestinatarioRow>(
-                "SELECT telefono FROM lista_distribucion WHERE activo = true"
-            )
-            .fetch_all(&pool_clone)
-            .await
-            .unwrap_or_default();
-
-            let targets: Vec<String> = if destinatarios.is_empty() {
-                if !cfg.director_phone.trim().is_empty() && cfg.director_phone.trim() != "5215512345678" {
-                    vec![cfg.director_phone.clone()]
-                } else {
-                    vec![]
+            match client.send_text(phone, &texto_clone).await {
+                Ok(msg_id) => {
+                    let _ = sqlx::query(
+                        "UPDATE mensajes_pendientes 
+                         SET estado = 'confirmado', proveedor = 'kapso', kapso_message_id = $1, meta_status = 'sent', confirmado_en = now()
+                         WHERE referencia_id = $2 AND destinatario = $3"
+                    )
+                    .bind(&msg_id)
+                    .bind(b_id)
+                    .bind(phone)
+                    .execute(&pool_clone)
+                    .await;
                 }
-            } else {
-                destinatarios.into_iter().map(|d| d.telefono).filter(|t| !t.trim().is_empty() && t.trim() != "5215512345678").collect()
-            };
-
-            for (idx, phone) in targets.iter().enumerate() {
-                match client.send_text(phone, &texto_clone).await {
-                    Ok(msg_id) => {
-                        if idx == 0 {
-                            let _ = sqlx::query(
-                                "UPDATE mensajes_pendientes 
-                                 SET destinatario = $1, estado = 'confirmado', proveedor = 'kapso', kapso_message_id = $2, meta_status = 'sent', confirmado_en = now()
-                                 WHERE referencia_id = $3"
-                            )
-                            .bind(phone)
-                            .bind(&msg_id)
-                            .bind(b_id)
-                            .execute(&pool_clone)
-                            .await;
-                        } else {
-                            let _ = sqlx::query(
-                                "INSERT INTO mensajes_pendientes (tipo, referencia_id, texto, destinatario, estado, proveedor, kapso_message_id, meta_status, confirmado_en)
-                                 VALUES ('brief', $1, $2, $3, 'confirmado', 'kapso', $4, 'sent', now())"
-                            )
-                            .bind(b_id)
-                            .bind(&texto_clone)
-                            .bind(phone)
-                            .bind(&msg_id)
-                            .execute(&pool_clone)
-                            .await;
-                        }
-                    }
-                    Err(e) => {
-                        if idx == 0 {
-                            let _ = sqlx::query(
-                                "UPDATE mensajes_pendientes 
-                                 SET destinatario = $1, estado = 'error', error_mensaje = $2, proveedor = 'kapso'
-                                 WHERE referencia_id = $3"
-                            )
-                            .bind(phone)
-                            .bind(&e)
-                            .bind(b_id)
-                            .execute(&pool_clone)
-                            .await;
-                        } else {
-                            let _ = sqlx::query(
-                                "INSERT INTO mensajes_pendientes (tipo, referencia_id, texto, destinatario, estado, proveedor, error_mensaje)
-                                 VALUES ('brief', $1, $2, $3, 'error', 'kapso', $4)"
-                            )
-                            .bind(b_id)
-                            .bind(&texto_clone)
-                            .bind(phone)
-                            .bind(&e)
-                            .execute(&pool_clone)
-                            .await;
-                        }
-                    }
+                Err(e) => {
+                    let _ = sqlx::query(
+                        "UPDATE mensajes_pendientes 
+                         SET estado = 'error', error_mensaje = $1, proveedor = 'kapso'
+                         WHERE referencia_id = $2 AND destinatario = $3"
+                    )
+                    .bind(&e)
+                    .bind(b_id)
+                    .bind(phone)
+                    .execute(&pool_clone)
+                    .await;
                 }
             }
         }

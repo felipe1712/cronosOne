@@ -106,7 +106,7 @@ pub async fn get_whatsapp_config(pool: &PgPool) -> KapsoConfig {
     }
 
     let rows = sqlx::query_as::<_, Row>(
-        "SELECT clave, valor FROM configuraciones_sistema WHERE categoria = 'whatsapp'",
+        "SELECT clave, valor FROM configuraciones_sistema",
     )
     .fetch_all(pool)
     .await

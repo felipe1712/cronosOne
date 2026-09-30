@@ -36,6 +36,8 @@ services:
       WAHA_BASE_URL: http://host.docker.internal:3000
       WAHA_SESSION: default
       DIRECTOR_WHATSAPP_PHONE: ${DIRECTOR_WHATSAPP_PHONE:-}
+      KAPSO_API_KEY: ${KAPSO_API_KEY:-}
+      KAPSO_PHONE_NUMBER_ID: ${KAPSO_PHONE_NUMBER_ID:-}
     ports:
       - "127.0.0.1:8180:8080"
     depends_on:

@@ -223,7 +223,7 @@ async fn upsert_config(
 }
 
 pub async fn get_configuraciones(
-    State((pool, _config)): State<(DbPool, Arc<Config>)>,
+    State((pool, config)): State<(DbPool, Arc<Config>)>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     // Asegurar tabla y columnas si no existen
     let _ = sqlx::query(
@@ -250,6 +250,11 @@ pub async fn get_configuraciones(
     .await;
     let _ = sqlx::query(
         "DELETE FROM lista_distribucion WHERE telefono = '5215512345678'"
+    )
+    .execute(&pool)
+    .await;
+    let _ = sqlx::query(
+        "DELETE FROM mensajes_pendientes WHERE destinatario = '5215512345678'"
     )
     .execute(&pool)
     .await;
@@ -291,6 +296,8 @@ pub async fn get_configuraciones(
             if env_phone.trim() != "5215512345678" {
                 director_whatsapp_phone = env_phone;
             }
+        } else if config.director_whatsapp.trim() != "5215512345678" && !config.director_whatsapp.trim().is_empty() {
+            director_whatsapp_phone = config.director_whatsapp.trim().to_string();
         }
     }
 
@@ -306,12 +313,23 @@ pub async fn get_configuraciones(
 
     if kapso_api_key.trim().is_empty() {
         if let Ok(env_key) = std::env::var("KAPSO_API_KEY") {
-            kapso_api_key = env_key;
+            kapso_api_key = env_key.trim().to_string();
+        } else if !config.kapso_api_key.trim().is_empty() {
+            kapso_api_key = config.kapso_api_key.trim().to_string();
+        }
+        if !kapso_api_key.is_empty() {
+            upsert_config(&pool, "KAPSO_API_KEY", &kapso_api_key, "Clave de API del proyecto en Kapso (X-API-Key)", "whatsapp").await;
         }
     }
+
     if kapso_phone_number_id.trim().is_empty() {
         if let Ok(env_id) = std::env::var("KAPSO_PHONE_NUMBER_ID") {
-            kapso_phone_number_id = env_id;
+            kapso_phone_number_id = env_id.trim().to_string();
+        } else if !config.kapso_phone_number_id.trim().is_empty() {
+            kapso_phone_number_id = config.kapso_phone_number_id.trim().to_string();
+        }
+        if !kapso_phone_number_id.is_empty() {
+            upsert_config(&pool, "KAPSO_PHONE_NUMBER_ID", &kapso_phone_number_id, "Identificador de número telefónico de WhatsApp en Kapso / Meta", "whatsapp").await;
         }
     }
 

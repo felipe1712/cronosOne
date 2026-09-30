@@ -12,6 +12,8 @@ pub struct Config {
     pub worker_base_url: String,
     pub waha_session: String,
     pub director_whatsapp: String,
+    pub kapso_api_key: String,
+    pub kapso_phone_number_id: String,
     pub n8n_restart_webhook_url: Option<String>,
 }
 
@@ -43,6 +45,8 @@ impl Config {
             waha_session: env::var("WAHA_SESSION").unwrap_or_else(|_| "default".to_string()),
             director_whatsapp: env::var("DIRECTOR_WHATSAPP_PHONE")
                 .unwrap_or_else(|_| "".to_string()),
+            kapso_api_key: env::var("KAPSO_API_KEY").unwrap_or_default(),
+            kapso_phone_number_id: env::var("KAPSO_PHONE_NUMBER_ID").unwrap_or_default(),
             n8n_restart_webhook_url: env::var("N8N_RESTART_WEBHOOK_URL").ok(),
         }
     }
