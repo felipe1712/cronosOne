@@ -177,6 +177,7 @@ export interface SintesisDiaria {
   documentos_ids?: string[];
   estado: string;
   modelo_usado?: string;
+  modelo_llm?: string;
   tokens_usados?: number;
   aprobado_por?: string;
   creado_en: string;

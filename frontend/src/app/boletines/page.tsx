@@ -526,7 +526,7 @@ export default function BoletinesPage() {
           fecha,
           texto: ws.sintesis.texto || "(Sin contenido redactado)",
           estado: ws.sintesis.estado || "borrador",
-          modelo: ws.sintesis.modelo_llm || "Claude 3.5 Sonnet",
+          modelo: ws.sintesis.modelo_usado || ws.sintesis.modelo_llm || "Claude 3.5 Sonnet",
         });
       } else {
         setReviewSintesisData({
