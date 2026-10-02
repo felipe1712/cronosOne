@@ -163,6 +163,11 @@ export default function ConfiguracionPage() {
         setSystemPrompt(localPrompt);
         setSavedPrompt(localStorage.getItem("exposureiq_system_prompt_saved") || localPrompt);
       }
+      const localModel = localStorage.getItem("exposureiq_claude_model");
+      if (localModel) {
+        setActiveModel(localModel);
+        setSelectedModel(localModel);
+      }
     }
     loadConfig();
   }, []);
@@ -177,9 +182,23 @@ export default function ConfiguracionPage() {
         ApiService.getGrupos().catch(() => []),
       ]);
       if (data) {
-        if (data.claude_model) {
-          setActiveModel(data.claude_model);
-          setSelectedModel(data.claude_model);
+        // Modelo Claude: API primero con sincronización y respaldo en localStorage
+        const localModel = typeof window !== "undefined" ? localStorage.getItem("exposureiq_claude_model") || "" : "";
+        if (data.claude_model && data.claude_model.trim()) {
+          const apiModel = data.claude_model.trim();
+          if (apiModel !== "claude-sonnet-4-5-20250929" || !localModel) {
+            setActiveModel(apiModel);
+            setSelectedModel(apiModel);
+            if (typeof window !== "undefined") {
+              localStorage.setItem("exposureiq_claude_model", apiModel);
+            }
+          } else {
+            setActiveModel(localModel);
+            setSelectedModel(localModel);
+          }
+        } else if (localModel) {
+          setActiveModel(localModel);
+          setSelectedModel(localModel);
         }
         if (data.available_models) {
           setAvailableModels(data.available_models);
@@ -488,9 +507,13 @@ export default function ConfiguracionPage() {
       setSavingModel(true);
       setErrorMsg(null);
       setSuccessMsg(null);
-      await ApiService.updateConfiguracion({ claude_model: selectedModel });
-      setActiveModel(selectedModel);
-      setSuccessMsg(`Modelo '${selectedModel}' guardado y activado exitosamente para todas las síntesis.`);
+      const cleanModel = selectedModel.trim();
+      if (typeof window !== "undefined") {
+        localStorage.setItem("exposureiq_claude_model", cleanModel);
+      }
+      await ApiService.updateConfiguracion({ claude_model: cleanModel });
+      setActiveModel(cleanModel);
+      setSuccessMsg(`Modelo '${cleanModel}' guardado y activado exitosamente para todas las síntesis.`);
     } catch (err: any) {
       console.error("Error guardando modelo:", err);
       setErrorMsg(err.message || "Error al guardar el modelo.");

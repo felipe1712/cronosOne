@@ -276,7 +276,11 @@ pub async fn get_configuraciones(
             let v: String = r.try_get("valor").unwrap_or_default();
             config_map.insert(c.clone(), json!(v));
             match c.as_str() {
-                "CLAUDE_MODEL" => current_model = v,
+                "CLAUDE_MODEL" => {
+                    if !v.trim().is_empty() {
+                        current_model = v.trim().to_string();
+                    }
+                }
                 "CLAUDE_SYSTEM_PROMPT" => {
                     if !v.trim().is_empty() {
                         current_prompt = v;
@@ -397,6 +401,7 @@ pub async fn update_configuracion(
         let m = model.trim();
         if !m.is_empty() {
             upsert_config(&pool, "CLAUDE_MODEL", m, "Modelo de Anthropic Claude seleccionado para la síntesis de boletines", "ia").await;
+            tracing::info!("CLAUDE_MODEL actualizado correctamente en BD con '{}'", m);
         }
     }
 
