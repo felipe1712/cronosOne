@@ -29,6 +29,7 @@ async fn main() -> anyhow::Result<()> {
             if let Err(e) = db::run_migrations(&p).await {
                 error!("Aviso: no se pudieron correr migraciones automáticas (podrían estar ya aplicadas): {}", e);
             }
+            handlers::boletines::ensure_sintesis_diarias_schema(&p).await;
             p
         }
         Err(e) => {
