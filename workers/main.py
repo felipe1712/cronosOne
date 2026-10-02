@@ -196,6 +196,23 @@ def get_senado_secciones_endpoint():
     from senado_scraper import SECCIONES_SENADO
     return SECCIONES_SENADO
 
+def parse_pg_array(val):
+    if val is None:
+        return []
+    if isinstance(val, (list, tuple)):
+        return [str(item) for item in val if str(item).strip()]
+    if isinstance(val, str):
+        cleaned = val.strip("{} \t\n\r")
+        if not cleaned:
+            return []
+        items = []
+        for p in cleaned.split(","):
+            p = p.strip(' "\'')
+            if p:
+                items.append(p)
+        return items
+    return []
+
 class ConsolidarSintesisDiariaRequest(BaseModel):
     fecha: str
     documentos_ids: Optional[list[str]] = None
@@ -213,6 +230,7 @@ async def consolidar_sintesis_diaria_endpoint(payload: ConsolidarSintesisDiariaR
     try:
         # Asegurar esquema de sintesis_diarias y columnas requeridas
         cur.execute("""
+            CREATE EXTENSION IF NOT EXISTS "pgcrypto";
             CREATE TABLE IF NOT EXISTS sintesis_diarias (
                 id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 fecha           DATE UNIQUE NOT NULL,
@@ -229,6 +247,11 @@ async def consolidar_sintesis_diaria_endpoint(payload: ConsolidarSintesisDiariaR
             ALTER TABLE boletines ADD COLUMN IF NOT EXISTS incluido_en_sintesis BOOLEAN NOT NULL DEFAULT TRUE;
             ALTER TABLE boletines ADD COLUMN IF NOT EXISTS origen VARCHAR(50) NOT NULL DEFAULT 'manual';
             ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS temas TEXT[] DEFAULT '{}';
+            ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS documentos_ids UUID[] DEFAULT '{}';
+            ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS estado VARCHAR(30) NOT NULL DEFAULT 'borrador';
+            ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS modelo_usado VARCHAR(50) DEFAULT 'claude-sonnet-4-5-20250929';
+            ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS tokens_usados INT;
+            ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS aprobado_por UUID;
         """)
         conn.commit()
 
@@ -330,6 +353,8 @@ async def consolidar_sintesis_diaria_endpoint(payload: ConsolidarSintesisDiariaR
                         secs = secs_parsed
                 except Exception as proc_err:
                     print(f"[Consolidar] Advertencia: Error en OCR de {doc_nombre}: {proc_err}")
+                    if conn and not conn.closed:
+                        conn.rollback()
 
             documentos_data.append({
                 "id": b_id,
@@ -352,13 +377,22 @@ async def consolidar_sintesis_diaria_endpoint(payload: ConsolidarSintesisDiariaR
             except Exception:
                 pass
 
-        # Upsert en sintesis_diarias con fallback seguro
+        # Construir representaciones seguras de arreglos PostgreSQL
+        safe_doc_ids_str = "{" + ",".join(valid_uuids) + "}"
+        clean_temas = [str(t).replace('"', '\\"').strip() for t in (detected_topics or []) if str(t).strip()]
+        safe_temas_str = "{" + ",".join(f'"{t}"' for t in clean_temas) + "}"
+
+        # Upsert en sintesis_diarias con fallback ultra seguro
         row = None
         try:
             cur.execute(
                 """
-                INSERT INTO sintesis_diarias (fecha, texto, temas, documentos_ids, estado, modelo_usado, actualizado_en)
-                VALUES (%s, %s, %s, %s::uuid[], 'sintesis_lista', %s, now())
+                INSERT INTO sintesis_diarias (
+                    fecha, texto, temas, documentos_ids, estado, modelo_usado, actualizado_en
+                )
+                VALUES (
+                    %s, %s, %s::text[], %s::uuid[], 'sintesis_lista', %s, now()
+                )
                 ON CONFLICT (fecha) DO UPDATE
                 SET texto = EXCLUDED.texto,
                     temas = EXCLUDED.temas,
@@ -368,43 +402,56 @@ async def consolidar_sintesis_diaria_endpoint(payload: ConsolidarSintesisDiariaR
                     actualizado_en = now()
                 RETURNING id, fecha, texto, temas, documentos_ids, estado, modelo_usado, creado_en, actualizado_en
                 """,
-                (fecha, brief_texto, detected_topics, valid_uuids, active_model)
+                (fecha, brief_texto, safe_temas_str, safe_doc_ids_str, active_model)
             )
             row = cur.fetchone()
             conn.commit()
         except Exception as upsert_err:
-            print(f"[Consolidar] Aviso: Upsert con cast uuid[] falló ({upsert_err}), intentando fallback...")
-            conn.rollback()
+            print(f"[Consolidar] Aviso: Upsert con arreglos falló ({upsert_err}), intentando fallback resiliente...")
+            if conn and not conn.closed:
+                conn.rollback()
             cur = conn.cursor()
             cur.execute(
                 """
-                INSERT INTO sintesis_diarias (fecha, texto, temas, estado, modelo_usado, actualizado_en)
-                VALUES (%s, %s, %s, 'sintesis_lista', %s, now())
+                INSERT INTO sintesis_diarias (
+                    fecha, texto, estado, modelo_usado, actualizado_en
+                )
+                VALUES (
+                    %s, %s, 'sintesis_lista', %s, now()
+                )
                 ON CONFLICT (fecha) DO UPDATE
                 SET texto = EXCLUDED.texto,
-                    temas = EXCLUDED.temas,
                     estado = 'sintesis_lista',
                     modelo_usado = EXCLUDED.modelo_usado,
                     actualizado_en = now()
-                RETURNING id, fecha, texto, temas, documentos_ids, estado, modelo_usado, creado_en, actualizado_en
+                RETURNING id, fecha, texto, estado, modelo_usado, creado_en, actualizado_en
                 """,
-                (fecha, brief_texto, detected_topics, active_model)
+                (fecha, brief_texto, active_model)
             )
             row = cur.fetchone()
             conn.commit()
 
+        raw_doc_ids = row.get("documentos_ids") if row and "documentos_ids" in row else None
+        raw_temas = row.get("temas") if row and "temas" in row else None
+
+        parsed_doc_ids = parse_pg_array(raw_doc_ids) or valid_uuids
+        parsed_temas = parse_pg_array(raw_temas) or detected_topics
+
+        creado_iso = row["creado_en"].isoformat() if row and row.get("creado_en") and hasattr(row["creado_en"], "isoformat") else str(row.get("creado_en") or "")
+        act_iso = row["actualizado_en"].isoformat() if row and row.get("actualizado_en") and hasattr(row["actualizado_en"], "isoformat") else str(row.get("actualizado_en") or "")
+
         return {
             "status": "completado",
             "sintesis": {
-                "id": str(row["id"]),
-                "fecha": str(row["fecha"]),
-                "texto": row["texto"],
-                "temas": row["temas"] or [],
-                "documentos_ids": [str(u) for u in (row["documentos_ids"] or [])],
-                "estado": row["estado"],
-                "modelo_usado": row["modelo_usado"],
-                "creado_en": row["creado_en"].isoformat() if row.get("creado_en") else None,
-                "actualizado_en": row["actualizado_en"].isoformat() if row.get("actualizado_en") else None,
+                "id": str(row["id"]) if row and row.get("id") else "",
+                "fecha": str(row["fecha"]) if row and row.get("fecha") else fecha,
+                "texto": row["texto"] if row and row.get("texto") else brief_texto,
+                "temas": parsed_temas,
+                "documentos_ids": parsed_doc_ids,
+                "estado": row.get("estado", "sintesis_lista") if row else "sintesis_lista",
+                "modelo_usado": row.get("modelo_usado", active_model) if row else active_model,
+                "creado_en": creado_iso,
+                "actualizado_en": act_iso,
             },
             "documentos_procesados": len(documentos_data)
         }
@@ -412,13 +459,22 @@ async def consolidar_sintesis_diaria_endpoint(payload: ConsolidarSintesisDiariaR
     except HTTPException:
         raise
     except Exception as e:
-        conn.rollback()
+        if conn and not conn.closed:
+            conn.rollback()
         err_msg = f"Error al consolidar síntesis del día: {str(e)}\n{traceback.format_exc()}"
         print(f"[Consolidar] ❌ {err_msg}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Error en worker consolidando síntesis: {str(e)}")
     finally:
-        cur.close()
-        conn.close()
+        try:
+            if cur and not cur.closed:
+                cur.close()
+        except Exception:
+            pass
+        try:
+            if conn and not conn.closed:
+                conn.close()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

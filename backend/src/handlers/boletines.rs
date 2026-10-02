@@ -576,6 +576,26 @@ pub async fn ensure_sintesis_diarias_schema(pool: &DbPool) {
         .await {
         tracing::warn!("Aviso columna temas: {}", e);
     }
+
+    let _ = sqlx::query("ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS documentos_ids UUID[] DEFAULT '{}'")
+        .execute(pool)
+        .await;
+
+    let _ = sqlx::query("ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS estado VARCHAR(30) NOT NULL DEFAULT 'borrador'")
+        .execute(pool)
+        .await;
+
+    let _ = sqlx::query("ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS modelo_usado VARCHAR(50) DEFAULT 'claude-sonnet-4-5-20250929'")
+        .execute(pool)
+        .await;
+
+    let _ = sqlx::query("ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS tokens_usados INT")
+        .execute(pool)
+        .await;
+
+    let _ = sqlx::query("ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS aprobado_por UUID")
+        .execute(pool)
+        .await;
 }
 
 pub async fn list_fechas_sintesis(

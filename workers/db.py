@@ -31,6 +31,11 @@ def ensure_database_schema():
             ALTER TABLE boletines ADD COLUMN IF NOT EXISTS incluido_en_sintesis BOOLEAN NOT NULL DEFAULT TRUE;
             ALTER TABLE boletines ADD COLUMN IF NOT EXISTS origen VARCHAR(50) NOT NULL DEFAULT 'manual';
             ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS temas TEXT[] DEFAULT '{}';
+            ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS documentos_ids UUID[] DEFAULT '{}';
+            ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS estado VARCHAR(30) NOT NULL DEFAULT 'borrador';
+            ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS modelo_usado VARCHAR(50) DEFAULT 'claude-sonnet-4-5-20250929';
+            ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS tokens_usados INT;
+            ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS aprobado_por UUID;
 
             CREATE INDEX IF NOT EXISTS idx_boletines_fecha_origen ON boletines (fecha_boletin, origen);
             CREATE INDEX IF NOT EXISTS idx_sintesis_diarias_fecha ON sintesis_diarias (fecha);

@@ -1,4 +1,5 @@
 import os
+import json
 from typing import List, Dict, Any, Tuple
 import anthropic
 from config import settings
@@ -206,17 +207,21 @@ async def generate_executive_brief(sections: List[Dict[str, Any]], fecha_str: st
 def extract_section_text(sec: dict) -> str:
     """Extrae de manera segura el texto completo de una sección, soportando dict, str o JSON string."""
     contenido = sec.get("contenido")
+    if not contenido:
+        return ""
     if isinstance(contenido, str):
         try:
             parsed = json.loads(contenido)
             if isinstance(parsed, dict):
-                return parsed.get("texto_completo", "") or str(contenido)
+                return str(parsed.get("texto_completo", "") or parsed.get("text", "") or contenido)
+            elif isinstance(parsed, list):
+                return "\n".join(str(p) for p in parsed)
             return str(parsed)
         except Exception:
-            return contenido
+            return str(contenido)
     elif isinstance(contenido, dict):
-        return contenido.get("texto_completo", "") or ""
-    return ""
+        return str(contenido.get("texto_completo", "") or contenido.get("text", "") or "")
+    return str(contenido)
 
 async def generate_consolidated_daily_brief(documents: List[Dict[str, Any]], fecha_str: str) -> Tuple[str, List[str]]:
     """
@@ -284,34 +289,58 @@ async def generate_consolidated_daily_brief(documents: List[Dict[str, Any]], fec
     try:
         client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
         configured_model = get_configured_model()
-        models_to_try = [configured_model, "claude-sonnet-4-5-20250929", "claude-haiku-4-5-20251001", "claude-3-5-sonnet-20241022"]
+        models_to_try = [
+            configured_model,
+            "claude-sonnet-4-5-20250929",
+            "claude-haiku-4-5-20251001",
+            "claude-3-5-sonnet-20241022",
+            "claude-3-haiku-20240307"
+        ]
+        seen = set()
+        dedup_models = []
+        for m in models_to_try:
+            if m and m not in seen:
+                seen.add(m)
+                dedup_models.append(m)
+
         active_system_prompt = get_configured_system_prompt()
         last_error = None
 
-        for model_name in models_to_try:
+        # Truncar context_prompt de forma segura si excede 100,000 caracteres (~25k tokens)
+        max_prompt_chars = 100000
+        safe_prompt = context_prompt if len(context_prompt) <= max_prompt_chars else context_prompt[:max_prompt_chars] + "\n\n[...Extractos adicionales condensados por volumen...]"
+
+        for model_name in dedup_models:
             try:
                 print(f"[LLM] Generando síntesis consolidada con: {model_name}...")
-                response = client.messages.create(
-                    model=model_name,
-                    max_tokens=1200,
-                    system=active_system_prompt,
-                    messages=[{"role": "user", "content": context_prompt}]
-                )
+                try:
+                    response = client.messages.create(
+                        model=model_name,
+                        max_tokens=1500,
+                        system=active_system_prompt,
+                        messages=[{"role": "user", "content": safe_prompt}]
+                    )
+                except TypeError:
+                    # Compatibilidad en caso de SDK sin parámetro system directo
+                    response = client.messages.create(
+                        model=model_name,
+                        max_tokens=1500,
+                        messages=[{"role": "user", "content": f"{active_system_prompt}\n\n---\n\n{safe_prompt}"}]
+                    )
+
                 brief_text = extract_text_from_response(response)
                 print(f"[LLM] ✅ Síntesis consolidada generada exitosamente con '{model_name}'.")
                 return brief_text, detected_topics
             except Exception as e:
                 err_str = str(e).lower()
-                if "404" in err_str or "not_found" in err_str:
-                    last_error = e
-                    continue
-                else:
-                    last_error = e
-                    break
+                print(f"[LLM] Advertencia: Modelo '{model_name}' falló ({e}). Probando alternativa...")
+                last_error = e
+                continue
+
         if last_error:
             raise last_error
     except Exception as e:
-        print(f"[LLM] Error en Claude API para síntesis consolidada ({e}).")
+        print(f"[LLM] Error en Claude API para síntesis consolidada ({e}). Retornando síntesis estructurada.")
         fallback_brief = (
             f"📋 *SÍNTESIS DIARIA CONSOLIDADA — {fecha_str}*\n"
             f"_ExposureIQ · Inteligencia Operativa y Regulatoria_\n\n"
