@@ -141,6 +141,7 @@ export default function BoletinesPage() {
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const workspaceSectionRef = useRef<HTMLDivElement | null>(null);
+  const editorSectionRef = useRef<HTMLDivElement | null>(null);
 
   // ==========================================================================
   // 1. Carga de Datos Inicial y Workspace
@@ -408,13 +409,13 @@ export default function BoletinesPage() {
       return;
     }
 
-    const docsIncluidos = workspace.documentos
+    let docsIncluidos = workspace.documentos
       .filter((d) => d.incluido_en_sintesis)
       .map((d) => d.id);
 
+    // Si ninguna casilla está marcada manualmente, incluir automáticamente todos los documentos registrados
     if (docsIncluidos.length === 0) {
-      setError("Debe tener al menos un documento seleccionado en el Universo de Documentos.");
-      return;
+      docsIncluidos = workspace.documentos.map((d) => d.id);
     }
 
     try {
@@ -426,10 +427,16 @@ export default function BoletinesPage() {
         setSuccess(
           `✅ Síntesis consolidada generada con éxito a partir de ${res.documentos_procesados || docsIncluidos.length} documentos.`
         );
+        setTimeout(() => {
+          if (editorSectionRef.current) {
+            editorSectionRef.current.scrollIntoView({ behavior: "smooth" });
+          }
+        }, 150);
       }
       fetchWorkspace(fechaTrabajo);
       fetchHistorial();
     } catch (err: any) {
+      console.error("[Consolidar Síntesis Error]:", err);
       setError(err.message || "Error al consolidar la síntesis del día.");
     } finally {
       setGeneratingSynthesis(false);
@@ -821,7 +828,7 @@ export default function BoletinesPage() {
                 )
               }
               onClick={handleGenerarSintesisConsolidada}
-              disabled={generatingSynthesis || !workspace?.documentos_incluidos}
+              disabled={generatingSynthesis || !workspace || workspace.documentos.length === 0}
               sx={{
                 textTransform: "none",
                 fontWeight: 700,
@@ -835,7 +842,11 @@ export default function BoletinesPage() {
             >
               {generatingSynthesis
                 ? "Consolidando con Claude..."
-                : `⚡ Generar Síntesis Consolidada del Día (${workspace?.documentos_incluidos || 0})`}
+                : `⚡ Generar Síntesis Consolidada del Día (${
+                    (workspace?.documentos_incluidos && workspace.documentos_incluidos > 0)
+                      ? workspace.documentos_incluidos
+                      : (workspace?.documentos?.length || 0)
+                  })`}
             </Button>
           </Box>
         </Box>
@@ -982,9 +993,11 @@ export default function BoletinesPage() {
       {/* ===================================================================== */}
       {/* SECCIÓN 2: SÍNTESIS CONSOLIDADA DEL DÍA (EDITOR & SIMULADOR)          */}
       {/* ===================================================================== */}
-      <Typography variant="h6" sx={{ fontWeight: 700, color: "#1e293b", mb: 2, display: "flex", alignItems: "center", gap: 1 }}>
-        <AutoAwesomeIcon sx={{ color: "#f59e0b" }} /> Síntesis Diaria Consolidada — {fechaTrabajo}
-      </Typography>
+      <Box ref={editorSectionRef} sx={{ pt: 1 }}>
+        <Typography variant="h6" sx={{ fontWeight: 700, color: "#1e293b", mb: 2, display: "flex", alignItems: "center", gap: 1 }}>
+          <AutoAwesomeIcon sx={{ color: "#f59e0b" }} /> Síntesis Diaria Consolidada — {fechaTrabajo}
+        </Typography>
+      </Box>
 
       <Grid container spacing={3} sx={{ mb: 4 }}>
         {/* Columna Izquierda: Editor Estilo Word */}

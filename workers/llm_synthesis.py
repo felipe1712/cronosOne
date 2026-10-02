@@ -102,7 +102,7 @@ async def generate_executive_brief(sections: List[Dict[str, Any]], fecha_str: st
         if tema not in detected_topics and tema != "editorial_general":
             detected_topics.append(tema)
 
-        texto = sec.get("contenido", {}).get("texto_completo", "")
+        texto = extract_section_text(sec)
         # Recortar texto si es muy extenso
         preview = texto[:2500] if len(texto) > 2500 else texto
         compiled_extracts.append(f"--- SECCIÓN: {tema.upper()} (Págs {sec.get('pagina_inicio')}-{sec.get('pagina_fin')}) ---\n{preview}")
@@ -203,6 +203,21 @@ async def generate_executive_brief(sections: List[Dict[str, Any]], fecha_str: st
         )
         return fallback_brief, detected_topics
 
+def extract_section_text(sec: dict) -> str:
+    """Extrae de manera segura el texto completo de una sección, soportando dict, str o JSON string."""
+    contenido = sec.get("contenido")
+    if isinstance(contenido, str):
+        try:
+            parsed = json.loads(contenido)
+            if isinstance(parsed, dict):
+                return parsed.get("texto_completo", "") or str(contenido)
+            return str(parsed)
+        except Exception:
+            return contenido
+    elif isinstance(contenido, dict):
+        return contenido.get("texto_completo", "") or ""
+    return ""
+
 async def generate_consolidated_daily_brief(documents: List[Dict[str, Any]], fecha_str: str) -> Tuple[str, List[str]]:
     """
     Toma los extractos de múltiples documentos de la fecha (Senado, Coparmex, notas),
@@ -222,10 +237,7 @@ async def generate_consolidated_daily_brief(documents: List[Dict[str, Any]], fec
             if tema not in detected_topics and tema not in ["editorial_general", "general"]:
                 detected_topics.append(tema)
             
-            texto = sec.get("contenido", {}).get("texto_completo", "")
-            if not texto and isinstance(sec.get("contenido"), str):
-                texto = sec.get("contenido")
-            
+            texto = extract_section_text(sec)
             preview = texto[:2200] if len(texto) > 2200 else texto
             if preview.strip():
                 doc_extracts.append(f"[{tema.upper()}]\n{preview}")

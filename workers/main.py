@@ -234,16 +234,22 @@ async def consolidar_sintesis_diaria_endpoint(payload: ConsolidarSintesisDiariaR
 
         # Obtener los boletines objetivo
         if payload.documentos_ids and len(payload.documentos_ids) > 0:
+            clean_ids = [str(i).strip() for i in payload.documentos_ids if str(i).strip()]
             cur.execute(
                 """
                 SELECT id, nombre_archivo, ruta_archivo, origen, estado, total_paginas
                 FROM boletines
-                WHERE id = ANY(%s::uuid[])
+                WHERE id::text = ANY(%s)
                 ORDER BY creado_en ASC
                 """,
-                (payload.documentos_ids,)
+                (clean_ids,)
             )
+            boletines = cur.fetchall()
         else:
+            boletines = []
+
+        # Si no se encontraron por IDs específicos o no se pasaron, consultar por fecha e inclusión
+        if not boletines:
             cur.execute(
                 """
                 SELECT id, nombre_archivo, ruta_archivo, origen, estado, total_paginas
@@ -253,7 +259,20 @@ async def consolidar_sintesis_diaria_endpoint(payload: ConsolidarSintesisDiariaR
                 """,
                 (fecha,)
             )
-        boletines = cur.fetchall()
+            boletines = cur.fetchall()
+
+        # Si aún no hay con inclusión = true, traer todos los de la fecha
+        if not boletines:
+            cur.execute(
+                """
+                SELECT id, nombre_archivo, ruta_archivo, origen, estado, total_paginas
+                FROM boletines
+                WHERE fecha_boletin = %s
+                ORDER BY creado_en ASC
+                """,
+                (fecha,)
+            )
+            boletines = cur.fetchall()
 
         if not boletines:
             raise HTTPException(
@@ -264,6 +283,8 @@ async def consolidar_sintesis_diaria_endpoint(payload: ConsolidarSintesisDiariaR
         # Preparar documentos y sus secciones
         documentos_data = []
         doc_uuids = []
+
+        from surya_client import resolve_file_path
 
         for b in boletines:
             b_id = str(b["id"])
@@ -284,10 +305,13 @@ async def consolidar_sintesis_diaria_endpoint(payload: ConsolidarSintesisDiariaR
             secs = cur.fetchall()
 
             # Si el documento aún no tiene secciones y el archivo existe, intentar procesar OCR
-            if not secs and b.get("ruta_archivo") and os.path.exists(b["ruta_archivo"]):
+            raw_path = b.get("ruta_archivo", "")
+            resolved_path = resolve_file_path(raw_path) if raw_path else None
+
+            if not secs and resolved_path and os.path.exists(resolved_path):
                 try:
                     print(f"[Consolidar] Procesando OCR para {doc_nombre} ({b_id})...")
-                    pages = await process_pdf_ocr(b["ruta_archivo"])
+                    pages = await process_pdf_ocr(resolved_path)
                     if pages:
                         secs_parsed = segment_bulletin(pages)
                         for sec in secs_parsed:

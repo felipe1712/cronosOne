@@ -977,16 +977,20 @@ pub async fn toggle_documento_seleccion(
 pub async fn consolidar_sintesis_fecha(
     State((pool, config)): State<(DbPool, Arc<Config>)>,
     Path(fecha_str): Path<String>,
-    Json(payload): Json<Option<ConsolidarSintesisFechaRequest>>,
+    payload: Option<Json<ConsolidarSintesisFechaRequest>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     ensure_sintesis_diarias_schema(&pool).await;
 
     let worker_url = format!("{}/api/consolidar-sintesis-diaria", config.worker_base_url);
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(300))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
 
+    let doc_ids = payload.and_then(|p| p.0.documentos_ids);
     let request_body = json!({
         "fecha": fecha_str,
-        "documentos_ids": payload.as_ref().and_then(|p| p.documentos_ids.clone())
+        "documentos_ids": doc_ids
     });
 
     info!("Solicitando consolidación de síntesis para {} a worker: {}", fecha_str, worker_url);
