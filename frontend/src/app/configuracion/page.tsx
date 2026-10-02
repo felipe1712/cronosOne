@@ -83,9 +83,19 @@ export default function ConfiguracionPage() {
   const [selectedModel, setSelectedModel] = useState<string>("claude-sonnet-4-5-20250929");
   const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
 
-  // Estados para Prompt
-  const [systemPrompt, setSystemPrompt] = useState<string>("");
-  const [savedPrompt, setSavedPrompt] = useState<string>("");
+  // Estados para Prompt / Instrucciones IA
+  const [systemPrompt, setSystemPrompt] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("exposureiq_system_prompt") || "";
+    }
+    return "";
+  });
+  const [savedPrompt, setSavedPrompt] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("exposureiq_system_prompt_saved") || localStorage.getItem("exposureiq_system_prompt") || "";
+    }
+    return "";
+  });
   const [defaultSystemPrompt, setDefaultSystemPrompt] = useState<string>("");
 
   // Estados para WhatsApp (Kapso)
@@ -177,12 +187,33 @@ export default function ConfiguracionPage() {
         if (data.available_models) {
           setAvailableModels(data.available_models);
         }
-        if (data.system_prompt) {
-          setSystemPrompt(data.system_prompt);
-          setSavedPrompt(data.system_prompt);
-        }
         if (data.default_system_prompt) {
           setDefaultSystemPrompt(data.default_system_prompt);
+        }
+
+        // Instrucciones IA (System Prompt): API primero, con respaldo en localStorage
+        const localPrompt = typeof window !== "undefined" ? localStorage.getItem("exposureiq_system_prompt") || "" : "";
+        const localSaved = typeof window !== "undefined" ? localStorage.getItem("exposureiq_system_prompt_saved") || "" : "";
+
+        if (data.system_prompt && data.system_prompt.trim()) {
+          const isDbDifferentFromDefault = data.default_system_prompt && data.system_prompt.trim() !== data.default_system_prompt.trim();
+          if (isDbDifferentFromDefault || !localPrompt) {
+            setSystemPrompt(data.system_prompt);
+            setSavedPrompt(data.system_prompt);
+            if (typeof window !== "undefined") {
+              localStorage.setItem("exposureiq_system_prompt", data.system_prompt);
+              localStorage.setItem("exposureiq_system_prompt_saved", data.system_prompt);
+            }
+          } else {
+            setSystemPrompt(localPrompt);
+            setSavedPrompt(localSaved || data.system_prompt);
+          }
+        } else if (localPrompt) {
+          setSystemPrompt(localPrompt);
+          setSavedPrompt(localSaved || localPrompt);
+        } else if (data.default_system_prompt) {
+          setSystemPrompt(data.default_system_prompt);
+          setSavedPrompt(data.default_system_prompt);
         }
         if (data.whatsapp_provider) {
           setWhatsappProvider(data.whatsapp_provider);
@@ -476,9 +507,14 @@ export default function ConfiguracionPage() {
       setSavingPrompt(true);
       setErrorMsg(null);
       setSuccessMsg(null);
-      await ApiService.updateConfiguracion({ system_prompt: systemPrompt });
-      setSavedPrompt(systemPrompt);
-      setSuccessMsg("Instrucciones del Prompt guardadas exitosamente. Claude las aplicará en todos los nuevos boletines.");
+      const cleanPrompt = systemPrompt.trim();
+      if (typeof window !== "undefined") {
+        localStorage.setItem("exposureiq_system_prompt", cleanPrompt);
+        localStorage.setItem("exposureiq_system_prompt_saved", cleanPrompt);
+      }
+      await ApiService.updateConfiguracion({ system_prompt: cleanPrompt });
+      setSavedPrompt(cleanPrompt);
+      setSuccessMsg("Instrucciones IA guardadas exitosamente. Claude las aplicará en todas las nuevas síntesis.");
     } catch (err: any) {
       console.error("Error guardando prompt:", err);
       setErrorMsg(err.message || "Error al guardar las instrucciones.");
@@ -490,7 +526,10 @@ export default function ConfiguracionPage() {
   const handleResetPromptToDefault = () => {
     if (defaultSystemPrompt) {
       setSystemPrompt(defaultSystemPrompt);
-      setSuccessMsg("Se restauró el texto maestro por defecto. Recuerda hacer clic en 'Guardar Prompt' para confirmarlo.");
+      if (typeof window !== "undefined") {
+        localStorage.setItem("exposureiq_system_prompt", defaultSystemPrompt);
+      }
+      setSuccessMsg("Se restauró el texto maestro por defecto. Recuerda hacer clic en 'Guardar Instrucciones' para confirmarlo.");
     }
   };
 
@@ -679,7 +718,7 @@ export default function ConfiguracionPage() {
           <Tab
             icon={<DescriptionIcon />}
             iconPosition="start"
-            label="Prompt / Instrucciones"
+            label="Instrucciones IA"
             sx={{ fontWeight: 600, textTransform: "none", fontSize: "0.95rem" }}
           />
           <Tab
@@ -965,17 +1004,17 @@ export default function ConfiguracionPage() {
           )}
 
           {/* ================================================================= */}
-          {/* PESTAÑA 1: PROMPT / INSTRUCCIONES                                */}
+          {/* PESTAÑA 1: INSTRUCCIONES IA                                      */}
           {/* ================================================================= */}
           {tabIndex === 1 && (
             <Grid container spacing={3}>
-              <Grid size={{ xs: 12, lg: 8 }}>
+              <Grid size={{ xs: 12 }}>
                 <Card sx={{ borderRadius: "12px", boxShadow: "0 2px 6px rgba(0,0,0,0.04)" }}>
                   <CardContent sx={{ p: 3 }}>
                     <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}>
                       <AutoFixHighIcon sx={{ color: "#605DFF" }} />
                       <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                        Instrucciones del Sistema para Claude (System Prompt)
+                        Instrucciones IA
                       </Typography>
                     </Box>
                     <Typography variant="body2" sx={{ color: "#64748b", mb: 2 }}>
@@ -996,11 +1035,17 @@ export default function ConfiguracionPage() {
                     <TextField
                       multiline
                       fullWidth
-                      minRows={16}
-                      maxRows={24}
+                      minRows={18}
+                      maxRows={30}
                       value={systemPrompt}
-                      onChange={(e) => setSystemPrompt(e.target.value)}
-                      placeholder="Escribe aquí el System Prompt para Claude..."
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setSystemPrompt(val);
+                        if (typeof window !== "undefined") {
+                          localStorage.setItem("exposureiq_system_prompt", val);
+                        }
+                      }}
+                      placeholder="Escribe aquí las instrucciones de análisis para la IA..."
                       sx={{
                         mb: 3,
                         "& .MuiInputBase-root": {
@@ -1041,37 +1086,10 @@ export default function ConfiguracionPage() {
 
                       {systemPrompt !== savedPrompt && (
                         <Typography variant="caption" sx={{ color: "#d97706", fontWeight: 600 }}>
-                          ⚠️ Tienes cambios sin guardar en el prompt.
+                          ⚠️ Tienes cambios sin guardar en las instrucciones.
                         </Typography>
                       )}
                     </Box>
-                  </CardContent>
-                </Card>
-              </Grid>
-
-              {/* Panel Lateral de Consejos para el Prompt */}
-              <Grid size={{ xs: 12, lg: 4 }}>
-                <Card sx={{ borderRadius: "12px", boxShadow: "0 2px 6px rgba(0,0,0,0.04)", mb: 3 }}>
-                  <CardContent sx={{ p: 3 }}>
-                    <Typography variant="h6" sx={{ fontWeight: 600, mb: 1.5 }}>
-                      💡 Mejores Prácticas
-                    </Typography>
-
-                    <Typography variant="body2" sx={{ color: "#475569", mb: 2, lineHeight: 1.6 }}>
-                      1. <strong>Enfoque en Aseguradoras:</strong> Mantén siempre la directriz de correlacionar noticias con ramos de seguro (Transporte/Carga, Autos, Gastos Médicos, Daños).
-                    </Typography>
-
-                    <Typography variant="body2" sx={{ color: "#475569", mb: 2, lineHeight: 1.6 }}>
-                      2. <strong>Filtrado de Ruido Político:</strong> Instruye a Claude descartar declaraciones partidistas que no afecten operaciones o marcos regulatorios (CNSF/SHCP).
-                    </Typography>
-
-                    <Typography variant="body2" sx={{ color: "#475569", mb: 2, lineHeight: 1.6 }}>
-                      3. <strong>Formato para WhatsApp:</strong> Pide usar negritas con un solo asterisco (<code>*Título*</code>) y viñetas con guiones (<code>- punto</code>) para que el mensaje sea limpio en pantalla móvil.
-                    </Typography>
-
-                    <Typography variant="body2" sx={{ color: "#475569", lineHeight: 1.6 }}>
-                      4. <strong>Llamado a la Acción:</strong> Concluye siempre con un bloque de <em>"Atención Operativa Sugerida"</em> para el Director de Operaciones.
-                    </Typography>
                   </CardContent>
                 </Card>
               </Grid>

@@ -183,44 +183,42 @@ async fn upsert_config(
     categoria: &str,
 ) {
     let clean_val = valor.trim();
-    // 1. Intentar actualizar si ya existe la clave
-    let update_res = sqlx::query(
-        "UPDATE configuraciones_sistema SET valor = $1, actualizado_en = now() WHERE clave = $2"
+    // 1. UPSERT directo compatible con PostgreSQL
+    let res = sqlx::query(
+        "INSERT INTO configuraciones_sistema (clave, valor, descripcion, categoria, actualizado_en)
+         VALUES ($1, $2, $3, $4, now())
+         ON CONFLICT (clave) DO UPDATE SET 
+            valor = EXCLUDED.valor,
+            descripcion = COALESCE(EXCLUDED.descripcion, configuraciones_sistema.descripcion),
+            categoria = COALESCE(EXCLUDED.categoria, configuraciones_sistema.categoria),
+            actualizado_en = now()"
     )
-    .bind(clean_val)
     .bind(clave)
+    .bind(clean_val)
+    .bind(descripcion)
+    .bind(categoria)
     .execute(pool)
     .await;
 
-    match update_res {
-        Ok(res) if res.rows_affected() > 0 => {
-            tracing::info!("Configuración {} actualizada a '{}'", clave, clean_val);
-        }
-        _ => {
-            // 2. Si no existía, insertar
-            let insert_res = sqlx::query(
-                "INSERT INTO configuraciones_sistema (clave, valor, descripcion, categoria, actualizado_en)
-                 VALUES ($1, $2, $3, $4, now())"
-            )
-            .bind(clave)
-            .bind(clean_val)
-            .bind(descripcion)
-            .bind(categoria)
-            .execute(pool)
-            .await;
+    if let Err(e) = res {
+        tracing::warn!("Upsert con metadatos falló para {}: {}, intentando inserción básica clave/valor", clave, e);
+        let fallback_res = sqlx::query(
+            "INSERT INTO configuraciones_sistema (clave, valor)
+             VALUES ($1, $2)
+             ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor"
+        )
+        .bind(clave)
+        .bind(clean_val)
+        .execute(pool)
+        .await;
 
-            if let Err(e) = insert_res {
-                tracing::warn!("Insert completo falló para {}: {}, intentando inserción básica", clave, e);
-                let _ = sqlx::query(
-                    "INSERT INTO configuraciones_sistema (clave, valor) VALUES ($1, $2)
-                     ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor"
-                )
-                .bind(clave)
-                .bind(clean_val)
-                .execute(pool)
-                .await;
-            }
+        if let Err(e2) = fallback_res {
+            tracing::error!("Error crítico guardando configuración {}: {}", clave, e2);
+        } else {
+            tracing::info!("Configuración {} guardada exitosamente (fallback clave/valor)", clave);
         }
+    } else {
+        tracing::info!("Configuración {} guardada exitosamente en BD", clave);
     }
 }
 
@@ -279,7 +277,11 @@ pub async fn get_configuraciones(
             config_map.insert(c.clone(), json!(v));
             match c.as_str() {
                 "CLAUDE_MODEL" => current_model = v,
-                "CLAUDE_SYSTEM_PROMPT" => current_prompt = v,
+                "CLAUDE_SYSTEM_PROMPT" => {
+                    if !v.trim().is_empty() {
+                        current_prompt = v;
+                    }
+                }
                 "WHATSAPP_PROVIDER" => whatsapp_provider = v,
                 "KAPSO_API_KEY" => kapso_api_key = v,
                 "KAPSO_PHONE_NUMBER_ID" => kapso_phone_number_id = v,
@@ -387,6 +389,10 @@ pub async fn update_configuracion(
     .execute(&pool)
     .await;
 
+    let _ = sqlx::query("ALTER TABLE configuraciones_sistema ADD COLUMN IF NOT EXISTS descripcion TEXT").execute(&pool).await;
+    let _ = sqlx::query("ALTER TABLE configuraciones_sistema ADD COLUMN IF NOT EXISTS categoria VARCHAR(50) DEFAULT 'ia'").execute(&pool).await;
+    let _ = sqlx::query("ALTER TABLE configuraciones_sistema ADD COLUMN IF NOT EXISTS actualizado_en TIMESTAMPTZ NOT NULL DEFAULT now()").execute(&pool).await;
+
     if let Some(ref model) = payload.claude_model {
         let m = model.trim();
         if !m.is_empty() {
@@ -398,6 +404,7 @@ pub async fn update_configuracion(
         let p = prompt.trim();
         if !p.is_empty() {
             upsert_config(&pool, "CLAUDE_SYSTEM_PROMPT", p, "Instrucciones del sistema para el análisis y síntesis de boletines", "ia").await;
+            tracing::info!("CLAUDE_SYSTEM_PROMPT actualizado correctamente en BD con {} caracteres", p.len());
         }
     }
 
