@@ -122,6 +122,19 @@ export default function BoletinesPage() {
   const [previewDocDetail, setPreviewDocDetail] = useState<any | null>(null);
   const [loadingPreviewDoc, setLoadingPreviewDoc] = useState<boolean>(false);
 
+  // Revisión y Eliminación de Síntesis Anteriores
+  const [reviewModalOpen, setReviewModalOpen] = useState<boolean>(false);
+  const [reviewSintesisData, setReviewSintesisData] = useState<{
+    fecha: string;
+    texto: string;
+    estado: string;
+    modelo?: string;
+  } | null>(null);
+  const [loadingReview, setLoadingReview] = useState<boolean>(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState<boolean>(false);
+  const [dateToDelete, setDateToDelete] = useState<string | null>(null);
+  const [deletingSintesis, setDeletingSintesis] = useState<boolean>(false);
+
   // Mensajes de Alerta
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -503,6 +516,60 @@ export default function BoletinesPage() {
     }
   };
 
+  const handleOpenReview = async (fecha: string) => {
+    try {
+      setLoadingReview(true);
+      setReviewModalOpen(true);
+      const ws = await ApiService.getWorkspaceFecha(fecha);
+      if (ws && ws.sintesis) {
+        setReviewSintesisData({
+          fecha,
+          texto: ws.sintesis.texto || "(Sin contenido redactado)",
+          estado: ws.sintesis.estado || "borrador",
+          modelo: ws.sintesis.modelo_llm || "Claude 3.5 Sonnet",
+        });
+      } else {
+        setReviewSintesisData({
+          fecha,
+          texto: "No se encontró el texto consolidado para esta fecha.",
+          estado: "pendiente",
+        });
+      }
+    } catch (err: any) {
+      setError(err.message || "Error al cargar la síntesis para revisión.");
+      setReviewModalOpen(false);
+    } finally {
+      setLoadingReview(false);
+    }
+  };
+
+  const handlePromptDeleteSintesis = (fecha: string) => {
+    setDateToDelete(fecha);
+    setDeleteConfirmOpen(true);
+  };
+
+  const handleConfirmDeleteSintesis = async () => {
+    if (!dateToDelete) return;
+    try {
+      setDeletingSintesis(true);
+      await ApiService.eliminarSintesisDiaria(dateToDelete);
+      setSuccess(`✅ Síntesis consolidada del día ${dateToDelete} eliminada correctamente.`);
+      setDeleteConfirmOpen(false);
+      if (reviewModalOpen && reviewSintesisData?.fecha === dateToDelete) {
+        setReviewModalOpen(false);
+      }
+      if (fechaTrabajo === dateToDelete) {
+        fetchWorkspace(dateToDelete);
+      }
+      fetchHistorial();
+    } catch (err: any) {
+      setError(err.message || "Error al eliminar la síntesis diaria.");
+    } finally {
+      setDeletingSintesis(false);
+      setDateToDelete(null);
+    }
+  };
+
   const getStatusChip = (estado: string) => {
     switch (estado) {
       case "aprobado":
@@ -735,15 +802,21 @@ export default function BoletinesPage() {
             </Button>
             <Button
               variant="contained"
-              color="primary"
               startIcon={
-                generatingSynthesis ? <CircularProgress size={18} color="inherit" /> : <AutoAwesomeIcon />
+                generatingSynthesis ? (
+                  <CircularProgress size={18} sx={{ color: "#ffffff" }} />
+                ) : (
+                  <AutoAwesomeIcon sx={{ color: "#ffffff !important" }} />
+                )
               }
               onClick={handleGenerarSintesisConsolidada}
               disabled={generatingSynthesis || !workspace?.documentos_incluidos}
               sx={{
                 textTransform: "none",
                 fontWeight: 700,
+                color: "#ffffff !important",
+                "& *": { color: "#ffffff !important" },
+                "&.Mui-disabled": { opacity: 0.6, color: "rgba(255, 255, 255, 0.7) !important" },
                 borderRadius: "8px",
                 background: "linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)",
                 boxShadow: "0 2px 8px rgba(99, 102, 241, 0.35)",
@@ -1307,21 +1380,55 @@ export default function BoletinesPage() {
                         </Typography>
                       </TableCell>
                       <TableCell align="right">
-                        <Button
-                          size="small"
-                          variant={isCurrent ? "contained" : "outlined"}
-                          color={isCurrent ? "success" : "primary"}
-                          startIcon={<FolderOpenIcon />}
-                          onClick={() => {
-                            handleCambiarFecha(f.fecha);
-                            if (workspaceSectionRef.current) {
-                              workspaceSectionRef.current.scrollIntoView({ behavior: "smooth" });
-                            }
-                          }}
-                          sx={{ textTransform: "none", fontWeight: 600, borderRadius: "6px" }}
-                        >
-                          {isCurrent ? "Trabajando Día" : "Trabajar Día"}
-                        </Button>
+                        <Stack direction="row" spacing={1} justifyContent="flex-end" alignItems="center">
+                          <Button
+                            size="small"
+                            variant={isCurrent ? "contained" : "outlined"}
+                            color={isCurrent ? "success" : "primary"}
+                            startIcon={<FolderOpenIcon />}
+                            onClick={() => {
+                              handleCambiarFecha(f.fecha);
+                              if (workspaceSectionRef.current) {
+                                workspaceSectionRef.current.scrollIntoView({ behavior: "smooth" });
+                              }
+                            }}
+                            sx={{ textTransform: "none", fontWeight: 600, borderRadius: "6px" }}
+                          >
+                            {isCurrent ? "Trabajando Día" : "Trabajar Día"}
+                          </Button>
+                          {f.sintesis_id && (
+                            <>
+                              <Tooltip title="Revisar Síntesis Consolidada">
+                                <IconButton
+                                  size="small"
+                                  color="info"
+                                  onClick={() => handleOpenReview(f.fecha)}
+                                  sx={{
+                                    border: "1px solid #bfdbfe",
+                                    backgroundColor: "#eff6ff",
+                                    "&:hover": { backgroundColor: "#dbeafe" },
+                                  }}
+                                >
+                                  <VisibilityIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                              <Tooltip title="Eliminar Síntesis Consolidada">
+                                <IconButton
+                                  size="small"
+                                  color="error"
+                                  onClick={() => handlePromptDeleteSintesis(f.fecha)}
+                                  sx={{
+                                    border: "1px solid #fecaca",
+                                    backgroundColor: "#fef2f2",
+                                    "&:hover": { backgroundColor: "#fee2e2" },
+                                  }}
+                                >
+                                  <DeleteOutlineIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                            </>
+                          )}
+                        </Stack>
                       </TableCell>
                     </TableRow>
                   );
@@ -1638,6 +1745,167 @@ export default function BoletinesPage() {
             </Box>
           ) : null}
         </DialogContent>
+      </Dialog>
+
+      {/* ===================================================================== */}
+      {/* DIÁLOGO: REVISIÓN DE SÍNTESIS CONSOLIDADA ANTERIOR                   */}
+      {/* ===================================================================== */}
+      <Dialog
+        open={reviewModalOpen}
+        onClose={() => setReviewModalOpen(false)}
+        maxWidth="md"
+        fullWidth
+        PaperProps={{ sx: { borderRadius: "12px" } }}
+      >
+        <DialogTitle
+          sx={{
+            fontWeight: 700,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            borderBottom: "1px solid #e2e8f0",
+            backgroundColor: "#f8fafc",
+          }}
+        >
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+            <VisibilityIcon sx={{ color: "#6366f1" }} />
+            <span>Síntesis Consolidada del {reviewSintesisData?.fecha}</span>
+            {reviewSintesisData?.estado && getStatusChip(reviewSintesisData.estado)}
+          </Box>
+          <IconButton size="small" onClick={() => setReviewModalOpen(false)}>
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent sx={{ pt: 2.5 }}>
+          {loadingReview ? (
+            <Box sx={{ p: 4, textAlign: "center" }}>
+              <CircularProgress size={32} />
+              <Typography variant="body2" sx={{ mt: 1, color: "#64748b" }}>
+                Cargando contenido de la síntesis...
+              </Typography>
+            </Box>
+          ) : reviewSintesisData ? (
+            <Box sx={{ mt: 1 }}>
+              <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 1.5 }}>
+                <Typography variant="caption" sx={{ color: "#64748b", fontWeight: 600 }}>
+                  Modelo: {reviewSintesisData.modelo || "Claude 3.5 Sonnet"}
+                </Typography>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={() => {
+                    navigator.clipboard.writeText(reviewSintesisData.texto);
+                    setSuccess("Texto de la síntesis copiado al portapapeles.");
+                  }}
+                  sx={{ textTransform: "none", fontSize: "0.75rem" }}
+                >
+                  Copiar Texto
+                </Button>
+              </Box>
+              <Paper
+                variant="outlined"
+                sx={{
+                  p: 2.5,
+                  borderRadius: "8px",
+                  backgroundColor: "#ffffff",
+                  maxHeight: "55vh",
+                  overflowY: "auto",
+                  border: "1px solid #cbd5e1",
+                  fontFamily: "inherit",
+                }}
+              >
+                <Typography
+                  component="div"
+                  variant="body2"
+                  dangerouslySetInnerHTML={{ __html: formatWhatsAppText(reviewSintesisData.texto) }}
+                  sx={{
+                    color: "#1e293b",
+                    fontSize: "0.92rem",
+                    lineHeight: 1.6,
+                    "& strong": { fontWeight: 700 },
+                    "& em": { fontStyle: "italic" },
+                  }}
+                />
+              </Paper>
+            </Box>
+          ) : null}
+        </DialogContent>
+        <DialogActions sx={{ p: 2, borderTop: "1px solid #e2e8f0", justifyContent: "space-between" }}>
+          {reviewSintesisData?.fecha && (
+            <Button
+              color="error"
+              variant="outlined"
+              startIcon={<DeleteOutlineIcon />}
+              onClick={() => handlePromptDeleteSintesis(reviewSintesisData.fecha)}
+              sx={{ textTransform: "none", fontWeight: 600 }}
+            >
+              Eliminar Síntesis
+            </Button>
+          )}
+          <Box sx={{ display: "flex", gap: 1 }}>
+            <Button onClick={() => setReviewModalOpen(false)} sx={{ textTransform: "none" }}>
+              Cerrar
+            </Button>
+            {reviewSintesisData?.fecha && (
+              <Button
+                variant="contained"
+                startIcon={<FolderOpenIcon />}
+                onClick={() => {
+                  handleCambiarFecha(reviewSintesisData.fecha);
+                  setReviewModalOpen(false);
+                  if (workspaceSectionRef.current) {
+                    workspaceSectionRef.current.scrollIntoView({ behavior: "smooth" });
+                  }
+                }}
+                sx={{ textTransform: "none", fontWeight: 600 }}
+              >
+                Cargar en Editor y Trabajar
+              </Button>
+            )}
+          </Box>
+        </DialogActions>
+      </Dialog>
+
+      {/* ===================================================================== */}
+      {/* DIÁLOGO: CONFIRMAR ELIMINACIÓN DE SÍNTESIS                           */}
+      {/* ===================================================================== */}
+      <Dialog
+        open={deleteConfirmOpen}
+        onClose={() => !deletingSintesis && setDeleteConfirmOpen(false)}
+        maxWidth="xs"
+        fullWidth
+        PaperProps={{ sx: { borderRadius: "12px" } }}
+      >
+        <DialogTitle sx={{ fontWeight: 700, color: "#b91c1c" }}>
+          Eliminar Síntesis Consolidada
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" sx={{ color: "#475569" }}>
+            ¿Está seguro de que desea eliminar la síntesis consolidada del día <strong>{dateToDelete}</strong>?
+          </Typography>
+          <Typography variant="caption" sx={{ color: "#64748b", display: "block", mt: 1.5 }}>
+            Los documentos PDF y OCR asociados a esta fecha se conservarán intactos en el universo de documentos y podrá volver a generar la síntesis cuando lo desee.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ p: 2 }}>
+          <Button
+            onClick={() => setDeleteConfirmOpen(false)}
+            disabled={deletingSintesis}
+            sx={{ textTransform: "none" }}
+          >
+            Cancelar
+          </Button>
+          <Button
+            variant="contained"
+            color="error"
+            startIcon={deletingSintesis ? <CircularProgress size={16} color="inherit" /> : <DeleteOutlineIcon />}
+            onClick={handleConfirmDeleteSintesis}
+            disabled={deletingSintesis}
+            sx={{ textTransform: "none", fontWeight: 700 }}
+          >
+            {deletingSintesis ? "Eliminando..." : "Sí, Eliminar"}
+          </Button>
+        </DialogActions>
       </Dialog>
     </Box>
   );

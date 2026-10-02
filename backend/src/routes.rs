@@ -38,6 +38,7 @@ pub fn create_router(pool: DbPool, config: Arc<Config>) -> Router {
         .route("/api/sintesis-diarias", get(boletines::list_fechas_sintesis))
         .route("/api/sintesis-diarias/:fecha", get(boletines::get_workspace_fecha))
         .route("/api/sintesis-diarias/:fecha", put(boletines::actualizar_sintesis_diaria))
+        .route("/api/sintesis-diarias/:fecha", delete(boletines::eliminar_sintesis_diaria))
         .route("/api/sintesis-diarias/:fecha/consolidar", post(boletines::consolidar_sintesis_fecha))
         .route("/api/sintesis-diarias/:fecha/aprobar", post(boletines::aprobar_sintesis_diaria))
 

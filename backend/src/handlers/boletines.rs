@@ -535,7 +535,7 @@ pub async fn procesar_boletin(
 // ============================================================================
 
 pub async fn ensure_sintesis_diarias_schema(pool: &DbPool) {
-    let _ = sqlx::query(
+    if let Err(e) = sqlx::query(
         "CREATE TABLE IF NOT EXISTS sintesis_diarias (
             id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             fecha           DATE UNIQUE NOT NULL,
@@ -548,13 +548,30 @@ pub async fn ensure_sintesis_diarias_schema(pool: &DbPool) {
             aprobado_por    UUID,
             creado_en       TIMESTAMPTZ NOT NULL DEFAULT now(),
             actualizado_en  TIMESTAMPTZ NOT NULL DEFAULT now()
-        );
-        ALTER TABLE boletines ADD COLUMN IF NOT EXISTS incluido_en_sintesis BOOLEAN NOT NULL DEFAULT TRUE;
-        ALTER TABLE boletines ADD COLUMN IF NOT EXISTS origen VARCHAR(50) NOT NULL DEFAULT 'manual';
-        ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS temas TEXT[] DEFAULT '{}';"
+        )"
     )
     .execute(pool)
-    .await;
+    .await {
+        tracing::error!("Error asegurando tabla sintesis_diarias: {}", e);
+    }
+
+    if let Err(e) = sqlx::query("ALTER TABLE boletines ADD COLUMN IF NOT EXISTS incluido_en_sintesis BOOLEAN NOT NULL DEFAULT TRUE")
+        .execute(pool)
+        .await {
+        tracing::warn!("Aviso columna incluido_en_sintesis: {}", e);
+    }
+
+    if let Err(e) = sqlx::query("ALTER TABLE boletines ADD COLUMN IF NOT EXISTS origen VARCHAR(50) NOT NULL DEFAULT 'manual'")
+        .execute(pool)
+        .await {
+        tracing::warn!("Aviso columna origen: {}", e);
+    }
+
+    if let Err(e) = sqlx::query("ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS temas TEXT[] DEFAULT '{}'")
+        .execute(pool)
+        .await {
+        tracing::warn!("Aviso columna temas: {}", e);
+    }
 }
 
 pub async fn list_fechas_sintesis(
@@ -1118,4 +1135,45 @@ pub async fn aprobar_sintesis_diaria(
         })),
     ))
 }
+
+pub async fn eliminar_sintesis_diaria(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+    Path(fecha_str): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    ensure_sintesis_diarias_schema(&pool).await;
+
+    let fecha = NaiveDate::parse_from_str(&fecha_str, "%Y-%m-%d").map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "Formato de fecha inválido. Utilice YYYY-MM-DD"})),
+        )
+    })?;
+
+    let res = sqlx::query("DELETE FROM sintesis_diarias WHERE fecha = $1")
+        .bind(fecha)
+        .execute(&pool)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("Error eliminando síntesis diaria: {}", e)})),
+            )
+        })?;
+
+    // Revertir estado de los boletines que estaban en 'aprobado' para esa fecha a 'ocr_completo'
+    let _ = sqlx::query("UPDATE boletines SET estado = 'ocr_completo' WHERE fecha_boletin = $1 AND estado = 'aprobado'")
+        .bind(fecha)
+        .execute(&pool)
+        .await;
+
+    Ok((
+        StatusCode::OK,
+        Json(json!({
+            "mensaje": format!("Síntesis diaria del {} eliminada exitosamente", fecha),
+            "filas_afectadas": res.rows_affected(),
+            "fecha": fecha
+        })),
+    ))
+}
+
 

@@ -458,5 +458,13 @@ export const ApiService = {
         body: JSON.stringify({ texto, enviar_whatsapp }),
       }
     ),
+
+  eliminarSintesisDiaria: (fecha: string) =>
+    apiFetch<{ mensaje: string; filas_afectadas: number; fecha: string }>(
+      `/sintesis-diarias/${fecha}`,
+      {
+        method: 'DELETE',
+      }
+    ),
 };
 
