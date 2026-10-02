@@ -337,15 +337,17 @@ pub async fn get_configuraciones(
 
     let whatsapp_template_name = config_map
         .get("WHATSAPP_TEMPLATE_NAME")
-        .cloned()
-        .filter(|s| !s.trim().is_empty())
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
         .or_else(|| std::env::var("WHATSAPP_TEMPLATE_NAME").ok())
         .unwrap_or_else(|| "hello_world".to_string());
 
     let whatsapp_template_language = config_map
         .get("WHATSAPP_TEMPLATE_LANGUAGE")
-        .cloned()
-        .filter(|s| !s.trim().is_empty())
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
         .or_else(|| std::env::var("WHATSAPP_TEMPLATE_LANGUAGE").ok())
         .unwrap_or_else(|| "es_MX".to_string());
 
