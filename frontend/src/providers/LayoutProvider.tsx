@@ -24,6 +24,39 @@ const LayoutProvider: React.FC<LayoutProviderProps> = ({ children }) => {
   const isAuthPage = pathname.startsWith("/authentication");
 
   useEffect(() => {
+    const handleChunkError = (event: ErrorEvent) => {
+      const msg = event?.message || "";
+      if (
+        msg.includes("ChunkLoadError") ||
+        msg.includes("Failed to load chunk") ||
+        msg.includes("Loading chunk")
+      ) {
+        console.warn("ChunkLoadError detectado por nuevo build. Recargando página...", msg);
+        window.location.reload();
+      }
+    };
+
+    const handleRejection = (event: PromiseRejectionEvent) => {
+      const reason = event?.reason?.message || String(event?.reason || "");
+      if (
+        reason.includes("ChunkLoadError") ||
+        reason.includes("Failed to load chunk") ||
+        reason.includes("Loading chunk")
+      ) {
+        console.warn("Rechazo de chunk detectado por nuevo build. Recargando página...", reason);
+        window.location.reload();
+      }
+    };
+
+    window.addEventListener("error", handleChunkError);
+    window.addEventListener("unhandledrejection", handleRejection);
+    return () => {
+      window.removeEventListener("error", handleChunkError);
+      window.removeEventListener("unhandledrejection", handleRejection);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!isAuthPage) {
       const token = typeof window !== "undefined" ? localStorage.getItem("exposureiq_token") : null;
       if (!token) {

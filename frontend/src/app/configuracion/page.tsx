@@ -84,18 +84,8 @@ export default function ConfiguracionPage() {
   const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
 
   // Estados para Prompt / Instrucciones IA
-  const [systemPrompt, setSystemPrompt] = useState<string>(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("exposureiq_system_prompt") || "";
-    }
-    return "";
-  });
-  const [savedPrompt, setSavedPrompt] = useState<string>(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("exposureiq_system_prompt_saved") || localStorage.getItem("exposureiq_system_prompt") || "";
-    }
-    return "";
-  });
+  const [systemPrompt, setSystemPrompt] = useState<string>("");
+  const [savedPrompt, setSavedPrompt] = useState<string>("");
   const [defaultSystemPrompt, setDefaultSystemPrompt] = useState<string>("");
 
   // Estados para WhatsApp (Kapso)
@@ -167,6 +157,13 @@ export default function ConfiguracionPage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      const localPrompt = localStorage.getItem("exposureiq_system_prompt");
+      if (localPrompt) {
+        setSystemPrompt(localPrompt);
+        setSavedPrompt(localStorage.getItem("exposureiq_system_prompt_saved") || localPrompt);
+      }
+    }
     loadConfig();
   }, []);
 
