@@ -228,32 +228,29 @@ async def consolidar_sintesis_diaria_endpoint(payload: ConsolidarSintesisDiariaR
     conn = get_db_connection()
     cur = conn.cursor()
     try:
-        # Asegurar esquema de sintesis_diarias y columnas requeridas
-        cur.execute("""
-            CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-            CREATE TABLE IF NOT EXISTS sintesis_diarias (
-                id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                fecha           DATE UNIQUE NOT NULL,
-                texto           TEXT NOT NULL DEFAULT '',
-                temas           TEXT[] DEFAULT '{}',
-                documentos_ids  UUID[] DEFAULT '{}',
-                estado          VARCHAR(30) NOT NULL DEFAULT 'borrador',
-                modelo_usado    VARCHAR(50) DEFAULT 'claude-sonnet-4-5-20250929',
-                tokens_usados   INT,
-                aprobado_por    UUID,
-                creado_en       TIMESTAMPTZ NOT NULL DEFAULT now(),
-                actualizado_en  TIMESTAMPTZ NOT NULL DEFAULT now()
-            );
-            ALTER TABLE boletines ADD COLUMN IF NOT EXISTS incluido_en_sintesis BOOLEAN NOT NULL DEFAULT TRUE;
-            ALTER TABLE boletines ADD COLUMN IF NOT EXISTS origen VARCHAR(50) NOT NULL DEFAULT 'manual';
-            ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS temas TEXT[] DEFAULT '{}';
-            ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS documentos_ids UUID[] DEFAULT '{}';
-            ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS estado VARCHAR(30) NOT NULL DEFAULT 'borrador';
-            ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS modelo_usado VARCHAR(50) DEFAULT 'claude-sonnet-4-5-20250929';
-            ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS tokens_usados INT;
-            ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS aprobado_por UUID;
-        """)
-        conn.commit()
+        # Intentar asegurar esquema de forma segura sin abortar la transacción por permisos DDL
+        try:
+            cur.execute("""
+                CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+                CREATE TABLE IF NOT EXISTS sintesis_diarias (
+                    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    fecha           DATE UNIQUE NOT NULL,
+                    texto           TEXT NOT NULL DEFAULT '',
+                    temas           TEXT[] DEFAULT '{}',
+                    documentos_ids  UUID[] DEFAULT '{}',
+                    estado          VARCHAR(30) NOT NULL DEFAULT 'borrador',
+                    modelo_usado    VARCHAR(50) DEFAULT 'claude-sonnet-4-5-20250929',
+                    tokens_usados   INT,
+                    aprobado_por    UUID,
+                    creado_en       TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    actualizado_en  TIMESTAMPTZ NOT NULL DEFAULT now()
+                );
+            """)
+            conn.commit()
+        except Exception as schema_warn:
+            if conn and not conn.closed:
+                conn.rollback()
+            print(f"[Consolidar] Aviso DDL (omitido por permisos de usuario): {schema_warn}")
 
         # Obtener los boletines objetivo
         if payload.documentos_ids and len(payload.documentos_ids) > 0:
