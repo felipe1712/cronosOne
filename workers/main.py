@@ -338,28 +338,60 @@ async def consolidar_sintesis_diaria_endpoint(payload: ConsolidarSintesisDiariaR
                 "secciones": secs or []
             })
 
-        from llm_synthesis import generate_consolidated_daily_brief
-        print(f"[Consolidar] Generando síntesis consolidada para {len(documentos_data)} documentos de {fecha}...")
+        from llm_synthesis import generate_consolidated_daily_brief, get_configured_model
+        active_model = get_configured_model()
+        print(f"[Consolidar] Generando síntesis consolidada para {len(documentos_data)} documentos de {fecha} con {active_model}...")
         brief_texto, detected_topics = await generate_consolidated_daily_brief(documentos_data, fecha)
 
-        # Upsert en sintesis_diarias
-        cur.execute(
-            """
-            INSERT INTO sintesis_diarias (fecha, texto, temas, documentos_ids, estado, modelo_usado, actualizado_en)
-            VALUES (%s, %s, %s, %s, 'sintesis_lista', %s, now())
-            ON CONFLICT (fecha) DO UPDATE
-            SET texto = EXCLUDED.texto,
-                temas = EXCLUDED.temas,
-                documentos_ids = EXCLUDED.documentos_ids,
-                estado = 'sintesis_lista',
-                modelo_usado = EXCLUDED.modelo_usado,
-                actualizado_en = now()
-            RETURNING id, fecha, texto, temas, documentos_ids, estado, modelo_usado, creado_en, actualizado_en
-            """,
-            (fecha, brief_texto, detected_topics, doc_uuids, settings.claude_model)
-        )
-        row = cur.fetchone()
-        conn.commit()
+        # Preparar y validar UUIDs de documentos para PostgreSQL
+        import uuid as uuid_lib
+        valid_uuids = []
+        for uid in doc_uuids:
+            try:
+                valid_uuids.append(str(uuid_lib.UUID(str(uid).strip())))
+            except Exception:
+                pass
+
+        # Upsert en sintesis_diarias con fallback seguro
+        row = None
+        try:
+            cur.execute(
+                """
+                INSERT INTO sintesis_diarias (fecha, texto, temas, documentos_ids, estado, modelo_usado, actualizado_en)
+                VALUES (%s, %s, %s, %s::uuid[], 'sintesis_lista', %s, now())
+                ON CONFLICT (fecha) DO UPDATE
+                SET texto = EXCLUDED.texto,
+                    temas = EXCLUDED.temas,
+                    documentos_ids = EXCLUDED.documentos_ids,
+                    estado = 'sintesis_lista',
+                    modelo_usado = EXCLUDED.modelo_usado,
+                    actualizado_en = now()
+                RETURNING id, fecha, texto, temas, documentos_ids, estado, modelo_usado, creado_en, actualizado_en
+                """,
+                (fecha, brief_texto, detected_topics, valid_uuids, active_model)
+            )
+            row = cur.fetchone()
+            conn.commit()
+        except Exception as upsert_err:
+            print(f"[Consolidar] Aviso: Upsert con cast uuid[] falló ({upsert_err}), intentando fallback...")
+            conn.rollback()
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO sintesis_diarias (fecha, texto, temas, estado, modelo_usado, actualizado_en)
+                VALUES (%s, %s, %s, 'sintesis_lista', %s, now())
+                ON CONFLICT (fecha) DO UPDATE
+                SET texto = EXCLUDED.texto,
+                    temas = EXCLUDED.temas,
+                    estado = 'sintesis_lista',
+                    modelo_usado = EXCLUDED.modelo_usado,
+                    actualizado_en = now()
+                RETURNING id, fecha, texto, temas, documentos_ids, estado, modelo_usado, creado_en, actualizado_en
+                """,
+                (fecha, brief_texto, detected_topics, active_model)
+            )
+            row = cur.fetchone()
+            conn.commit()
 
         return {
             "status": "completado",

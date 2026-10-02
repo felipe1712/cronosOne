@@ -1015,9 +1015,17 @@ pub async fn consolidar_sintesis_fecha(
     if status.is_success() {
         Ok((StatusCode::OK, Json(body_json)))
     } else {
+        let detalle = body_json.get("detail")
+            .and_then(|d| d.as_str())
+            .or_else(|| body_json.get("error").and_then(|e| e.as_str()))
+            .unwrap_or("Error interno en worker");
+        tracing::error!("Error devuelto por worker al consolidar síntesis de {}: {}", fecha_str, detalle);
         Err((
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "Error del worker al consolidar síntesis", "detalles": body_json})),
+            Json(json!({
+                "error": format!("Error del worker al consolidar síntesis: {}", detalle),
+                "detalles": body_json
+            })),
         ))
     }
 }
