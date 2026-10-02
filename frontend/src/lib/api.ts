@@ -72,6 +72,8 @@ export interface UpdateConfiguracionPayload {
   kapso_api_key?: string;
   kapso_phone_number_id?: string;
   director_whatsapp_phone?: string;
+  whatsapp_template_name?: string;
+  whatsapp_template_language?: string;
 }
 
 export interface GrupoDistribucion {
@@ -114,6 +116,9 @@ export interface Destinatario {
   creado_en?: string;
   actualizado_en?: string;
   grupos?: GrupoResumen[];
+  plantilla_enviada?: boolean;
+  plantilla_error?: string;
+  kapso_message_id?: string;
 }
 
 export interface CreateDestinatarioPayload {
@@ -123,6 +128,10 @@ export interface CreateDestinatarioPayload {
   notas?: string;
   activo?: boolean;
   grupo_ids?: string[];
+  enviar_plantilla?: boolean;
+  template_name?: string;
+  template_language?: string;
+  template_variables?: string[];
 }
 
 export interface UpdateDestinatarioPayload {
@@ -269,6 +278,12 @@ export const ApiService = {
       body: JSON.stringify(payload),
     }),
 
+  testTemplate: (payload: { phone?: string; template_name?: string; template_language?: string; variables?: string[]; api_key?: string; phone_number_id?: string } = {}) =>
+    apiFetch<any>('/configuracion/test-template', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
   // Lista de Distribución WhatsApp (Destinatarios)
   getDestinatarios: () => apiFetch<Destinatario[]>('/configuracion/destinatarios'),
 
@@ -292,6 +307,12 @@ export const ApiService = {
   deleteDestinatario: (id: string) =>
     apiFetch<{ mensaje: string }>(`/configuracion/destinatarios/${id}`, {
       method: 'DELETE',
+    }),
+
+  enviarPlantillaDestinatario: (id: string, payload: { template_name?: string; template_language?: string; variables?: string[]; api_key?: string; phone_number_id?: string } = {}) =>
+    apiFetch<any>(`/configuracion/destinatarios/${id}/enviar-plantilla`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
     }),
 
   // Grupos / Listas de Distribución

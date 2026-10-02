@@ -331,6 +331,10 @@ pub struct CreateDestinatarioRequest {
     pub notas: Option<String>,
     pub activo: Option<bool>,
     pub grupo_ids: Option<Vec<Uuid>>,
+    pub enviar_plantilla: Option<bool>,
+    pub template_name: Option<String>,
+    pub template_language: Option<String>,
+    pub template_variables: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -342,3 +346,24 @@ pub struct UpdateDestinatarioRequest {
     pub activo: bool,
     pub grupo_ids: Option<Vec<Uuid>>,
 }
+
+#[derive(Debug, Deserialize, Default)]
+pub struct EnviarPlantillaRequest {
+    pub telefono: Option<String>,
+    pub template_name: Option<String>,
+    pub template_language: Option<String>,
+    pub variables: Option<Vec<String>>,
+    pub api_key: Option<String>,
+    pub phone_number_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct TestTemplatePayload {
+    pub phone: Option<String>,
+    pub template_name: Option<String>,
+    pub template_language: Option<String>,
+    pub variables: Option<Vec<String>>,
+    pub api_key: Option<String>,
+    pub phone_number_id: Option<String>,
+}
+

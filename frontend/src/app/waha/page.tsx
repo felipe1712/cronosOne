@@ -20,6 +20,7 @@ import {
   CircularProgress,
   Alert,
   Divider,
+  Tooltip,
 } from "@mui/material";
 import WhatsAppIcon from "@mui/icons-material/WhatsApp";
 import RefreshIcon from "@mui/icons-material/Refresh";
@@ -182,7 +183,7 @@ export default function CanalWhatsAppPage() {
     }
   };
 
-  const getEstadoMensajeChip = (estado: string) => {
+  const getEstadoMensajeChip = (estado: string, errorMensaje?: string) => {
     switch (estado) {
       case "confirmado":
         return <Chip label="Entregado" color="success" size="small" icon={<CheckCircleOutlineIcon />} />;
@@ -191,8 +192,37 @@ export default function CanalWhatsAppPage() {
         return <Chip label="Enviando..." color="info" size="small" icon={<HourglassEmptyIcon />} />;
       case "pendiente":
         return <Chip label="En cola" color="warning" size="small" />;
+      case "error":
       default:
-        return <Chip label={estado || "Error"} color="error" size="small" icon={<ErrorOutlineIcon />} />;
+        return (
+          <Box sx={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-start" }}>
+            <Tooltip title={errorMensaje || "Error en el despacho del mensaje"} arrow placement="top">
+              <Chip
+                label="Error de envío"
+                color="error"
+                size="small"
+                icon={<ErrorOutlineIcon />}
+                sx={{ fontWeight: 600, cursor: errorMensaje ? "help" : "default" }}
+              />
+            </Tooltip>
+            {errorMensaje && (
+              <Typography
+                variant="caption"
+                sx={{
+                  color: "#ef4444",
+                  fontSize: "0.72rem",
+                  mt: 0.5,
+                  maxWidth: 240,
+                  whiteSpace: "normal",
+                  wordBreak: "break-word",
+                  lineHeight: 1.2,
+                }}
+              >
+                {errorMensaje}
+              </Typography>
+            )}
+          </Box>
+        );
     }
   };
 
@@ -406,6 +436,7 @@ export default function CanalWhatsAppPage() {
                     <TableBody>
                       {mensajes.map((m) => {
                         const isPending = m.estado === "pendiente" || m.estado === "entregado_a_n8n";
+                        const isError = m.estado === "error";
                         const isSending = sendingId === m.id;
 
                         return (
@@ -436,19 +467,21 @@ export default function CanalWhatsAppPage() {
                                 {m.texto}
                               </Typography>
                             </TableCell>
-                            <TableCell>{getEstadoMensajeChip(m.estado)}</TableCell>
+                            <TableCell>{getEstadoMensajeChip(m.estado, m.error_mensaje)}</TableCell>
                             <TableCell sx={{ fontSize: "0.8rem", whiteSpace: "nowrap" }}>
                               {new Date(m.creado_en).toLocaleString()}
                             </TableCell>
                             <TableCell sx={{ textAlign: "center", whiteSpace: "nowrap" }}>
-                              {isPending ? (
+                              {isPending || isError ? (
                                 <Button
-                                  variant="contained"
-                                  color="success"
+                                  variant={isError ? "outlined" : "contained"}
+                                  color={isError ? "error" : "success"}
                                   size="small"
                                   startIcon={
                                     isSending ? (
                                       <CircularProgress size={14} color="inherit" />
+                                    ) : isError ? (
+                                      <RefreshIcon sx={{ fontSize: "0.85rem" }} />
                                     ) : (
                                       <SendIcon sx={{ fontSize: "0.85rem" }} />
                                     )
@@ -461,11 +494,19 @@ export default function CanalWhatsAppPage() {
                                     px: 1.5,
                                     py: 0.4,
                                     fontSize: "0.78rem",
-                                    backgroundColor: "#16a34a",
-                                    "&:hover": { backgroundColor: "#15803d" },
+                                    ...(isPending
+                                      ? {
+                                          backgroundColor: "#16a34a",
+                                          "&:hover": { backgroundColor: "#15803d" },
+                                        }
+                                      : {
+                                          borderColor: "#ef4444",
+                                          color: "#dc2626",
+                                          "&:hover": { backgroundColor: "#fef2f2", borderColor: "#dc2626" },
+                                        }),
                                   }}
                                 >
-                                  {isSending ? "Enviando..." : "Enviar Ahora"}
+                                  {isSending ? "Reintentando..." : isError ? "Reintentar" : "Enviar Ahora"}
                                 </Button>
                               ) : (
                                 <Chip

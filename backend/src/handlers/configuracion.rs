@@ -65,6 +65,8 @@ pub struct UpdateConfiguracionPayload {
     pub kapso_api_key: Option<String>,
     pub kapso_phone_number_id: Option<String>,
     pub director_whatsapp_phone: Option<String>,
+    pub whatsapp_template_name: Option<String>,
+    pub whatsapp_template_language: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -333,6 +335,20 @@ pub async fn get_configuraciones(
         }
     }
 
+    let whatsapp_template_name = config_map
+        .get("WHATSAPP_TEMPLATE_NAME")
+        .cloned()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| std::env::var("WHATSAPP_TEMPLATE_NAME").ok())
+        .unwrap_or_else(|| "hello_world".to_string());
+
+    let whatsapp_template_language = config_map
+        .get("WHATSAPP_TEMPLATE_LANGUAGE")
+        .cloned()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| std::env::var("WHATSAPP_TEMPLATE_LANGUAGE").ok())
+        .unwrap_or_else(|| "es_MX".to_string());
+
     let available_models = get_available_claude_models();
 
     Ok((
@@ -346,6 +362,8 @@ pub async fn get_configuraciones(
             "kapso_api_key": kapso_api_key,
             "kapso_phone_number_id": kapso_phone_number_id,
             "director_whatsapp_phone": director_whatsapp_phone,
+            "whatsapp_template_name": whatsapp_template_name,
+            "whatsapp_template_language": whatsapp_template_language,
             "todas": config_map
         })),
     ))
@@ -399,6 +417,20 @@ pub async fn update_configuracion(
         let clean_id = phone_id.trim();
         if !clean_id.is_empty() {
             upsert_config(&pool, "KAPSO_PHONE_NUMBER_ID", clean_id, "Identificador de número telefónico de WhatsApp en Kapso / Meta", "whatsapp").await;
+        }
+    }
+
+    if let Some(ref tpl_name) = payload.whatsapp_template_name {
+        let clean_name = tpl_name.trim();
+        if !clean_name.is_empty() {
+            upsert_config(&pool, "WHATSAPP_TEMPLATE_NAME", clean_name, "Nombre exacto de la plantilla aprobada en Meta Cloud API / WABA", "whatsapp").await;
+        }
+    }
+
+    if let Some(ref tpl_lang) = payload.whatsapp_template_language {
+        let clean_lang = tpl_lang.trim();
+        if !clean_lang.is_empty() {
+            upsert_config(&pool, "WHATSAPP_TEMPLATE_LANGUAGE", clean_lang, "Código de idioma de la plantilla (ej: es_MX, en_US)", "whatsapp").await;
         }
     }
 
@@ -508,6 +540,92 @@ pub async fn test_whatsapp(
                     "ok": false,
                     "error": e.clone(),
                     "mensaje": format!("Fallo al enviar mensaje por Kapso: {}", e),
+                    "latency_ms": latency_ms
+                })),
+            ))
+        }
+    }
+}
+
+pub async fn test_template(
+    State((pool, _config)): State<(DbPool, Arc<Config>)>,
+    Json(payload): Json<Option<crate::models::TestTemplatePayload>>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    use crate::services::kapso::{get_whatsapp_config, KapsoClient};
+    use std::time::Instant;
+
+    let req = payload.unwrap_or_default();
+    let cfg = get_whatsapp_config(&pool).await;
+
+    let api_key = req
+        .api_key
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(cfg.api_key.trim());
+
+    let phone_number_id = req
+        .phone_number_id
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(cfg.phone_number_id.trim());
+
+    let target_phone = req
+        .phone
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty() && *s != "5215512345678")
+        .unwrap_or(cfg.director_phone.trim());
+
+    if target_phone.is_empty() || target_phone == "5215512345678" {
+        return Ok((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "ok": false,
+                "error": "No se ha configurado un número de teléfono de destino válido. Ingresa el número con código de país (ej: 5255...)."
+            })),
+        ));
+    }
+
+    let tpl_name = req
+        .template_name
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(cfg.template_name.trim());
+
+    let tpl_lang = req
+        .template_language
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(cfg.template_language.trim());
+
+    let client = KapsoClient::new(api_key.to_string(), phone_number_id.to_string());
+    let start = Instant::now();
+
+    match client.send_template(target_phone, tpl_name, tpl_lang, req.variables.as_deref()).await {
+        Ok(msg_id) => {
+            let latency_ms = start.elapsed().as_millis();
+            Ok((
+                StatusCode::OK,
+                Json(json!({
+                    "ok": true,
+                    "mensaje": format!("Plantilla '{}' ({}) enviada exitosamente a {} ({}) en {}ms", tpl_name, tpl_lang, target_phone, msg_id, latency_ms),
+                    "message_id": msg_id,
+                    "latency_ms": latency_ms
+                })),
+            ))
+        }
+        Err(e) => {
+            let latency_ms = start.elapsed().as_millis();
+            Ok((
+                StatusCode::OK,
+                Json(json!({
+                    "ok": false,
+                    "error": e.clone(),
+                    "mensaje": format!("Fallo al enviar plantilla: {}", e),
                     "latency_ms": latency_ms
                 })),
             ))
@@ -715,7 +833,83 @@ pub async fn create_destinatario(
     }
     dest.grupos = Some(grupos_resumen);
 
-    Ok((StatusCode::CREATED, Json(json!(dest))))
+    // Enviar plantilla oficial si fue solicitado al dar de alta
+    let mut plantilla_enviada = false;
+    let mut plantilla_error: Option<String> = None;
+    let mut kapso_msg_id: Option<String> = None;
+
+    if payload.enviar_plantilla.unwrap_or(false) {
+        use crate::services::kapso::{get_whatsapp_config, KapsoClient};
+        let w_cfg = get_whatsapp_config(&pool).await;
+
+        if w_cfg.api_key.trim().is_empty() || w_cfg.phone_number_id.trim().is_empty() {
+            plantilla_error = Some("No se pudo enviar la plantilla: credenciales de WhatsApp Cloud API (Kapso) no configuradas".to_string());
+        } else {
+            let client = KapsoClient::new(w_cfg.api_key.clone(), w_cfg.phone_number_id.clone());
+            let tpl_name = payload
+                .template_name
+                .as_deref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .unwrap_or(w_cfg.template_name.as_str());
+
+            let tpl_lang = payload
+                .template_language
+                .as_deref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .unwrap_or(w_cfg.template_language.as_str());
+
+            let default_vars = vec![nombre.to_string()];
+            let vars = payload.template_variables.as_ref().unwrap_or(&default_vars);
+
+            match client.send_template(telefono, tpl_name, tpl_lang, Some(vars)).await {
+                Ok(msg_id) => {
+                    plantilla_enviada = true;
+                    kapso_msg_id = Some(msg_id.clone());
+
+                    let _ = sqlx::query(
+                        "INSERT INTO mensajes_pendientes (tipo, referencia_id, texto, destinatario, estado, proveedor, kapso_message_id, meta_status, confirmado_en)
+                         VALUES ('alerta', $1, $2, $3, 'confirmado', 'kapso', $4, 'sent', now())",
+                    )
+                    .bind(dest.id)
+                    .bind(format!("Plantilla de apertura: {}", tpl_name))
+                    .bind(telefono)
+                    .bind(&msg_id)
+                    .execute(&pool)
+                    .await;
+                }
+                Err(e) => {
+                    plantilla_error = Some(e.clone());
+                    let _ = sqlx::query(
+                        "INSERT INTO mensajes_pendientes (tipo, referencia_id, texto, destinatario, estado, proveedor, error_mensaje)
+                         VALUES ('alerta', $1, $2, $3, 'error', 'kapso', $4)",
+                    )
+                    .bind(dest.id)
+                    .bind(format!("Intento de plantilla de apertura: {}", tpl_name))
+                    .bind(telefono)
+                    .bind(&e)
+                    .execute(&pool)
+                    .await;
+                }
+            }
+        }
+    }
+
+    Ok((StatusCode::CREATED, Json(json!({
+        "id": dest.id,
+        "nombre": dest.nombre,
+        "telefono": dest.telefono,
+        "cargo": dest.cargo,
+        "activo": dest.activo,
+        "notas": dest.notas,
+        "grupos": dest.grupos,
+        "creado_en": dest.creado_en,
+        "actualizado_en": dest.actualizado_en,
+        "plantilla_enviada": plantilla_enviada,
+        "plantilla_error": plantilla_error,
+        "kapso_message_id": kapso_msg_id,
+    }))))
 }
 
 pub async fn update_destinatario(
@@ -807,6 +1001,140 @@ pub async fn update_destinatario(
     }
 
     Ok((StatusCode::OK, Json(json!(dest))))
+}
+
+/// Envía una plantilla oficial de WhatsApp al contacto seleccionado para abrir la ventana de 24 horas
+pub async fn enviar_plantilla_destinatario(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+    Path(id): Path<Uuid>,
+    Json(payload): Json<Option<crate::models::EnviarPlantillaRequest>>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    use crate::services::kapso::{get_whatsapp_config, KapsoClient};
+
+    let req = payload.unwrap_or_default();
+
+    let dest_opt = sqlx::query_as::<_, DestinatarioRow>(
+        "SELECT id, nombre, telefono, cargo, activo, notas, creado_en, actualizado_en 
+         FROM lista_distribucion WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"ok": false, "error": format!("Error buscando destinatario: {}", e)})),
+        )
+    })?;
+
+    let dest = match dest_opt {
+        Some(d) => d,
+        None => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(json!({"ok": false, "error": "Destinatario no encontrado en la lista"})),
+            ));
+        }
+    };
+
+    let w_cfg = get_whatsapp_config(&pool).await;
+
+    let api_key = req
+        .api_key
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(w_cfg.api_key.trim());
+
+    let phone_number_id = req
+        .phone_number_id
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(w_cfg.phone_number_id.trim());
+
+    if api_key.is_empty() || phone_number_id.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "ok": false,
+                "error": "No hay credenciales de WhatsApp Cloud API (Kapso) configuradas"
+            })),
+        ));
+    }
+
+    let target_phone = req
+        .telefono
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(dest.telefono.trim());
+
+    let tpl_name = req
+        .template_name
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(w_cfg.template_name.as_str());
+
+    let tpl_lang = req
+        .template_language
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(w_cfg.template_language.as_str());
+
+    let default_vars = vec![dest.nombre.clone()];
+    let vars = req.variables.as_ref().unwrap_or(&default_vars);
+
+    let client = KapsoClient::new(api_key.to_string(), phone_number_id.to_string());
+
+    match client.send_template(target_phone, tpl_name, tpl_lang, Some(vars)).await {
+        Ok(msg_id) => {
+            let _ = sqlx::query(
+                "INSERT INTO mensajes_pendientes (tipo, referencia_id, texto, destinatario, estado, proveedor, kapso_message_id, meta_status, confirmado_en)
+                 VALUES ('alerta', $1, $2, $3, 'confirmado', 'kapso', $4, 'sent', now())",
+            )
+            .bind(dest.id)
+            .bind(format!("Plantilla de apertura enviada: {}", tpl_name))
+            .bind(target_phone)
+            .bind(&msg_id)
+            .execute(&pool)
+            .await;
+
+            Ok((
+                StatusCode::OK,
+                Json(json!({
+                    "ok": true,
+                    "mensaje": format!("Plantilla '{}' ({}) enviada exitosamente a {} ({})", tpl_name, tpl_lang, dest.nombre, target_phone),
+                    "destinatario": dest.nombre,
+                    "telefono": target_phone,
+                    "kapso_message_id": msg_id,
+                })),
+            ))
+        }
+        Err(e) => {
+            let _ = sqlx::query(
+                "INSERT INTO mensajes_pendientes (tipo, referencia_id, texto, destinatario, estado, proveedor, error_mensaje)
+                 VALUES ('alerta', $1, $2, $3, 'error', 'kapso', $4)",
+            )
+            .bind(dest.id)
+            .bind(format!("Fallo al enviar plantilla: {}", tpl_name))
+            .bind(target_phone)
+            .bind(&e)
+            .execute(&pool)
+            .await;
+
+            Err((
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "ok": false,
+                    "error": e.clone(),
+                    "mensaje": format!("Error enviando plantilla a {}: {}", dest.nombre, e),
+                })),
+            ))
+        }
+    }
 }
 
 pub async fn toggle_destinatario(

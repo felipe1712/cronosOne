@@ -103,6 +103,19 @@ export default function ConfiguracionPage() {
     error?: string;
   } | null>(null);
 
+  // Estados para Plantillas de WhatsApp (Meta WABA 24h Window)
+  const [whatsappTemplateName, setWhatsappTemplateName] = useState<string>("hello_world");
+  const [whatsappTemplateLanguage, setWhatsappTemplateLanguage] = useState<string>("es_MX");
+  const [testingTemplate, setTestingTemplate] = useState<boolean>(false);
+  const [templateTestResult, setTemplateTestResult] = useState<{
+    ok: boolean;
+    latency_ms?: number;
+    mensaje: string;
+    error?: string;
+  } | null>(null);
+  const [formEnviarPlantilla, setFormEnviarPlantilla] = useState<boolean>(true);
+  const [sendingTemplateId, setSendingTemplateId] = useState<string | null>(null);
+
   // Estados para Lista de Distribución y Mini Administrador de Grupos
   const [destinatarios, setDestinatarios] = useState<Destinatario[]>([]);
   const [grupos, setGrupos] = useState<GrupoDistribucion[]>([]);
@@ -200,6 +213,13 @@ export default function ConfiguracionPage() {
         } else {
           setDirectorWhatsappPhone("");
         }
+
+        if (data.whatsapp_template_name) {
+          setWhatsappTemplateName(data.whatsapp_template_name);
+        }
+        if (data.whatsapp_template_language) {
+          setWhatsappTemplateLanguage(data.whatsapp_template_language);
+        }
       }
       if (dests) {
         setDestinatarios(dests);
@@ -239,6 +259,7 @@ export default function ConfiguracionPage() {
     setFormCargo("");
     setFormNotas("");
     setFormActivo(true);
+    setFormEnviarPlantilla(true);
     setFormGrupoIds(selectedGrupoFilter !== "all" ? [selectedGrupoFilter] : []);
     setModalOpen(true);
   };
@@ -250,6 +271,7 @@ export default function ConfiguracionPage() {
     setFormCargo(d.cargo || "");
     setFormNotas(d.notas || "");
     setFormActivo(d.activo);
+    setFormEnviarPlantilla(false);
     setFormGrupoIds((d.grupos || []).map((g) => g.id));
     setModalOpen(true);
   };
@@ -284,15 +306,24 @@ export default function ConfiguracionPage() {
         });
         setSuccessMsg(`Destinatario "${formNombre}" actualizado exitosamente.`);
       } else {
-        await ApiService.createDestinatario({
+        const res = await ApiService.createDestinatario({
           nombre: formNombre.trim(),
           telefono: formTelefono.trim(),
           cargo: formCargo.trim() || undefined,
           notas: formNotas.trim() || undefined,
           activo: formActivo,
           grupo_ids: formGrupoIds,
+          enviar_plantilla: formEnviarPlantilla,
+          template_name: whatsappTemplateName.trim() || undefined,
+          template_language: whatsappTemplateLanguage.trim() || undefined,
         });
-        setSuccessMsg(`Destinatario "${formNombre}" agregado a la lista de distribución.`);
+        if (res.plantilla_enviada) {
+          setSuccessMsg(`✅ Destinatario "${formNombre}" creado y plantilla oficial de WhatsApp enviada exitosamente (Ventana 24h activada).`);
+        } else if (res.plantilla_error) {
+          setSuccessMsg(`⚠️ Destinatario "${formNombre}" creado. Aviso: No se pudo enviar la plantilla (${res.plantilla_error}).`);
+        } else {
+          setSuccessMsg(`Destinatario "${formNombre}" agregado a la lista de distribución.`);
+        }
       }
       setModalOpen(false);
       await loadDestinatarios();
@@ -483,6 +514,8 @@ export default function ConfiguracionPage() {
         kapso_api_key: cleanKey,
         kapso_phone_number_id: cleanPhoneId,
         director_whatsapp_phone: cleanPhone,
+        whatsapp_template_name: whatsappTemplateName.trim(),
+        whatsapp_template_language: whatsappTemplateLanguage.trim(),
       });
       setSuccessMsg("Configuración de WhatsApp guardada exitosamente en el sistema.");
 
@@ -501,6 +534,8 @@ export default function ConfiguracionPage() {
           setDirectorWhatsappPhone(data.director_whatsapp_phone);
           if (typeof window !== "undefined") localStorage.setItem("exposureiq_director_phone", data.director_whatsapp_phone);
         }
+        if (data.whatsapp_template_name) setWhatsappTemplateName(data.whatsapp_template_name);
+        if (data.whatsapp_template_language) setWhatsappTemplateLanguage(data.whatsapp_template_language);
         if (data.whatsapp_provider) setWhatsappProvider(data.whatsapp_provider);
       }
     } catch (err: any) {
@@ -531,6 +566,53 @@ export default function ConfiguracionPage() {
       });
     } finally {
       setTestingWhatsapp(false);
+    }
+  };
+
+  const handleTestTemplate = async () => {
+    try {
+      setTestingTemplate(true);
+      setTemplateTestResult(null);
+      setErrorMsg(null);
+      const res = await ApiService.testTemplate({
+        phone: directorWhatsappPhone,
+        template_name: whatsappTemplateName,
+        template_language: whatsappTemplateLanguage,
+        api_key: kapsoApiKey,
+        phone_number_id: kapsoPhoneNumberId,
+      });
+      setTemplateTestResult(res);
+    } catch (err: any) {
+      console.error("Error probando plantilla de WhatsApp:", err);
+      setTemplateTestResult({
+        ok: false,
+        mensaje: `Error al probar plantilla: ${err.message}`,
+      });
+    } finally {
+      setTestingTemplate(false);
+    }
+  };
+
+  const handleEnviarPlantilla = async (d: Destinatario) => {
+    try {
+      setSendingTemplateId(d.id);
+      setErrorMsg(null);
+      setSuccessMsg(null);
+      const res = await ApiService.enviarPlantillaDestinatario(d.id, {
+        template_name: whatsappTemplateName,
+        template_language: whatsappTemplateLanguage,
+        api_key: kapsoApiKey,
+        phone_number_id: kapsoPhoneNumberId,
+      });
+      if (res.ok) {
+        setSuccessMsg(`✅ Plantilla enviada con éxito a ${d.nombre} (${d.telefono}). Ventana de 24h Meta activada.`);
+      } else {
+        setErrorMsg(`Fallo al enviar plantilla a ${d.nombre}: ${res.error || res.mensaje}`);
+      }
+    } catch (err: any) {
+      setErrorMsg(`Error enviando plantilla a ${d.nombre}: ${err.message}`);
+    } finally {
+      setSendingTemplateId(null);
     }
   };
 
@@ -1096,24 +1178,82 @@ export default function ConfiguracionPage() {
                           helperText="ID numérico asignado en dashboard.kapso.ai → WhatsApp → Phone numbers"
                         />
                       </Grid>
+
+                      {/* Plantilla Oficial de Apertura (Meta WABA / Ventana 24h) */}
+                      <Grid size={{ xs: 12 }}>
+                        <Box sx={{ p: 2.5, bgcolor: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "10px" }}>
+                          <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5 }}>
+                            <WhatsAppIcon sx={{ color: "#16a34a", fontSize: 20 }} />
+                            <Typography variant="subtitle2" sx={{ fontWeight: 700, color: "#166534" }}>
+                              Plantilla Oficial de Apertura (Meta Cloud API / WABA)
+                            </Typography>
+                          </Box>
+                          <Typography variant="caption" sx={{ color: "#15803d", display: "block", mb: 2, lineHeight: 1.4 }}>
+                            Meta exige que el primer mensaje a cualquier contacto —o a contactos inactivos por más de 24 horas— sea una <strong>plantilla pre-aprobada</strong>. Una vez que el contacto responda, se abre la ventana de 24 horas para recibir briefings y alertas en texto libre.
+                          </Typography>
+                          <Grid container spacing={2}>
+                            <Grid size={{ xs: 12, sm: 8 }}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Nombre Exacto de la Plantilla WABA"
+                                value={whatsappTemplateName}
+                                onChange={(e) => setWhatsappTemplateName(e.target.value)}
+                                placeholder="hello_world"
+                                helperText="Ej: hello_world (plantilla estándar de Meta) o el nombre aprobado en tu panel WABA"
+                              />
+                            </Grid>
+                            <Grid size={{ xs: 12, sm: 4 }}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Código de Idioma"
+                                value={whatsappTemplateLanguage}
+                                onChange={(e) => setWhatsappTemplateLanguage(e.target.value)}
+                                placeholder="es_MX"
+                                helperText="Ej. es_MX o en_US"
+                              />
+                            </Grid>
+                          </Grid>
+                        </Box>
+                      </Grid>
                     </Grid>
 
                     <Divider sx={{ my: 3 }} />
 
-                    {/* Resultado del test de WhatsApp */}
+                    {/* Resultado del test de WhatsApp Texto Libre */}
                     {whatsappTestResult && (
                       <Alert
                         severity={whatsappTestResult.ok ? "success" : "error"}
-                        sx={{ mb: 3 }}
+                        sx={{ mb: 2 }}
                         icon={whatsappTestResult.ok ? <CheckCircleIcon /> : <ErrorOutlineIcon />}
                       >
                         <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                          {whatsappTestResult.ok ? "Mensaje Enviado con Éxito a WhatsApp" : "Fallo en la Conexión de WhatsApp"}
+                          {whatsappTestResult.ok ? "Mensaje de Texto Libre Enviado con Éxito" : "Fallo en Mensaje de Texto Libre"}
                         </Typography>
                         <Typography variant="body2">{whatsappTestResult.mensaje}</Typography>
                         {whatsappTestResult.latency_ms && (
                           <Typography variant="caption" sx={{ display: "block", mt: 0.5, color: "#64748b" }}>
                             Latencia de entrega a Meta: {whatsappTestResult.latency_ms} ms
+                          </Typography>
+                        )}
+                      </Alert>
+                    )}
+
+                    {/* Resultado del test de Plantilla */}
+                    {templateTestResult && (
+                      <Alert
+                        severity={templateTestResult.ok ? "success" : "error"}
+                        sx={{ mb: 3 }}
+                        icon={templateTestResult.ok ? <CheckCircleIcon /> : <ErrorOutlineIcon />}
+                      >
+                        <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                          {templateTestResult.ok ? "Plantilla Oficial Despachada con Éxito" : "Fallo en Despacho de Plantilla Oficial"}
+                        </Typography>
+                        <Typography variant="body2">{templateTestResult.mensaje}</Typography>
+                        {templateTestResult.latency_ms && (
+                          <Typography variant="caption" sx={{ display: "block", mt: 0.5, color: "#64748b" }}>
+                            Latencia de entrega a Meta: {templateTestResult.latency_ms} ms
                           </Typography>
                         )}
                       </Alert>
@@ -1126,7 +1266,7 @@ export default function ConfiguracionPage() {
                         color="primary"
                         startIcon={<SaveIcon />}
                         onClick={handleSaveWhatsapp}
-                        disabled={savingWhatsapp || testingWhatsapp}
+                        disabled={savingWhatsapp || testingWhatsapp || testingTemplate}
                         sx={{ fontWeight: 600, px: 3, textTransform: "none", borderRadius: "8px" }}
                       >
                         {savingWhatsapp ? "Guardando..." : "Guardar Configuración WhatsApp"}
@@ -1135,12 +1275,23 @@ export default function ConfiguracionPage() {
                       <Button
                         variant="outlined"
                         color="success"
-                        startIcon={testingWhatsapp ? <CircularProgress size={18} /> : <SendIcon />}
-                        onClick={handleTestWhatsapp}
-                        disabled={testingWhatsapp || savingWhatsapp || !kapsoApiKey.trim() || !kapsoPhoneNumberId.trim()}
+                        startIcon={testingTemplate ? <CircularProgress size={18} /> : <WhatsAppIcon />}
+                        onClick={handleTestTemplate}
+                        disabled={testingTemplate || testingWhatsapp || savingWhatsapp || !kapsoApiKey.trim() || !kapsoPhoneNumberId.trim()}
                         sx={{ fontWeight: 600, px: 2.5, textTransform: "none", borderRadius: "8px" }}
                       >
-                        {testingWhatsapp ? "Enviando mensaje de prueba..." : "Enviar Mensaje de Prueba"}
+                        {testingTemplate ? "Probando Plantilla..." : "Probar Envío de Plantilla"}
+                      </Button>
+
+                      <Button
+                        variant="outlined"
+                        color="inherit"
+                        startIcon={testingWhatsapp ? <CircularProgress size={18} /> : <SendIcon />}
+                        onClick={handleTestWhatsapp}
+                        disabled={testingWhatsapp || testingTemplate || savingWhatsapp || !kapsoApiKey.trim() || !kapsoPhoneNumberId.trim()}
+                        sx={{ fontWeight: 600, px: 2.5, textTransform: "none", borderRadius: "8px", borderColor: "#cbd5e1" }}
+                      >
+                        {testingWhatsapp ? "Enviando mensaje..." : "Probar Texto Libre (24h)"}
                       </Button>
                     </Box>
                   </CardContent>
@@ -1533,6 +1684,18 @@ export default function ConfiguracionPage() {
 
                             <TableCell align="right">
                               <Box sx={{ display: "flex", justifyContent: "flex-end", gap: 0.5 }}>
+                                <Tooltip title="Enviar plantilla oficial (Abrir ventana 24h Meta)">
+                                  <span>
+                                    <IconButton
+                                      size="small"
+                                      disabled={sendingTemplateId === d.id}
+                                      onClick={() => handleEnviarPlantilla(d)}
+                                      sx={{ color: "#16a34a" }}
+                                    >
+                                      {sendingTemplateId === d.id ? <CircularProgress size={16} color="inherit" /> : <WhatsAppIcon fontSize="small" />}
+                                    </IconButton>
+                                  </span>
+                                </Tooltip>
                                 <Tooltip title="Enviar mensaje de prueba vía Kapso">
                                   <span>
                                     <IconButton
@@ -1697,6 +1860,30 @@ export default function ConfiguracionPage() {
                 </Typography>
               }
             />
+
+            {!editingDestinatario && (
+              <Box sx={{ p: 2, backgroundColor: "#f0fdf4", borderRadius: "8px", border: "1px solid #bbf7d0" }}>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={formEnviarPlantilla}
+                      onChange={(e) => setFormEnviarPlantilla(e.target.checked)}
+                      color="success"
+                    />
+                  }
+                  label={
+                    <Box>
+                      <Typography variant="body2" sx={{ fontWeight: 700, color: "#166534" }}>
+                        Enviar plantilla oficial de WhatsApp de inmediato
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: "#15803d", display: "block" }}>
+                        Despacha la plantilla ({whatsappTemplateName || "hello_world"}) para iniciar la conversación y abrir la ventana de 24 horas requerida por Meta.
+                      </Typography>
+                    </Box>
+                  }
+                />
+              </Box>
+            )}
           </Box>
         </DialogContent>
         <DialogActions sx={{ p: 2, gap: 1 }}>
