@@ -535,6 +535,10 @@ pub async fn procesar_boletin(
 // ============================================================================
 
 pub async fn ensure_sintesis_diarias_schema(pool: &DbPool) {
+    let _ = sqlx::query("CREATE EXTENSION IF NOT EXISTS \"pgcrypto\"")
+        .execute(pool)
+        .await;
+
     if let Err(e) = sqlx::query(
         "CREATE TABLE IF NOT EXISTS sintesis_diarias (
             id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -596,7 +600,7 @@ pub async fn list_fechas_sintesis(
         actualizado_en: Option<chrono::DateTime<Utc>>,
     }
 
-    let rows = sqlx::query_as::<_, ResumenDbRow>(
+    let rows = match sqlx::query_as::<_, ResumenDbRow>(
         "SELECT 
             b.fecha_boletin AS fecha,
             COUNT(b.id) AS total_documentos,
@@ -617,13 +621,56 @@ pub async fn list_fechas_sintesis(
     .bind(limit)
     .bind(offset)
     .fetch_all(&pool)
-    .await
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("Error al obtener fechas de síntesis: {}", e)})),
-        )
-    })?;
+    .await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("Aviso listando fechas con sintesis_diarias: {}. Reintentando con consulta base...", e);
+            ensure_sintesis_diarias_schema(&pool).await;
+
+            #[derive(sqlx::FromRow)]
+            struct SimpleResumenRow {
+                fecha: NaiveDate,
+                total_documentos: i64,
+                total_paginas: i64,
+                actualizado_en: Option<chrono::DateTime<Utc>>,
+            }
+
+            let s_rows = sqlx::query_as::<_, SimpleResumenRow>(
+                "SELECT 
+                    fecha_boletin AS fecha,
+                    COUNT(id) AS total_documentos,
+                    COALESCE(SUM(total_paginas), 0) AS total_paginas,
+                    MAX(actualizado_en) AS actualizado_en
+                 FROM boletines
+                 GROUP BY fecha_boletin
+                 ORDER BY fecha_boletin DESC
+                 LIMIT $1 OFFSET $2",
+            )
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&pool)
+            .await
+            .map_err(|err| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": format!("Error al obtener fechas de síntesis: {}", err)})),
+                )
+            })?;
+
+            s_rows.into_iter().map(|r| ResumenDbRow {
+                fecha: r.fecha,
+                total_documentos: r.total_documentos,
+                total_senado: 0,
+                total_manual: r.total_documentos,
+                total_paginas: r.total_paginas,
+                sintesis_id: None,
+                estado_sintesis: Some("pendiente".to_string()),
+                texto_preview: None,
+                modelo_usado: None,
+                actualizado_en: r.actualizado_en,
+            }).collect()
+        }
+    };
 
     let result: Vec<SintesisDiariaResumen> = rows
         .into_iter()
@@ -657,21 +704,22 @@ pub async fn get_workspace_fecha(
         )
     })?;
 
-    // 1. Obtener la síntesis diaria si ya existe
-    let sintesis = sqlx::query_as::<_, SintesisDiaria>(
+    // 1. Obtener la síntesis diaria si ya existe (no abortar si la tabla aún se está creando)
+    let sintesis = match sqlx::query_as::<_, SintesisDiaria>(
         "SELECT id, fecha, texto, temas, documentos_ids, estado, modelo_usado, tokens_usados, aprobado_por, creado_en, actualizado_en
          FROM sintesis_diarias
          WHERE fecha = $1",
     )
     .bind(fecha)
     .fetch_optional(&pool)
-    .await
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("Error consultando síntesis diaria: {}", e)})),
-        )
-    })?;
+    .await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("Aviso consultando síntesis diaria para {}: {}. Intentando asegurar esquema...", fecha, e);
+            ensure_sintesis_diarias_schema(&pool).await;
+            None
+        }
+    };
 
     // 2. Obtener todos los boletines de esa fecha
     #[derive(sqlx::FromRow)]
@@ -688,7 +736,7 @@ pub async fn get_workspace_fecha(
         creado_en: chrono::DateTime<Utc>,
     }
 
-    let docs_rows = sqlx::query_as::<_, BoletinRow>(
+    let docs_rows = match sqlx::query_as::<_, BoletinRow>(
         "SELECT id, fecha_boletin, nombre_archivo, ruta_archivo, estado, origen, incluido_en_sintesis, total_paginas, error_mensaje, creado_en
          FROM boletines
          WHERE fecha_boletin = $1
@@ -696,13 +744,54 @@ pub async fn get_workspace_fecha(
     )
     .bind(fecha)
     .fetch_all(&pool)
-    .await
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": format!("Error consultando documentos de la fecha: {}", e)})),
-        )
-    })?;
+    .await {
+        Ok(rows) => rows,
+        Err(e) => {
+            tracing::warn!("Aviso consultando boletines con origen para {}: {}. Reintentando con consulta básica...", fecha, e);
+            ensure_sintesis_diarias_schema(&pool).await;
+
+            #[derive(sqlx::FromRow)]
+            struct FallbackBoletinRow {
+                id: Uuid,
+                fecha_boletin: NaiveDate,
+                nombre_archivo: String,
+                ruta_archivo: String,
+                estado: String,
+                total_paginas: Option<i32>,
+                error_mensaje: Option<String>,
+                creado_en: chrono::DateTime<Utc>,
+            }
+
+            let fb_rows = sqlx::query_as::<_, FallbackBoletinRow>(
+                "SELECT id, fecha_boletin, nombre_archivo, ruta_archivo, estado, total_paginas, error_mensaje, creado_en
+                 FROM boletines
+                 WHERE fecha_boletin = $1
+                 ORDER BY creado_en ASC",
+            )
+            .bind(fecha)
+            .fetch_all(&pool)
+            .await
+            .map_err(|err| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": format!("Error consultando documentos de la fecha: {}", err)})),
+                )
+            })?;
+
+            fb_rows.into_iter().map(|r| BoletinRow {
+                id: r.id,
+                fecha_boletin: r.fecha_boletin,
+                nombre_archivo: r.nombre_archivo,
+                ruta_archivo: r.ruta_archivo,
+                estado: r.estado,
+                origen: Some("manual".to_string()),
+                incluido_en_sintesis: Some(true),
+                total_paginas: r.total_paginas,
+                error_mensaje: r.error_mensaje,
+                creado_en: r.creado_en,
+            }).collect()
+        }
+    };
 
     let mut total_incluidos = 0;
     let documentos: Vec<BoletinEnWorkspace> = docs_rows

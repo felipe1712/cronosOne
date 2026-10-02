@@ -247,6 +247,17 @@ export default function BoletinesPage() {
           clearInterval(scraperPollingRef.current);
           scraperPollingRef.current = null;
         }
+        if (st.archivos_descargados && st.archivos_descargados.length > 0) {
+          setSuccess(
+            `✅ Sincronización completada: se descargaron y procesaron ${st.archivos_descargados.length} documentos del Senado para ${st.fecha_objetivo || fechaTrabajo}.`
+          );
+        } else if (st.errores && st.errores.length > 0) {
+          setError(
+            `⚠️ El portal del Senado no tiene documentos disponibles para la fecha ${st.fecha_objetivo || fechaTrabajo} (${st.errores[0]}). Puede cargar documentos manualmente con el botón "Subir Documentos".`
+          );
+        } else {
+          setSuccess(`Sincronización del Senado concluida.`);
+        }
         fetchWorkspace(fechaTrabajo);
         fetchHistorial();
       }

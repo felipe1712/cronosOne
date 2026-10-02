@@ -232,6 +232,8 @@ async def run_senado_scraper_pipeline(fecha_param: Optional[str] = None, seccion
     print(f"[Scraper Senado] ========================================================")
 
     upload_dir = get_target_upload_dir(fecha_iso)
+    from db import ensure_database_schema
+    ensure_database_schema()
     from main import run_bulletin_pipeline
 
     try:

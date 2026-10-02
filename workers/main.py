@@ -5,7 +5,7 @@ from fastapi import FastAPI, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from config import settings
-from db import get_db_connection
+from db import get_db_connection, ensure_database_schema
 from surya_client import process_pdf_ocr
 from segmentation import segment_bulletin
 from llm_synthesis import generate_executive_brief
@@ -16,6 +16,10 @@ app = FastAPI(
     description="Servicios de fondo: Ingesta OCR, Síntesis LLM y Motor OSINT",
     version="1.0.0"
 )
+
+@app.on_event("startup")
+async def on_startup():
+    ensure_database_schema()
 
 class ProcessBoletinRequest(BaseModel):
     boletin_id: str
