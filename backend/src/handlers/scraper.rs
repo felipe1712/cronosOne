@@ -83,3 +83,34 @@ pub async fn get_scraper_senado_status(
         }
     }
 }
+
+/// Obtiene el catálogo de secciones disponibles del Senado
+pub async fn get_scraper_senado_secciones(
+    State((_pool, config)): State<(DbPool, Arc<Config>)>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let worker_url = format!("{}/api/senado/secciones", config.worker_base_url);
+    let client = reqwest::Client::new();
+
+    match client.get(&worker_url).send().await {
+        Ok(resp) => {
+            let res_json: serde_json::Value = resp.json().await.unwrap_or_else(|_| json!([]));
+            Ok((StatusCode::OK, Json(res_json)))
+        }
+        Err(_) => {
+            // Catálogo por defecto de las 10 secciones del Senado
+            Ok((StatusCode::OK, Json(json!([
+                {"id": "portada", "nombre": "Síntesis Digital Informativa", "archivo": "SINTESIS.pdf", "orden": 1},
+                {"id": "primeras_planas", "nombre": "Primeras Planas", "archivo": "PRIMERASPLANAS.pdf", "orden": 2},
+                {"id": "primeras_planas_int", "nombre": "Primeras Planas Internacionales", "archivo": "PRIMERASPLANASINTERNACIONALES.pdf", "orden": 3},
+                {"id": "redes", "nombre": "Redes", "archivo": "REDES.pdf", "orden": 4},
+                {"id": "senado", "nombre": "Senado", "archivo": "SENADO.pdf", "orden": 5},
+                {"id": "senadores_escriben", "nombre": "Senadores Escriben", "archivo": "SENADORESESCRIBEN.pdf", "orden": 6},
+                {"id": "columnas_senado", "nombre": "Columnas Senado", "archivo": "COLUMNAS_S.pdf", "orden": 7},
+                {"id": "diputados", "nombre": "Diputados", "archivo": "DIPUTADOS.pdf", "orden": 8},
+                {"id": "panorama_nacional", "nombre": "Panorama Nacional", "archivo": "PANORAMANACIONAL.pdf", "orden": 9},
+                {"id": "columnas", "nombre": "Columnas", "archivo": "COLUMNAS.pdf", "orden": 10}
+            ]))))
+        }
+    }
+}
+

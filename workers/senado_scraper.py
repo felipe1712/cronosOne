@@ -170,16 +170,16 @@ async def acquire_browser(p) -> tuple[Browser, BrowserContext, str]:
     )
     return browser, ctx, "chromium_headless"
 
-async def run_senado_scraper_pipeline(fecha_param: Optional[str] = None) -> Dict[str, Any]:
+async def run_senado_scraper_pipeline(fecha_param: Optional[str] = None, secciones_param: Optional[List[str]] = None) -> Dict[str, Any]:
     """
     Ejecuta el ciclo completo de descarga del Senado:
     1. Resuelve la fecha objetivo (YYYY-MM-DD).
     2. Inicia el Headless Browser (Lightpanda o Chromium).
-    3. Descarga las 10 secciones de PDF (excluyendo Cartones).
+    3. Descarga las secciones seleccionadas de PDF (excluyendo Cartones).
     4. Guarda los archivos en disco.
-    5. Inserta en la base de datos PostgreSQL.
-    6. Dispara el procesamiento OCR y la síntesis Claude.
-    7. Marca el estado en 'sintesis_lista' para el visto bueno humano.
+    5. Inserta en la base de datos PostgreSQL con origen='senado' e incluido_en_sintesis=TRUE.
+    6. Dispara el procesamiento OCR y la segmentación.
+    7. Deja el documento listo para la síntesis consolidada del día.
     """
     global scraper_status
     if scraper_status["en_progreso"]:
@@ -205,16 +205,30 @@ async def run_senado_scraper_pipeline(fecha_param: Optional[str] = None) -> Dict
     fecha_iso = f"{yyyy}-{mm}-{dd}"
     fecha_slash = f"{yyyy}/{mm}/{dd}"
 
+    # Filtrar secciones si se especificaron
+    secciones_a_descargar = SECCIONES_SENADO
+    if secciones_param and len(secciones_param) > 0:
+        sec_targets = {str(s).strip().lower() for s in secciones_param}
+        filtered = [
+            s for s in SECCIONES_SENADO
+            if s["id"].lower() in sec_targets
+            or s["archivo"].lower() in sec_targets
+            or s["nombre"].lower() in sec_targets
+        ]
+        if filtered:
+            secciones_a_descargar = filtered
+
     scraper_status["en_progreso"] = True
     scraper_status["fecha_objetivo"] = fecha_iso
     scraper_status["archivos_descargados"] = []
     scraper_status["archivos_procesados"] = []
     scraper_status["errores"] = []
     scraper_status["ultimo_inicio"] = datetime.now().isoformat()
-    scraper_status["mensaje"] = f"Iniciando descarga de síntesis del Senado para {fecha_iso}..."
+    scraper_status["mensaje"] = f"Iniciando descarga de {len(secciones_a_descargar)} secciones del Senado para {fecha_iso}..."
 
     print(f"\n[Scraper Senado] ========================================================")
     print(f"[Scraper Senado] Iniciando trabajo para la fecha: {fecha_iso} ({fecha_slash})")
+    print(f"[Scraper Senado] Secciones a descargar: {len(secciones_a_descargar)} de {len(SECCIONES_SENADO)}")
     print(f"[Scraper Senado] ========================================================")
 
     upload_dir = get_target_upload_dir(fecha_iso)
@@ -250,9 +264,9 @@ async def run_senado_scraper_pipeline(fecha_param: Optional[str] = None) -> Dict
                 "Cookie": cookie_header
             }
 
-            # 2. Descargar cada una de las 10 secciones
+            # 2. Descargar las secciones seleccionadas
             async with httpx.AsyncClient(headers=headers, timeout=60.0, follow_redirects=True) as http_client:
-                for sec in SECCIONES_SENADO:
+                for sec in secciones_a_descargar:
                     sec_id = sec["id"]
                     sec_nombre = sec["nombre"]
                     sec_archivo = sec["archivo"]
@@ -323,15 +337,24 @@ async def run_senado_scraper_pipeline(fecha_param: Optional[str] = None) -> Dict
 
                         if existente:
                             boletin_id = str(existente["id"])
-                            print(f"[Scraper Senado] Boletín ya registrado previamente (ID: {boletin_id}). Reprocesando...")
+                            print(f"[Scraper Senado] Boletín ya registrado previamente (ID: {boletin_id}). Actualizando origen e inclusión...")
+                            cur.execute(
+                                """
+                                UPDATE boletines
+                                SET origen = 'senado', incluido_en_sintesis = TRUE, actualizado_en = now()
+                                WHERE id = %s
+                                """,
+                                (boletin_id,)
+                            )
+                            conn.commit()
                         else:
                             import uuid
                             boletin_id = str(uuid.uuid4())
                             nombre_descriptivo = f"Senado — {sec_nombre} ({fecha_iso})"
                             cur.execute(
                                 """
-                                INSERT INTO boletines (id, fecha_boletin, nombre_archivo, ruta_archivo, estado)
-                                VALUES (%s, %s, %s, %s, 'pendiente_ocr')
+                                INSERT INTO boletines (id, fecha_boletin, nombre_archivo, ruta_archivo, estado, origen, incluido_en_sintesis)
+                                VALUES (%s, %s, %s, %s, 'pendiente_ocr', 'senado', TRUE)
                                 RETURNING id
                                 """,
                                 (boletin_id, fecha_iso, nombre_descriptivo, os.path.abspath(file_path))

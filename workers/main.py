@@ -155,6 +155,7 @@ async def test_claude_endpoint(payload: TestClaudeRequest):
 
 class ScrapeSenadoRequest(BaseModel):
     fecha: Optional[str] = None
+    secciones: Optional[list[str]] = None
 
 @app.post("/api/scrape-senado")
 async def scrape_senado_endpoint(payload: Optional[ScrapeSenadoRequest] = None, background_tasks: BackgroundTasks = None):
@@ -167,22 +168,197 @@ async def scrape_senado_endpoint(payload: Optional[ScrapeSenadoRequest] = None, 
             "detalles": status
         }
     fecha = payload.fecha if payload else None
+    secciones = payload.secciones if payload else None
     if background_tasks:
-        background_tasks.add_task(run_senado_scraper_pipeline, fecha)
+        background_tasks.add_task(run_senado_scraper_pipeline, fecha, secciones)
     else:
         import asyncio
-        asyncio.create_task(run_senado_scraper_pipeline(fecha))
+        asyncio.create_task(run_senado_scraper_pipeline(fecha, secciones))
 
     return {
         "status": "encolado",
         "mensaje": f"Scraper del Senado iniciado en segundo plano para la fecha {fecha or 'más reciente'}",
-        "fecha": fecha
+        "fecha": fecha,
+        "secciones": secciones
     }
 
 @app.get("/api/scrape-senado/status")
 def scrape_senado_status_endpoint():
     from senado_scraper import get_scraper_status
     return get_scraper_status()
+
+@app.get("/api/senado/secciones")
+def get_senado_secciones_endpoint():
+    from senado_scraper import SECCIONES_SENADO
+    return SECCIONES_SENADO
+
+class ConsolidarSintesisDiariaRequest(BaseModel):
+    fecha: str
+    documentos_ids: Optional[list[str]] = None
+
+@app.post("/api/consolidar-sintesis-diaria")
+async def consolidar_sintesis_diaria_endpoint(payload: ConsolidarSintesisDiariaRequest):
+    """
+    Consolida las secciones de todos los boletines seleccionados para una fecha dada
+    y genera una única síntesis ejecutiva del día mediante Claude LLM.
+    Guarda el resultado en la tabla 'sintesis_diarias'.
+    """
+    fecha = payload.fecha.strip()
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        # Asegurar esquema de sintesis_diarias y columnas requeridas
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS sintesis_diarias (
+                id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                fecha           DATE UNIQUE NOT NULL,
+                texto           TEXT NOT NULL DEFAULT '',
+                temas           TEXT[] DEFAULT '{}',
+                documentos_ids  UUID[] DEFAULT '{}',
+                estado          VARCHAR(30) NOT NULL DEFAULT 'borrador',
+                modelo_usado    VARCHAR(50) DEFAULT 'claude-sonnet-4-5-20250929',
+                tokens_usados   INT,
+                aprobado_por    UUID,
+                creado_en       TIMESTAMPTZ NOT NULL DEFAULT now(),
+                actualizado_en  TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
+            ALTER TABLE boletines ADD COLUMN IF NOT EXISTS incluido_en_sintesis BOOLEAN NOT NULL DEFAULT TRUE;
+            ALTER TABLE boletines ADD COLUMN IF NOT EXISTS origen VARCHAR(50) NOT NULL DEFAULT 'manual';
+            ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS temas TEXT[] DEFAULT '{}';
+        """)
+        conn.commit()
+
+        # Obtener los boletines objetivo
+        if payload.documentos_ids and len(payload.documentos_ids) > 0:
+            cur.execute(
+                """
+                SELECT id, nombre_archivo, ruta_archivo, origen, estado, total_paginas
+                FROM boletines
+                WHERE id = ANY(%s::uuid[])
+                ORDER BY creado_en ASC
+                """,
+                (payload.documentos_ids,)
+            )
+        else:
+            cur.execute(
+                """
+                SELECT id, nombre_archivo, ruta_archivo, origen, estado, total_paginas
+                FROM boletines
+                WHERE fecha_boletin = %s AND (incluido_en_sintesis = TRUE OR incluido_en_sintesis IS NULL)
+                ORDER BY creado_en ASC
+                """,
+                (fecha,)
+            )
+        boletines = cur.fetchall()
+
+        if not boletines:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No hay boletines seleccionados o disponibles para la fecha {fecha}"
+            )
+
+        # Preparar documentos y sus secciones
+        documentos_data = []
+        doc_uuids = []
+
+        for b in boletines:
+            b_id = str(b["id"])
+            doc_uuids.append(b_id)
+            doc_nombre = b["nombre_archivo"] or f"Boletín {b_id[:8]}"
+            doc_origen = b.get("origen", "manual") or "manual"
+
+            # Buscar secciones ya procesadas
+            cur.execute(
+                """
+                SELECT tema, contenido, pagina_inicio, pagina_fin, orden
+                FROM secciones
+                WHERE boletin_id = %s
+                ORDER BY orden ASC
+                """,
+                (b_id,)
+            )
+            secs = cur.fetchall()
+
+            # Si el documento aún no tiene secciones y el archivo existe, intentar procesar OCR
+            if not secs and b.get("ruta_archivo") and os.path.exists(b["ruta_archivo"]):
+                try:
+                    print(f"[Consolidar] Procesando OCR para {doc_nombre} ({b_id})...")
+                    pages = await process_pdf_ocr(b["ruta_archivo"])
+                    if pages:
+                        secs_parsed = segment_bulletin(pages)
+                        for sec in secs_parsed:
+                            cur.execute(
+                                """
+                                INSERT INTO secciones (boletin_id, orden, tema, pagina_inicio, pagina_fin, contenido)
+                                VALUES (%s, %s, %s, %s, %s, %s)
+                                """,
+                                (b_id, sec["orden"], sec["tema"], sec["pagina_inicio"], sec["pagina_fin"], json.dumps(sec["contenido"]))
+                            )
+                        cur.execute(
+                            "UPDATE boletines SET estado = 'ocr_completo', total_paginas = %s WHERE id = %s",
+                            (len(pages), b_id)
+                        )
+                        conn.commit()
+                        secs = secs_parsed
+                except Exception as proc_err:
+                    print(f"[Consolidar] Advertencia: Error en OCR de {doc_nombre}: {proc_err}")
+
+            documentos_data.append({
+                "id": b_id,
+                "nombre": doc_nombre,
+                "origen": doc_origen,
+                "secciones": secs or []
+            })
+
+        from llm_synthesis import generate_consolidated_daily_brief
+        print(f"[Consolidar] Generando síntesis consolidada para {len(documentos_data)} documentos de {fecha}...")
+        brief_texto, detected_topics = await generate_consolidated_daily_brief(documentos_data, fecha)
+
+        # Upsert en sintesis_diarias
+        cur.execute(
+            """
+            INSERT INTO sintesis_diarias (fecha, texto, temas, documentos_ids, estado, modelo_usado, actualizado_en)
+            VALUES (%s, %s, %s, %s, 'sintesis_lista', %s, now())
+            ON CONFLICT (fecha) DO UPDATE
+            SET texto = EXCLUDED.texto,
+                temas = EXCLUDED.temas,
+                documentos_ids = EXCLUDED.documentos_ids,
+                estado = 'sintesis_lista',
+                modelo_usado = EXCLUDED.modelo_usado,
+                actualizado_en = now()
+            RETURNING id, fecha, texto, temas, documentos_ids, estado, modelo_usado, creado_en, actualizado_en
+            """,
+            (fecha, brief_texto, detected_topics, doc_uuids, settings.claude_model)
+        )
+        row = cur.fetchone()
+        conn.commit()
+
+        return {
+            "status": "completado",
+            "sintesis": {
+                "id": str(row["id"]),
+                "fecha": str(row["fecha"]),
+                "texto": row["texto"],
+                "temas": row["temas"] or [],
+                "documentos_ids": [str(u) for u in (row["documentos_ids"] or [])],
+                "estado": row["estado"],
+                "modelo_usado": row["modelo_usado"],
+                "creado_en": row["creado_en"].isoformat() if row.get("creado_en") else None,
+                "actualizado_en": row["actualizado_en"].isoformat() if row.get("actualizado_en") else None,
+            },
+            "documentos_procesados": len(documentos_data)
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        err_msg = f"Error al consolidar síntesis del día: {str(e)}\n{traceback.format_exc()}"
+        print(f"[Consolidar] ❌ {err_msg}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cur.close()
+        conn.close()
 
 
 if __name__ == "__main__":

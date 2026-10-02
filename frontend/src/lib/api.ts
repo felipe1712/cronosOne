@@ -143,6 +143,61 @@ export interface UpdateDestinatarioPayload {
   grupo_ids?: string[];
 }
 
+export interface SintesisDiariaResumen {
+  fecha: string;
+  total_documentos: number;
+  total_senado: number;
+  total_manual: number;
+  total_paginas: number;
+  sintesis_id?: string;
+  estado_sintesis?: string;
+  texto_preview?: string;
+  modelo_usado?: string;
+  actualizado_en?: string;
+}
+
+export interface BoletinEnWorkspace {
+  id: string;
+  fecha_boletin: string;
+  nombre_archivo: string;
+  ruta_archivo: string;
+  estado: string;
+  origen: string;
+  incluido_en_sintesis: boolean;
+  total_paginas?: number;
+  error_mensaje?: string;
+  creado_en: string;
+}
+
+export interface SintesisDiaria {
+  id: string;
+  fecha: string;
+  texto: string;
+  temas?: string[];
+  documentos_ids?: string[];
+  estado: string;
+  modelo_usado?: string;
+  tokens_usados?: number;
+  aprobado_por?: string;
+  creado_en: string;
+  actualizado_en: string;
+}
+
+export interface WorkspaceFechaResponse {
+  fecha: string;
+  documentos: BoletinEnWorkspace[];
+  sintesis?: SintesisDiaria;
+  total_documentos: number;
+  documentos_incluidos: number;
+}
+
+export interface SeccionSenado {
+  id: string;
+  nombre: string;
+  archivo: string;
+  orden: number;
+}
+
 // ============================================================================
 // Servicios de API
 // ============================================================================
@@ -342,6 +397,12 @@ export const ApiService = {
       body: JSON.stringify({ fecha }),
     }),
 
+  ejecutarScraperSenadoConSecciones: (fecha?: string, secciones?: string[]) =>
+    apiFetch<{ status: string; mensaje: string; fecha?: string }>('/scraper/senado/ejecutar', {
+      method: 'POST',
+      body: JSON.stringify({ fecha, secciones }),
+    }),
+
   getScraperSenadoStatus: () =>
     apiFetch<{
       en_progreso: boolean;
@@ -354,5 +415,48 @@ export const ApiService = {
       ultimo_fin?: string;
       mensaje: string;
     }>('/scraper/senado/status'),
+
+  getSeccionesSenado: () =>
+    apiFetch<SeccionSenado[]>('/scraper/senado/secciones'),
+
+  // Síntesis Diarias Consolidadas (Monitoreo Ejecutivo por Fecha)
+  getFechasSintesis: (limit = 30, offset = 0) =>
+    apiFetch<SintesisDiariaResumen[]>(`/sintesis-diarias?limit=${limit}&offset=${offset}`),
+
+  getWorkspaceFecha: (fecha: string) =>
+    apiFetch<WorkspaceFechaResponse>(`/sintesis-diarias/${fecha}`),
+
+  uploadMultipleBoletines: (formData: FormData) =>
+    apiFetch<{ mensaje: string; fecha: string; documentos: any[] }>('/boletines/upload-multiple', {
+      method: 'POST',
+      body: formData,
+    }),
+
+  toggleDocumentoSeleccion: (id: string, incluido: boolean) =>
+    apiFetch<{ id: string; incluido_en_sintesis: boolean }>(`/boletines/${id}/seleccion`, {
+      method: 'PATCH',
+      body: JSON.stringify({ incluido }),
+    }),
+
+  consolidarSintesisFecha: (fecha: string, documentos_ids?: string[]) =>
+    apiFetch<any>(`/sintesis-diarias/${fecha}/consolidar`, {
+      method: 'POST',
+      body: JSON.stringify({ documentos_ids }),
+    }),
+
+  actualizarSintesisDiaria: (fecha: string, texto: string) =>
+    apiFetch<SintesisDiaria>(`/sintesis-diarias/${fecha}`, {
+      method: 'PUT',
+      body: JSON.stringify({ texto }),
+    }),
+
+  aprobarSintesisDiaria: (fecha: string, texto: string, enviar_whatsapp = true) =>
+    apiFetch<{ mensaje: string; sintesis: SintesisDiaria; destinatarios_notificados: number }>(
+      `/sintesis-diarias/${fecha}/aprobar`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ texto, enviar_whatsapp }),
+      }
+    ),
 };
 

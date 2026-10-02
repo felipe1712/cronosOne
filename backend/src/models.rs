@@ -367,3 +367,81 @@ pub struct TestTemplatePayload {
     pub phone_number_id: Option<String>,
 }
 
+// ============================================================================
+// 6. Síntesis Diarias Consolidadas (Monitoreo Ejecutivo por Fecha)
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct SintesisDiaria {
+    pub id: Uuid,
+    pub fecha: NaiveDate,
+    pub texto: String,
+    pub temas: Option<Vec<String>>,
+    pub documentos_ids: Option<Vec<Uuid>>,
+    pub estado: String,
+    pub modelo_usado: Option<String>,
+    pub tokens_usados: Option<i32>,
+    pub aprobado_por: Option<Uuid>,
+    pub creado_en: DateTime<Utc>,
+    pub actualizado_en: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BoletinEnWorkspace {
+    pub id: Uuid,
+    pub fecha_boletin: NaiveDate,
+    pub nombre_archivo: String,
+    pub ruta_archivo: String,
+    pub estado: String,
+    pub origen: String,
+    pub incluido_en_sintesis: bool,
+    pub total_paginas: Option<i32>,
+    pub error_mensaje: Option<String>,
+    pub creado_en: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SintesisDiariaResumen {
+    pub fecha: NaiveDate,
+    pub total_documentos: i64,
+    pub total_senado: i64,
+    pub total_manual: i64,
+    pub total_paginas: i64,
+    pub sintesis_id: Option<Uuid>,
+    pub estado_sintesis: Option<String>,
+    pub texto_preview: Option<String>,
+    pub modelo_usado: Option<String>,
+    pub actualizado_en: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkspaceFechaResponse {
+    pub fecha: NaiveDate,
+    pub documentos: Vec<BoletinEnWorkspace>,
+    pub sintesis: Option<SintesisDiaria>,
+    pub total_documentos: usize,
+    pub documentos_incluidos: usize,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ToggleDocumentoSeleccionRequest {
+    pub incluido: bool,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct ConsolidarSintesisFechaRequest {
+    pub documentos_ids: Option<Vec<Uuid>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ActualizarSintesisDiariaRequest {
+    pub texto: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AprobarSintesisDiariaRequest {
+    pub texto: String,
+    pub enviar_whatsapp: Option<bool>,
+}
+
+

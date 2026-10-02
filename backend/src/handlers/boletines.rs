@@ -16,7 +16,12 @@ use crate::{
     config::Config,
     db::DbPool,
     middleware::auth::AuthContext,
-    models::{AprobarBoletinRequest, Boletin, BoletinDetailResponse, Seccion, SintesisGenerada, UpdateSintesisRequest},
+    models::{
+        ActualizarSintesisDiariaRequest, AprobarBoletinRequest, AprobarSintesisDiariaRequest,
+        Boletin, BoletinDetailResponse, BoletinEnWorkspace, ConsolidarSintesisFechaRequest,
+        Seccion, SintesisDiaria, SintesisDiariaResumen, SintesisGenerada,
+        ToggleDocumentoSeleccionRequest, UpdateSintesisRequest, WorkspaceFechaResponse,
+    },
 };
 
 #[derive(Debug, Deserialize)]
@@ -524,3 +529,593 @@ pub async fn procesar_boletin(
         })),
     ))
 }
+
+// ============================================================================
+// Métodos para Síntesis Diarias Consolidadas (Monitoreo Ejecutivo por Fecha)
+// ============================================================================
+
+pub async fn ensure_sintesis_diarias_schema(pool: &DbPool) {
+    let _ = sqlx::query(
+        "CREATE TABLE IF NOT EXISTS sintesis_diarias (
+            id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            fecha           DATE UNIQUE NOT NULL,
+            texto           TEXT NOT NULL DEFAULT '',
+            temas           TEXT[] DEFAULT '{}',
+            documentos_ids  UUID[] DEFAULT '{}',
+            estado          VARCHAR(30) NOT NULL DEFAULT 'borrador',
+            modelo_usado    VARCHAR(50) DEFAULT 'claude-sonnet-4-5-20250929',
+            tokens_usados   INT,
+            aprobado_por    UUID,
+            creado_en       TIMESTAMPTZ NOT NULL DEFAULT now(),
+            actualizado_en  TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        ALTER TABLE boletines ADD COLUMN IF NOT EXISTS incluido_en_sintesis BOOLEAN NOT NULL DEFAULT TRUE;
+        ALTER TABLE boletines ADD COLUMN IF NOT EXISTS origen VARCHAR(50) NOT NULL DEFAULT 'manual';
+        ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS temas TEXT[] DEFAULT '{}';"
+    )
+    .execute(pool)
+    .await;
+}
+
+pub async fn list_fechas_sintesis(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+    Query(query): Query<ListQuery>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    ensure_sintesis_diarias_schema(&pool).await;
+    let limit = query.limit.unwrap_or(30);
+    let offset = query.offset.unwrap_or(0);
+
+    #[derive(sqlx::FromRow)]
+    struct ResumenDbRow {
+        fecha: NaiveDate,
+        total_documentos: i64,
+        total_senado: i64,
+        total_manual: i64,
+        total_paginas: i64,
+        sintesis_id: Option<Uuid>,
+        estado_sintesis: Option<String>,
+        texto_preview: Option<String>,
+        modelo_usado: Option<String>,
+        actualizado_en: Option<chrono::DateTime<Utc>>,
+    }
+
+    let rows = sqlx::query_as::<_, ResumenDbRow>(
+        "SELECT 
+            b.fecha_boletin AS fecha,
+            COUNT(b.id) AS total_documentos,
+            COUNT(CASE WHEN b.origen = 'senado' THEN 1 END) AS total_senado,
+            COUNT(CASE WHEN b.origen != 'senado' THEN 1 END) AS total_manual,
+            COALESCE(SUM(b.total_paginas), 0) AS total_paginas,
+            sd.id AS sintesis_id,
+            COALESCE(sd.estado, 'pendiente') AS estado_sintesis,
+            SUBSTRING(sd.texto, 1, 160) AS texto_preview,
+            sd.modelo_usado,
+            COALESCE(sd.actualizado_en, MAX(b.actualizado_en)) AS actualizado_en
+         FROM boletines b
+         LEFT JOIN sintesis_diarias sd ON sd.fecha = b.fecha_boletin
+         GROUP BY b.fecha_boletin, sd.id, sd.estado, sd.texto, sd.modelo_usado, sd.actualizado_en
+         ORDER BY b.fecha_boletin DESC
+         LIMIT $1 OFFSET $2",
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error al obtener fechas de síntesis: {}", e)})),
+        )
+    })?;
+
+    let result: Vec<SintesisDiariaResumen> = rows
+        .into_iter()
+        .map(|r| SintesisDiariaResumen {
+            fecha: r.fecha,
+            total_documentos: r.total_documentos,
+            total_senado: r.total_senado,
+            total_manual: r.total_manual,
+            total_paginas: r.total_paginas,
+            sintesis_id: r.sintesis_id,
+            estado_sintesis: r.estado_sintesis,
+            texto_preview: r.texto_preview,
+            modelo_usado: r.modelo_usado,
+            actualizado_en: r.actualizado_en,
+        })
+        .collect();
+
+    Ok((StatusCode::OK, Json(json!(result))))
+}
+
+pub async fn get_workspace_fecha(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+    Path(fecha_str): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    ensure_sintesis_diarias_schema(&pool).await;
+
+    let fecha = NaiveDate::parse_from_str(&fecha_str, "%Y-%m-%d").map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "Formato de fecha inválido. Utilice YYYY-MM-DD"})),
+        )
+    })?;
+
+    // 1. Obtener la síntesis diaria si ya existe
+    let sintesis = sqlx::query_as::<_, SintesisDiaria>(
+        "SELECT id, fecha, texto, temas, documentos_ids, estado, modelo_usado, tokens_usados, aprobado_por, creado_en, actualizado_en
+         FROM sintesis_diarias
+         WHERE fecha = $1",
+    )
+    .bind(fecha)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error consultando síntesis diaria: {}", e)})),
+        )
+    })?;
+
+    // 2. Obtener todos los boletines de esa fecha
+    #[derive(sqlx::FromRow)]
+    struct BoletinRow {
+        id: Uuid,
+        fecha_boletin: NaiveDate,
+        nombre_archivo: String,
+        ruta_archivo: String,
+        estado: String,
+        origen: Option<String>,
+        incluido_en_sintesis: Option<bool>,
+        total_paginas: Option<i32>,
+        error_mensaje: Option<String>,
+        creado_en: chrono::DateTime<Utc>,
+    }
+
+    let docs_rows = sqlx::query_as::<_, BoletinRow>(
+        "SELECT id, fecha_boletin, nombre_archivo, ruta_archivo, estado, origen, incluido_en_sintesis, total_paginas, error_mensaje, creado_en
+         FROM boletines
+         WHERE fecha_boletin = $1
+         ORDER BY creado_en ASC",
+    )
+    .bind(fecha)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error consultando documentos de la fecha: {}", e)})),
+        )
+    })?;
+
+    let mut total_incluidos = 0;
+    let documentos: Vec<BoletinEnWorkspace> = docs_rows
+        .into_iter()
+        .map(|r| {
+            let inc = r.incluido_en_sintesis.unwrap_or(true);
+            if inc {
+                total_incluidos += 1;
+            }
+            BoletinEnWorkspace {
+                id: r.id,
+                fecha_boletin: r.fecha_boletin,
+                nombre_archivo: r.nombre_archivo,
+                ruta_archivo: r.ruta_archivo,
+                estado: r.estado,
+                origen: r.origen.unwrap_or_else(|| "manual".to_string()),
+                incluido_en_sintesis: inc,
+                total_paginas: r.total_paginas,
+                error_mensaje: r.error_mensaje,
+                creado_en: r.creado_en,
+            }
+        })
+        .collect();
+
+    let resp = WorkspaceFechaResponse {
+        fecha,
+        total_documentos: documentos.len(),
+        documentos_incluidos: total_incluidos,
+        documentos,
+        sintesis,
+    };
+
+    Ok((StatusCode::OK, Json(json!(resp))))
+}
+
+pub async fn upload_multiple_boletines(
+    State((pool, config)): State<(DbPool, Arc<Config>)>,
+    Extension(auth_ctx): Extension<AuthContext>,
+    mut multipart: Multipart,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    ensure_sintesis_diarias_schema(&pool).await;
+
+    let mut fecha_boletin: Option<NaiveDate> = None;
+    let mut origen = "manual".to_string();
+    let mut uploaded_files: Vec<(String, Vec<u8>)> = Vec::new();
+
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let name = field.name().unwrap_or("").to_string();
+
+        if name == "fecha" || name == "fecha_boletin" {
+            if let Ok(text) = field.text().await {
+                if let Ok(d) = NaiveDate::parse_from_str(text.trim(), "%Y-%m-%d") {
+                    fecha_boletin = Some(d);
+                }
+            }
+        } else if name == "origen" {
+            if let Ok(text) = field.text().await {
+                let clean = text.trim();
+                if !clean.is_empty() {
+                    origen = clean.to_string();
+                }
+            }
+        } else if name == "file" || name == "files" || name == "archivos" || name == "archivo" {
+            let original_name = field
+                .file_name()
+                .unwrap_or("documento.pdf")
+                .to_string();
+
+            if original_name.to_lowercase().ends_with(".pdf") {
+                if let Ok(bytes) = field.bytes().await {
+                    if !bytes.is_empty() {
+                        uploaded_files.push((original_name, bytes.to_vec()));
+                    }
+                }
+            }
+        }
+    }
+
+    if uploaded_files.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "No se recibieron archivos PDF válidos"})),
+        ));
+    }
+
+    let fecha = fecha_boletin.unwrap_or_else(|| Utc::now().date_naive());
+    let upload_dir = PathBuf::from(&config.upload_dir);
+    if let Err(e) = fs::create_dir_all(&upload_dir) {
+        error!("Error creando directorio de subidas: {}", e);
+    }
+
+    let mut creados = Vec::new();
+    let client = reqwest::Client::new();
+    let worker_url = format!("{}/api/process-boletin", config.worker_base_url);
+
+    for (file_name, file_bytes) in uploaded_files {
+        let boletin_id = Uuid::new_v4();
+        let safe_file_name = format!("{}_{}", boletin_id, file_name);
+        let target_path = upload_dir.join(&safe_file_name);
+
+        if let Ok(mut f) = tokio::fs::File::create(&target_path).await {
+            let _ = f.write_all(&file_bytes).await;
+        }
+
+        let target_path_abs = std::fs::canonicalize(&target_path).unwrap_or_else(|_| target_path.clone());
+        let target_path_str = target_path_abs.to_string_lossy().to_string();
+
+        let res = sqlx::query(
+            "INSERT INTO boletines (id, fecha_boletin, nombre_archivo, ruta_archivo, subido_por, estado, origen, incluido_en_sintesis)
+             VALUES ($1, $2, $3, $4, $5, 'pendiente_ocr', $6, TRUE)",
+        )
+        .bind(boletin_id)
+        .bind(fecha)
+        .bind(&file_name)
+        .bind(&target_path_str)
+        .bind(auth_ctx.user_id)
+        .bind(&origen)
+        .execute(&pool)
+        .await;
+
+        if res.is_ok() {
+            creados.push(json!({
+                "id": boletin_id,
+                "nombre_archivo": file_name,
+                "estado": "pendiente_ocr",
+                "origen": origen
+            }));
+
+            // Notificar worker Python en background
+            let b_id_str = boletin_id.to_string();
+            let f_path = target_path_str.clone();
+            let w_url = worker_url.clone();
+            let cli = client.clone();
+            tokio::spawn(async move {
+                let _ = cli.post(&w_url).json(&json!({
+                    "boletin_id": b_id_str,
+                    "ruta_archivo": f_path
+                })).send().await;
+            });
+        }
+    }
+
+    Ok((
+        StatusCode::OK,
+        Json(json!({
+            "mensaje": format!("Se subieron exitosamente {} documentos para la fecha {}", creados.len(), fecha),
+            "fecha": fecha,
+            "documentos": creados
+        })),
+    ))
+}
+
+pub async fn toggle_documento_seleccion(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+    Path(id): Path<Uuid>,
+    Json(payload): Json<ToggleDocumentoSeleccionRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    ensure_sintesis_diarias_schema(&pool).await;
+
+    sqlx::query(
+        "UPDATE boletines SET incluido_en_sintesis = $1, actualizado_en = now() WHERE id = $2",
+    )
+    .bind(payload.incluido)
+    .bind(id)
+    .execute(&pool)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error actualizando selección del documento: {}", e)})),
+        )
+    })?;
+
+    Ok((
+        StatusCode::OK,
+        Json(json!({
+            "id": id,
+            "incluido_en_sintesis": payload.incluido
+        })),
+    ))
+}
+
+pub async fn consolidar_sintesis_fecha(
+    State((pool, config)): State<(DbPool, Arc<Config>)>,
+    Path(fecha_str): Path<String>,
+    Json(payload): Json<Option<ConsolidarSintesisFechaRequest>>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    ensure_sintesis_diarias_schema(&pool).await;
+
+    let worker_url = format!("{}/api/consolidar-sintesis-diaria", config.worker_base_url);
+    let client = reqwest::Client::new();
+
+    let request_body = json!({
+        "fecha": fecha_str,
+        "documentos_ids": payload.as_ref().and_then(|p| p.documentos_ids.clone())
+    });
+
+    info!("Solicitando consolidación de síntesis para {} a worker: {}", fecha_str, worker_url);
+
+    let resp = client
+        .post(&worker_url)
+        .json(&request_body)
+        .send()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"error": format!("No se pudo conectar con el worker Python: {}", e)})),
+            )
+        })?;
+
+    let status = resp.status();
+    let body_json: serde_json::Value = resp.json().await.unwrap_or_else(|_| {
+        json!({"error": "Respuesta no JSON del worker"})
+    });
+
+    if status.is_success() {
+        Ok((StatusCode::OK, Json(body_json)))
+    } else {
+        Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "Error del worker al consolidar síntesis", "detalles": body_json})),
+        ))
+    }
+}
+
+pub async fn actualizar_sintesis_diaria(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+    Path(fecha_str): Path<String>,
+    Json(payload): Json<ActualizarSintesisDiariaRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    ensure_sintesis_diarias_schema(&pool).await;
+
+    let fecha = NaiveDate::parse_from_str(&fecha_str, "%Y-%m-%d").map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "Formato de fecha inválido. Utilice YYYY-MM-DD"})),
+        )
+    })?;
+
+    let sintesis = sqlx::query_as::<_, SintesisDiaria>(
+        "INSERT INTO sintesis_diarias (fecha, texto, estado, actualizado_en)
+         VALUES ($1, $2, 'borrador', now())
+         ON CONFLICT (fecha) DO UPDATE
+         SET texto = EXCLUDED.texto,
+             actualizado_en = now()
+         RETURNING id, fecha, texto, temas, documentos_ids, estado, modelo_usado, tokens_usados, aprobado_por, creado_en, actualizado_en",
+    )
+    .bind(fecha)
+    .bind(&payload.texto)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error actualizando síntesis diaria: {}", e)})),
+        )
+    })?;
+
+    Ok((StatusCode::OK, Json(json!(sintesis))))
+}
+
+pub async fn aprobar_sintesis_diaria(
+    State((pool, config)): State<(DbPool, Arc<Config>)>,
+    Extension(auth_ctx): Extension<AuthContext>,
+    Path(fecha_str): Path<String>,
+    Json(payload): Json<AprobarSintesisDiariaRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    ensure_sintesis_diarias_schema(&pool).await;
+
+    let fecha = NaiveDate::parse_from_str(&fecha_str, "%Y-%m-%d").map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "Formato de fecha inválido. Utilice YYYY-MM-DD"})),
+        )
+    })?;
+
+    let mut tx = pool.begin().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error de base de datos: {}", e)})),
+        )
+    })?;
+
+    // 1. Upsert en sintesis_diarias con estado 'aprobado'
+    let sintesis = sqlx::query_as::<_, SintesisDiaria>(
+        "INSERT INTO sintesis_diarias (fecha, texto, estado, aprobado_por, actualizado_en)
+         VALUES ($1, $2, 'aprobado', $3, now())
+         ON CONFLICT (fecha) DO UPDATE
+         SET texto = EXCLUDED.texto,
+             estado = 'aprobado',
+             aprobado_por = EXCLUDED.aprobado_por,
+             actualizado_en = now()
+         RETURNING id, fecha, texto, temas, documentos_ids, estado, modelo_usado, tokens_usados, aprobado_por, creado_en, actualizado_en",
+    )
+    .bind(fecha)
+    .bind(&payload.texto)
+    .bind(auth_ctx.user_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error aprobando síntesis diaria: {}", e)})),
+        )
+    })?;
+
+    // 2. Marcar todos los boletines de esa fecha que están incluidos como 'aprobado'
+    let _ = sqlx::query(
+        "UPDATE boletines SET estado = 'aprobado', actualizado_en = now() WHERE fecha_boletin = $1 AND (incluido_en_sintesis = TRUE OR incluido_en_sintesis IS NULL)",
+    )
+    .bind(fecha)
+    .execute(&mut *tx)
+    .await;
+
+    // 3. Encolar y despachar mensaje WhatsApp si enviar_whatsapp != Some(false)
+    let enviar_ws = payload.enviar_whatsapp.unwrap_or(true);
+    let mut target_phones: Vec<String> = Vec::new();
+
+    if enviar_ws {
+        use crate::services::kapso::get_whatsapp_config;
+        let whatsapp_cfg = get_whatsapp_config(&pool).await;
+
+        #[derive(sqlx::FromRow)]
+        struct DestRow {
+            telefono: String,
+        }
+
+        let destinatarios_db = sqlx::query_as::<_, DestRow>(
+            "SELECT telefono FROM lista_distribucion WHERE activo = true AND telefono != '5215512345678' AND trim(telefono) != ''"
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .unwrap_or_default();
+
+        target_phones = if destinatarios_db.is_empty() {
+            if !whatsapp_cfg.director_phone.trim().is_empty() && whatsapp_cfg.director_phone.trim() != "5215512345678" {
+                vec![whatsapp_cfg.director_phone.trim().to_string()]
+            } else if !config.director_whatsapp.trim().is_empty() && config.director_whatsapp.trim() != "5215512345678" {
+                vec![config.director_whatsapp.trim().to_string()]
+            } else {
+                vec![]
+            }
+        } else {
+            destinatarios_db
+                .into_iter()
+                .map(|d| d.telefono)
+                .filter(|t| !t.trim().is_empty() && t.trim() != "5215512345678")
+                .collect()
+        };
+
+        for phone in &target_phones {
+            let _ = sqlx::query(
+                "INSERT INTO mensajes_pendientes (tipo, referencia_id, texto, destinatario, estado, proveedor)
+                 VALUES ('brief', $1, $2, $3, 'pendiente', 'kapso')",
+            )
+            .bind(sintesis.id)
+            .bind(&payload.texto)
+            .bind(phone)
+            .execute(&mut *tx)
+            .await;
+        }
+    }
+
+    tx.commit().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("Error confirmando transacción: {}", e)})),
+        )
+    })?;
+
+    // Despacho vía WhatsApp en background
+    if enviar_ws && !target_phones.is_empty() {
+        let pool_clone = pool.clone();
+        let texto_clone = payload.texto.clone();
+        let s_id = sintesis.id;
+        let targets_clone = target_phones.clone();
+
+        tokio::spawn(async move {
+            use crate::services::kapso::{get_whatsapp_config, KapsoClient};
+            let cfg = get_whatsapp_config(&pool_clone).await;
+            if cfg.api_key.trim().is_empty() || cfg.phone_number_id.trim().is_empty() {
+                tracing::warn!("Kapso API no configurada para despacho de síntesis consolidada");
+                let _ = sqlx::query(
+                    "UPDATE mensajes_pendientes SET estado = 'error', error_mensaje = 'Falta API Key o Phone ID' WHERE referencia_id = $1"
+                )
+                .bind(s_id)
+                .execute(&pool_clone)
+                .await;
+                return;
+            }
+
+            let client = KapsoClient::new(cfg.api_key, cfg.phone_number_id);
+            for phone in &targets_clone {
+                if phone == "Sin destinatario configurado" || phone == "5215512345678" {
+                    continue;
+                }
+                match client.send_text(phone, &texto_clone).await {
+                    Ok(msg_id) => {
+                        let _ = sqlx::query(
+                            "UPDATE mensajes_pendientes SET estado = 'confirmado', kapso_message_id = $1, meta_status = 'sent', confirmado_en = now() WHERE referencia_id = $2 AND destinatario = $3"
+                        )
+                        .bind(&msg_id)
+                        .bind(s_id)
+                        .bind(phone)
+                        .execute(&pool_clone)
+                        .await;
+                    }
+                    Err(e) => {
+                        let _ = sqlx::query(
+                            "UPDATE mensajes_pendientes SET estado = 'error', error_mensaje = $1 WHERE referencia_id = $2 AND destinatario = $3"
+                        )
+                        .bind(&e)
+                        .bind(s_id)
+                        .bind(phone)
+                        .execute(&pool_clone)
+                        .await;
+                    }
+                }
+            }
+        });
+    }
+
+    Ok((
+        StatusCode::OK,
+        Json(json!({
+            "mensaje": "Síntesis diaria consolidada aprobada exitosamente",
+            "sintesis": sintesis,
+            "destinatarios_notificados": target_phones.len()
+        })),
+    ))
+}
+

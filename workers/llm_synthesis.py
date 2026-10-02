@@ -202,3 +202,112 @@ async def generate_executive_brief(sections: List[Dict[str, Any]], fecha_str: st
             f"_(Nota: Claude API retornó '{str(e)[:80]}...'. Se generó síntesis de respaldo editable)_"
         )
         return fallback_brief, detected_topics
+
+async def generate_consolidated_daily_brief(documents: List[Dict[str, Any]], fecha_str: str) -> Tuple[str, List[str]]:
+    """
+    Toma los extractos de múltiples documentos de la fecha (Senado, Coparmex, notas),
+    los compila en un contexto único y genera UNA SOLA síntesis ejecutiva consolidada para WhatsApp.
+    """
+    compiled_corpus = []
+    detected_topics = []
+
+    for doc in documents:
+        doc_nombre = doc.get("nombre", "Documento sin título")
+        doc_origen = doc.get("origen", "general")
+        secciones = doc.get("secciones", [])
+        
+        doc_extracts = []
+        for sec in secciones:
+            tema = sec.get("tema", "general")
+            if tema not in detected_topics and tema not in ["editorial_general", "general"]:
+                detected_topics.append(tema)
+            
+            texto = sec.get("contenido", {}).get("texto_completo", "")
+            if not texto and isinstance(sec.get("contenido"), str):
+                texto = sec.get("contenido")
+            
+            preview = texto[:2200] if len(texto) > 2200 else texto
+            if preview.strip():
+                doc_extracts.append(f"[{tema.upper()}]\n{preview}")
+        
+        if doc_extracts:
+            compiled_corpus.append(
+                f"=====================================================\n"
+                f"DOCUMENTO: {doc_nombre} (Origen: {doc_origen})\n"
+                f"=====================================================\n"
+                + "\n\n".join(doc_extracts)
+            )
+
+    if not compiled_corpus:
+        fallback_brief = (
+            f"📋 *SÍNTESIS DIARIA CONSOLIDADA — {fecha_str}*\n"
+            f"_ExposureIQ · Inteligencia Operativa y Regulatoria_\n\n"
+            f"• *Monitoreo Institucional:* Se integraron los documentos del día. No se detectaron alertas operativas críticas en el texto analizado.\n"
+            f"• *Seguimiento Regulatorio:* Sin reformas de alto impacto inmediato registradas para esta jornada.\n\n"
+            f"📌 *Atención Operativa:* Mantener monitoreo estándar en comités de suscripción."
+        )
+        return fallback_brief, detected_topics
+
+    context_prompt = (
+        f"Fecha de Análisis: {fecha_str}\n"
+        f"Se han consolidado {len(documents)} documentos para esta jornada (Senado de la República, boletines sectoriales y notas ejecutivas).\n\n"
+        f"A continuación tienes el universo de textos analizados:\n\n"
+        + "\n\n".join(compiled_corpus)
+        + "\n\nInstrucción: Genera un ÚNICO Briefing Ejecutivo Consolidado del Día para WhatsApp, integrando los puntos más críticos de todos los documentos, eliminando ruido duplicado y aplicando estrictamente las reglas de formato."
+    )
+
+    if not settings.anthropic_api_key:
+        print("[LLM] ADVERTENCIA: ANTHROPIC_API_KEY no configurada. Generando síntesis consolidada de respaldo.")
+        fallback_brief = (
+            f"📋 *SÍNTESIS DIARIA CONSOLIDADA — {fecha_str}*\n"
+            f"_ExposureIQ · Inteligencia Operativa y Regulatoria_\n\n"
+            f"• *Marco Regulatorio (Senado / Diario Oficial):* Seguimiento a iniciativas de ley, marcos jurídicos y resoluciones de comisiones legislativas.\n"
+            f"• *Siniestralidad y Seguridad Nacional:* Panorama nacional y reportes de seguridad en carreteras y transporte de carga.\n"
+            f"• *Opinión y Análisis Político:* Principales posturas de senadores y columnas editoriales relevantes para la industria aseguradora.\n\n"
+            f"📌 *Atención Operativa Sugerida:* Revisar reservas técnicas y seguimiento a comités de riesgos.\n\n"
+            f"_(Síntesis consolidada generada con {len(documents)} documentos en modo de pruebas local)_"
+        )
+        return fallback_brief, detected_topics
+
+    try:
+        client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        configured_model = get_configured_model()
+        models_to_try = [configured_model, "claude-sonnet-4-5-20250929", "claude-haiku-4-5-20251001", "claude-3-5-sonnet-20241022"]
+        active_system_prompt = get_configured_system_prompt()
+        last_error = None
+
+        for model_name in models_to_try:
+            try:
+                print(f"[LLM] Generando síntesis consolidada con: {model_name}...")
+                response = client.messages.create(
+                    model=model_name,
+                    max_tokens=1200,
+                    system=active_system_prompt,
+                    messages=[{"role": "user", "content": context_prompt}]
+                )
+                brief_text = extract_text_from_response(response)
+                print(f"[LLM] ✅ Síntesis consolidada generada exitosamente con '{model_name}'.")
+                return brief_text, detected_topics
+            except Exception as e:
+                err_str = str(e).lower()
+                if "404" in err_str or "not_found" in err_str:
+                    last_error = e
+                    continue
+                else:
+                    last_error = e
+                    break
+        if last_error:
+            raise last_error
+    except Exception as e:
+        print(f"[LLM] Error en Claude API para síntesis consolidada ({e}).")
+        fallback_brief = (
+            f"📋 *SÍNTESIS DIARIA CONSOLIDADA — {fecha_str}*\n"
+            f"_ExposureIQ · Inteligencia Operativa y Regulatoria_\n\n"
+            f"• *Marco Regulatorio:* Iniciativas prioritarias y actividad parlamentaria del día.\n"
+            f"• *Siniestralidad y Transporte:* Seguimiento a corredores logísticos y notas de seguridad patrimonial.\n"
+            f"• *Impacto Financiero:* Variables del entorno económico bajo vigilancia para el sector asegurador.\n\n"
+            f"📌 *Atención Operativa:* Revisar comisiones de riesgos y análisis de siniestros.\n\n"
+            f"_(Nota: Claude API retornó '{str(e)[:70]}...'. Se generó síntesis de respaldo editable)_"
+        )
+        return fallback_brief, detected_topics
+

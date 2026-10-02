@@ -24,13 +24,23 @@ pub fn create_router(pool: DbPool, config: Arc<Config>) -> Router {
     let protected_routes = Router::new()
         // Auth
         .route("/api/auth/me", get(auth::me))
-        // Boletines Coparmex
+        // Boletines Coparmex y Monitoreo Ejecutivo
         .route("/api/boletines", get(boletines::list_boletines))
         .route("/api/boletines/upload", post(boletines::upload_boletin))
+        .route("/api/boletines/upload-multiple", post(boletines::upload_multiple_boletines))
         .route("/api/boletines/:id", get(boletines::get_boletin))
         .route("/api/boletines/:id/procesar", post(boletines::procesar_boletin))
         .route("/api/boletines/:id/sintesis", put(boletines::actualizar_sintesis))
         .route("/api/boletines/:id/aprobar", post(boletines::aprobar_boletin))
+        .route("/api/boletines/:id/seleccion", patch(boletines::toggle_documento_seleccion))
+
+        // Síntesis Diarias Consolidadas (Monitoreo Ejecutivo por Fecha)
+        .route("/api/sintesis-diarias", get(boletines::list_fechas_sintesis))
+        .route("/api/sintesis-diarias/:fecha", get(boletines::get_workspace_fecha))
+        .route("/api/sintesis-diarias/:fecha", put(boletines::actualizar_sintesis_diaria))
+        .route("/api/sintesis-diarias/:fecha/consolidar", post(boletines::consolidar_sintesis_fecha))
+        .route("/api/sintesis-diarias/:fecha/aprobar", post(boletines::aprobar_sintesis_diaria))
+
         // Mensajería (historial y despacho en panel)
         .route("/api/mensajes/historial", get(mensajes::list_historial_mensajes))
         .route("/api/mensajes/:id/enviar", post(mensajes::enviar_mensaje_directo))
@@ -70,6 +80,7 @@ pub fn create_router(pool: DbPool, config: Arc<Config>) -> Router {
         // Scraper Automatizado Senado de la República
         .route("/api/scraper/senado/ejecutar", post(scraper::ejecutar_scraper_senado))
         .route("/api/scraper/senado/status", get(scraper::get_scraper_senado_status))
+        .route("/api/scraper/senado/secciones", get(scraper::get_scraper_senado_secciones))
         .layer(middleware::from_fn_with_state(config.clone(), require_auth));
 
     // Rutas públicas (consumidas por frontend login y cron n8n)
