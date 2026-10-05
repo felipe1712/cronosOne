@@ -199,6 +199,26 @@ export interface SeccionSenado {
   orden: number;
 }
 
+export interface DetalleSeccionSenado {
+  id: string;
+  nombre: string;
+  archivo: string;
+  estado?: 'descargado' | 'no_disponible' | 'error';
+  disponible?: boolean;
+  codigo_http?: number;
+  tamano_bytes?: number | null;
+  url_probada?: string;
+  motivo: string;
+}
+
+export interface VerificacionSenadoResponse {
+  fecha: string;
+  total_secciones: number;
+  disponibles: number;
+  no_disponibles: number;
+  detalles: DetalleSeccionSenado[];
+}
+
 // ============================================================================
 // Servicios de API
 // ============================================================================
@@ -411,11 +431,18 @@ export const ApiService = {
       navegador_usado?: string;
       archivos_descargados: Array<{ seccion: string; archivo: string; bytes: number; hash: string }>;
       archivos_procesados: Array<{ boletin_id: string; seccion: string; estado: string }>;
+      detalle_secciones?: DetalleSeccionSenado[];
       errores: string[];
       ultimo_inicio?: string;
       ultimo_fin?: string;
       mensaje: string;
     }>('/scraper/senado/status'),
+
+  verificarDisponibilidadSenado: (fecha?: string, secciones?: string[]) =>
+    apiFetch<VerificacionSenadoResponse>('/scraper/senado/verificar', {
+      method: 'POST',
+      body: JSON.stringify({ fecha, secciones }),
+    }),
 
   getSeccionesSenado: () =>
     apiFetch<SeccionSenado[]>('/scraper/senado/secciones'),

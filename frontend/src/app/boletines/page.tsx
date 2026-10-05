@@ -57,12 +57,15 @@ import FolderOpenIcon from "@mui/icons-material/FolderOpen";
 import CloseIcon from "@mui/icons-material/Close";
 import CheckBoxIcon from "@mui/icons-material/CheckBox";
 import LayersIcon from "@mui/icons-material/Layers";
+import SearchIcon from "@mui/icons-material/Search";
+import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 
 import {
   ApiService,
   SintesisDiariaResumen,
   WorkspaceFechaResponse,
   SeccionSenado,
+  DetalleSeccionSenado,
 } from "@/lib/api";
 
 const SECCIONES_SENADO_DEFAULT: SeccionSenado[] = [
@@ -103,6 +106,12 @@ export default function BoletinesPage() {
   const [seccionesSeleccionadas, setSeccionesSeleccionadas] = useState<string[]>(
     SECCIONES_SENADO_DEFAULT.map((s) => s.id)
   );
+
+  // Diagnóstico y Verificación de Disponibilidad del Senado
+  const [checkingDisponibilidad, setCheckingDisponibilidad] = useState<boolean>(false);
+  const [disponibilidadMap, setDisponibilidadMap] = useState<Record<string, DetalleSeccionSenado> | null>(null);
+  const [diagnosticoModalOpen, setDiagnosticoModalOpen] = useState<boolean>(false);
+  const [ultimoDetalleSenado, setUltimoDetalleSenado] = useState<DetalleSeccionSenado[] | null>(null);
 
   // Scraper Status y Polling
   const [scrapingStatus, setScrapingStatus] = useState<any>(null);
@@ -208,6 +217,7 @@ export default function BoletinesPage() {
 
   const handleCambiarFecha = (nuevaFecha: string) => {
     setFechaTrabajo(nuevaFecha);
+    setDisponibilidadMap(null);
     fetchWorkspace(nuevaFecha);
   };
 
@@ -248,13 +258,26 @@ export default function BoletinesPage() {
           clearInterval(scraperPollingRef.current);
           scraperPollingRef.current = null;
         }
+        if (st.detalle_secciones && st.detalle_secciones.length > 0) {
+          setUltimoDetalleSenado(st.detalle_secciones);
+        }
+        const noDescargados = st.detalle_secciones
+          ? st.detalle_secciones.filter((d: any) => d.estado !== "descargado")
+          : [];
+
         if (st.archivos_descargados && st.archivos_descargados.length > 0) {
-          setSuccess(
-            `✅ Sincronización completada: se descargaron y procesaron ${st.archivos_descargados.length} documentos del Senado para ${st.fecha_objetivo || fechaTrabajo}.`
-          );
+          if (noDescargados.length > 0) {
+            setSuccess(
+              `✅ Sincronización completada: se descargaron y procesaron ${st.archivos_descargados.length} documentos. Hay ${noDescargados.length} sección(es) que el Senado no emitió para esta fecha.`
+            );
+          } else {
+            setSuccess(
+              `✅ Sincronización completada: se descargaron y procesaron ${st.archivos_descargados.length} documentos del Senado para ${st.fecha_objetivo || fechaTrabajo}.`
+            );
+          }
         } else if (st.errores && st.errores.length > 0) {
           setError(
-            `⚠️ El portal del Senado no tiene documentos disponibles para la fecha ${st.fecha_objetivo || fechaTrabajo} (${st.errores[0]}). Puede cargar documentos manualmente con el botón "Subir Documentos".`
+            `⚠️ El portal del Senado no tiene documentos disponibles para la fecha ${st.fecha_objetivo || fechaTrabajo} (${st.errores[0]}). Puede verificar el diagnóstico o cargar documentos manualmente.`
           );
         } else {
           setSuccess(`Sincronización del Senado concluida.`);
@@ -263,6 +286,37 @@ export default function BoletinesPage() {
         fetchHistorial();
       }
     }, 2500);
+  };
+
+  const handleCheckDisponibilidad = async () => {
+    try {
+      setCheckingDisponibilidad(true);
+      setError(null);
+      const res = await ApiService.verificarDisponibilidadSenado(
+        fechaTrabajo,
+        seccionesCatalogo.map((s) => s.id)
+      );
+      const map: Record<string, DetalleSeccionSenado> = {};
+      if (res && res.detalles) {
+        res.detalles.forEach((d) => {
+          map[d.id] = d;
+        });
+        setDisponibilidadMap(map);
+        setUltimoDetalleSenado(res.detalles);
+      }
+    } catch (err: any) {
+      setError(err.message || "Error al verificar disponibilidad en el portal del Senado.");
+    } finally {
+      setCheckingDisponibilidad(false);
+    }
+  };
+
+  const handleSeleccionarSoloDisponibles = () => {
+    if (!disponibilidadMap) return;
+    const disponibles = seccionesCatalogo
+      .filter((s) => disponibilidadMap[s.id]?.disponible)
+      .map((s) => s.id);
+    setSeccionesSeleccionadas(disponibles);
   };
 
   const handleTriggerScraperConSecciones = async () => {
@@ -659,13 +713,45 @@ export default function BoletinesPage() {
       )}
 
       {error && (
-        <Alert severity="error" sx={{ mb: 3, borderRadius: "8px" }} onClose={() => setError(null)}>
+        <Alert
+          severity="error"
+          sx={{ mb: 3, borderRadius: "8px", alignItems: "center" }}
+          onClose={() => setError(null)}
+          action={
+            ultimoDetalleSenado && ultimoDetalleSenado.length > 0 ? (
+              <Button
+                color="inherit"
+                size="small"
+                onClick={() => setDiagnosticoModalOpen(true)}
+                sx={{ fontWeight: 700, textTransform: "none", textDecoration: "underline" }}
+              >
+                Ver Diagnóstico
+              </Button>
+            ) : undefined
+          }
+        >
           {error}
         </Alert>
       )}
 
       {success && (
-        <Alert severity="success" sx={{ mb: 3, borderRadius: "8px" }} onClose={() => setSuccess(null)}>
+        <Alert
+          severity="success"
+          sx={{ mb: 3, borderRadius: "8px", alignItems: "center" }}
+          onClose={() => setSuccess(null)}
+          action={
+            ultimoDetalleSenado && ultimoDetalleSenado.length > 0 ? (
+              <Button
+                color="inherit"
+                size="small"
+                onClick={() => setDiagnosticoModalOpen(true)}
+                sx={{ fontWeight: 700, textTransform: "none", textDecoration: "underline" }}
+              >
+                Ver Diagnóstico
+              </Button>
+            ) : undefined
+          }
+        >
           {success}
         </Alert>
       )}
@@ -1482,10 +1568,31 @@ export default function BoletinesPage() {
             <strong>{fechaTrabajo}</strong>. Los documentos se agregarán al universo del día.
           </Typography>
 
-          <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 1.5 }}>
-            <Typography variant="caption" sx={{ fontWeight: 700, color: "#64748b" }}>
-              SECCIONES DISPONIBLES ({seccionesSeleccionadas.length}/{seccionesCatalogo.length} SELECCIONADAS)
-            </Typography>
+          <Box sx={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", mb: 2, gap: 1 }}>
+            <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 1 }}>
+              <Button
+                size="small"
+                variant="outlined"
+                color="secondary"
+                startIcon={checkingDisponibilidad ? <CircularProgress size={14} color="inherit" /> : <SearchIcon fontSize="small" />}
+                onClick={handleCheckDisponibilidad}
+                disabled={checkingDisponibilidad || startingScrape}
+                sx={{ textTransform: "none", fontWeight: 600, borderRadius: "6px" }}
+              >
+                {checkingDisponibilidad ? "Comprobando en portal..." : "Comprobar Disponibilidad en Senado"}
+              </Button>
+              {disponibilidadMap && (
+                <Button
+                  size="small"
+                  variant="text"
+                  color="success"
+                  onClick={handleSeleccionarSoloDisponibles}
+                  sx={{ textTransform: "none", fontWeight: 600 }}
+                >
+                  Seleccionar solo disponibles ({Object.values(disponibilidadMap).filter((d) => d.disponible).length})
+                </Button>
+              )}
+            </Box>
             <Button size="small" onClick={toggleAllSeccionesSenado} sx={{ textTransform: "none" }}>
               {seccionesSeleccionadas.length === seccionesCatalogo.length
                 ? "Deseleccionar Todas"
@@ -1493,9 +1600,22 @@ export default function BoletinesPage() {
             </Button>
           </Box>
 
+          {disponibilidadMap && (
+            <Alert
+              severity="info"
+              icon={<InfoOutlinedIcon fontSize="inherit" />}
+              sx={{ mb: 2, borderRadius: "8px", py: 0.5 }}
+            >
+              Comprobación completada para <strong>{fechaTrabajo}</strong>:{" "}
+              <strong>{Object.values(disponibilidadMap).filter((d) => d.disponible).length}</strong> publicadas y disponibles para descarga,{" "}
+              <strong>{Object.values(disponibilidadMap).filter((d) => !d.disponible).length}</strong> no emitidas hoy en el servidor del Senado.
+            </Alert>
+          )}
+
           <Grid container spacing={1}>
             {seccionesCatalogo.map((sec) => {
               const isChecked = seccionesSeleccionadas.includes(sec.id);
+              const infoDisp = disponibilidadMap ? disponibilidadMap[sec.id] : null;
               return (
                 <Grid size={{ xs: 12, sm: 6 }} key={sec.id}>
                   <Card
@@ -1515,10 +1635,41 @@ export default function BoletinesPage() {
                     }}
                   >
                     <Checkbox checked={isChecked} size="small" color="primary" />
-                    <Box sx={{ flex: 1 }}>
-                      <Typography variant="body2" sx={{ fontWeight: 600, color: "#1e293b" }}>
-                        {sec.nombre}
-                      </Typography>
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1 }}>
+                        <Typography variant="body2" sx={{ fontWeight: 600, color: "#1e293b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {sec.nombre}
+                        </Typography>
+                        {infoDisp && (
+                          infoDisp.disponible ? (
+                            <Chip
+                              size="small"
+                              label={infoDisp.tamano_bytes ? `${Math.round(infoDisp.tamano_bytes / 1024)} KB` : "Disponible"}
+                              sx={{
+                                bgcolor: "#dcfce7",
+                                color: "#15803d",
+                                fontWeight: 700,
+                                fontSize: "0.7rem",
+                                height: 20,
+                              }}
+                            />
+                          ) : (
+                            <Tooltip title={infoDisp.motivo || "No publicado por el Senado"} arrow>
+                              <Chip
+                                size="small"
+                                label={infoDisp.codigo_http === 404 ? "No publicado (404)" : "No disp."}
+                                sx={{
+                                  bgcolor: "#fee2e2",
+                                  color: "#b91c1c",
+                                  fontWeight: 600,
+                                  fontSize: "0.7rem",
+                                  height: 20,
+                                }}
+                              />
+                            </Tooltip>
+                          )
+                        )}
+                      </Box>
                       <Typography variant="caption" sx={{ color: "#64748b" }}>
                         {sec.archivo}
                       </Typography>
@@ -1530,6 +1681,18 @@ export default function BoletinesPage() {
           </Grid>
         </DialogContent>
         <DialogActions sx={{ p: 2, borderTop: "1px solid #e2e8f0" }}>
+          {ultimoDetalleSenado && ultimoDetalleSenado.length > 0 && (
+            <Button
+              size="small"
+              onClick={() => {
+                setSenadoModalOpen(false);
+                setDiagnosticoModalOpen(true);
+              }}
+              sx={{ textTransform: "none", mr: "auto" }}
+            >
+              Ver Tabla de Diagnóstico
+            </Button>
+          )}
           <Button onClick={() => setSenadoModalOpen(false)} sx={{ textTransform: "none" }}>
             Cancelar
           </Button>
@@ -1546,6 +1709,106 @@ export default function BoletinesPage() {
             }}
           >
             Iniciar Descarga ({seccionesSeleccionadas.length} Secciones)
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* ===================================================================== */}
+      {/* DIÁLOGO: DIAGNÓSTICO DE DESCARGA / DISPONIBILIDAD DEL SENADO          */}
+      {/* ===================================================================== */}
+      <Dialog
+        open={diagnosticoModalOpen}
+        onClose={() => setDiagnosticoModalOpen(false)}
+        maxWidth="md"
+        fullWidth
+        PaperProps={{ sx: { borderRadius: "12px" } }}
+      >
+        <DialogTitle sx={{ fontWeight: 700, borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            <SearchIcon sx={{ color: "#0284c7" }} />
+            <span>Diagnóstico de Disponibilidad — Senado de la República</span>
+          </Box>
+          <IconButton size="small" onClick={() => setDiagnosticoModalOpen(false)}>
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent sx={{ pt: 2.5 }}>
+          <Typography variant="body2" sx={{ color: "#475569", mb: 2 }}>
+            A continuación se detalla el estado de cada sección consultada en el servidor oficial del Senado (<code>comunicacionsocial.senado.gob.mx</code>) para la fecha <strong>{fechaTrabajo}</strong>.
+          </Typography>
+
+          <TableContainer component={Paper} variant="outlined" sx={{ borderRadius: "8px", mb: 2.5 }}>
+            <Table size="small">
+              <TableHead sx={{ backgroundColor: "#f8fafc" }}>
+                <TableRow>
+                  <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Sección</TableCell>
+                  <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Archivo Oficial</TableCell>
+                  <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Estado en Servidor</TableCell>
+                  <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Detalle / Motivo</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {ultimoDetalleSenado && ultimoDetalleSenado.length > 0 ? (
+                  ultimoDetalleSenado.map((det) => {
+                    const isOk = det.estado === "descargado" || det.disponible;
+                    return (
+                      <TableRow key={det.id} hover>
+                        <TableCell sx={{ fontWeight: 600, color: "#1e293b" }}>
+                          {det.nombre}
+                        </TableCell>
+                        <TableCell sx={{ fontFamily: "monospace", fontSize: "0.8rem", color: "#64748b" }}>
+                          {det.archivo}
+                        </TableCell>
+                        <TableCell>
+                          {isOk ? (
+                            <Chip
+                              size="small"
+                              label={`Disponible (HTTP ${det.codigo_http || 200})`}
+                              sx={{ bgcolor: "#dcfce7", color: "#15803d", fontWeight: 700, fontSize: "0.75rem" }}
+                            />
+                          ) : (
+                            <Chip
+                              size="small"
+                              label={`No disponible (HTTP ${det.codigo_http || 404})`}
+                              sx={{ bgcolor: "#fee2e2", color: "#b91c1c", fontWeight: 700, fontSize: "0.75rem" }}
+                            />
+                          )}
+                        </TableCell>
+                        <TableCell sx={{ fontSize: "0.82rem", color: isOk ? "#15803d" : "#64748b" }}>
+                          {det.motivo}
+                          {det.tamano_bytes ? ` (${Math.round(det.tamano_bytes / 1024)} KB)` : ""}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={4} align="center" sx={{ py: 3, color: "#64748b" }}>
+                      No hay diagnóstico registrado aún. Ejecute "Comprobar Disponibilidad" o una sincronización del Senado.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+
+          <Alert severity="info" sx={{ borderRadius: "8px" }}>
+            <strong>¿Por qué faltan secciones?</strong> El Senado de la República no emite las 10 secciones todos los días. En fines de semana, días festivos o días sin sesión parlamentaria, secciones como <em>Redes</em>, <em>Columnas Senado</em> o <em>Diputados</em> no se publican y devuelven <strong>HTTP 404</strong>. Si cuenta con esos archivos por otro medio, puede añadirlos manualmente con el botón <strong>Subir Documentos</strong>.
+          </Alert>
+        </DialogContent>
+        <DialogActions sx={{ p: 2, borderTop: "1px solid #e2e8f0" }}>
+          <Button onClick={() => setDiagnosticoModalOpen(false)} sx={{ textTransform: "none" }}>
+            Cerrar
+          </Button>
+          <Button
+            variant="contained"
+            onClick={() => {
+              setDiagnosticoModalOpen(false);
+              setSenadoModalOpen(true);
+            }}
+            sx={{ textTransform: "none", backgroundColor: "#0f172a" }}
+          >
+            Volver a Sincronización
           </Button>
         </DialogActions>
       </Dialog>

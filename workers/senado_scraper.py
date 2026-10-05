@@ -116,6 +116,7 @@ scraper_status: Dict[str, Any] = {
     "archivos_descargados": [],
     "archivos_procesados": [],
     "errores": [],
+    "detalle_secciones": [],
     "ultimo_inicio": None,
     "ultimo_fin": None,
     "mensaje": "Scraper inactivo"
@@ -123,6 +124,41 @@ scraper_status: Dict[str, Any] = {
 
 def get_scraper_status() -> Dict[str, Any]:
     return scraper_status
+
+def build_candidate_urls(sec: Dict[str, Any], fecha_slash: str, dom_links: Optional[Dict[str, str]] = None) -> List[str]:
+    """
+    Construye una lista ordenada de URLs candidatas para una sección, probando:
+    1. Enlaces descubiertos dinámicamente en el DOM de la página.
+    2. Ruta estándar con /SINTESIS/
+    3. Ruta directa sin /SINTESIS/
+    4. Nombres en minúsculas
+    """
+    sec_archivo = sec.get("archivo", "")
+    sec_id = sec.get("id", "")
+    candidates = []
+
+    # 1. Enlaces descubiertos en DOM
+    if dom_links:
+        upper_file = sec_archivo.upper()
+        if upper_file in dom_links:
+            candidates.append(dom_links[upper_file])
+        for k, v in dom_links.items():
+            if (sec_archivo.lower() in k.lower() or sec_id.lower() in k.lower()) and v not in candidates:
+                candidates.append(v)
+
+    # 2. Rutas estándar conocidas
+    base = "https://comunicacionsocial.senado.gob.mx/sintesis/book"
+    std_urls = [
+        f"{base}/{fecha_slash}/SINTESIS/{sec_archivo}",
+        f"{base}/{fecha_slash}/{sec_archivo}",
+        f"{base}/{fecha_slash}/SINTESIS/{sec_archivo.lower()}",
+        f"{base}/{fecha_slash}/{sec_archivo.lower()}",
+    ]
+    for u in std_urls:
+        if u not in candidates:
+            candidates.append(u)
+
+    return candidates
 
 def compute_sha256(file_bytes: bytes) -> str:
     return hashlib.sha256(file_bytes).hexdigest()
@@ -223,6 +259,7 @@ async def run_senado_scraper_pipeline(fecha_param: Optional[str] = None, seccion
     scraper_status["archivos_descargados"] = []
     scraper_status["archivos_procesados"] = []
     scraper_status["errores"] = []
+    scraper_status["detalle_secciones"] = []
     scraper_status["ultimo_inicio"] = datetime.now().isoformat()
     scraper_status["mensaje"] = f"Iniciando descarga de {len(secciones_a_descargar)} secciones del Senado para {fecha_iso}..."
 
@@ -246,6 +283,7 @@ async def run_senado_scraper_pipeline(fecha_param: Optional[str] = None, seccion
             # 1. Visitar el portal para inicializar sesión y resolver el WAF Incapsula
             print(f"[Scraper Senado] Navegando a {settings.senado_sintesis_url}...")
             scraper_status["mensaje"] = "Accediendo al portal del Senado y validando seguridad WAF..."
+            dom_links = {}
             try:
                 await page.goto(
                     "https://comunicacionsocial.senado.gob.mx/sintesis/sintesis.html",
@@ -253,6 +291,23 @@ async def run_senado_scraper_pipeline(fecha_param: Optional[str] = None, seccion
                     timeout=30000
                 )
                 await page.wait_for_timeout(3000)
+                # Extraer enlaces dinámicos reales disponibles en la página
+                dom_links = await page.evaluate("""
+                    () => {
+                        const links = {};
+                        const elements = document.querySelectorAll('a[href], iframe[src], embed[src], source[src]');
+                        elements.forEach(el => {
+                            const url = el.href || el.src;
+                            if (url && (url.toLowerCase().includes('.pdf') || url.toLowerCase().includes('/book/'))) {
+                                const filename = url.split('/').pop().split('?')[0].toUpperCase();
+                                links[filename] = url;
+                            }
+                        });
+                        return links;
+                    }
+                """)
+                if dom_links:
+                    print(f"[Scraper Senado] Enlaces dinámicos descubiertos en DOM: {list(dom_links.keys())}")
             except Exception as nav_err:
                 print(f"[Scraper Senado] Advertencia en navegación inicial: {nav_err}")
 
@@ -274,39 +329,73 @@ async def run_senado_scraper_pipeline(fecha_param: Optional[str] = None, seccion
                     sec_archivo = sec["archivo"]
 
                     scraper_status["mensaje"] = f"Descargando sección [{sec['orden']}/10]: {sec_nombre}..."
-                    url_pdf = f"https://comunicacionsocial.senado.gob.mx/sintesis/book/{fecha_slash}/SINTESIS/{sec_archivo}"
-                    print(f"[Scraper Senado] Consultando {sec_nombre} -> {url_pdf}")
+                    candidate_urls = build_candidate_urls(sec, fecha_slash, dom_links)
+                    print(f"[Scraper Senado] Consultando {sec_nombre} ({len(candidate_urls)} URLs candidatas)...")
 
                     file_bytes = b""
                     download_success = False
+                    successful_url = ""
+                    last_status = 404
+                    last_err_msg = ""
 
-                    # Intento 1: Descarga HTTP con cookies de sesión
-                    try:
-                        resp = await http_client.get(url_pdf)
-                        if resp.status_code == 200 and resp.content.startswith(b"%PDF-"):
-                            file_bytes = resp.content
-                            download_success = True
-                            print(f"[Scraper Senado] ✅ Descarga exitosa vía HTTP: {len(file_bytes)} bytes")
-                    except Exception as http_err:
-                        print(f"[Scraper Senado] Error HTTP al descargar {sec_archivo}: {http_err}")
-
-                    # Intento 2 (Fallback): Navegar y descargar a través del contexto del navegador
-                    if not download_success:
+                    for url_pdf in candidate_urls:
+                        # Intento 1: Descarga HTTP con cookies de sesión
                         try:
-                            page_resp = await page.request.get(url_pdf)
-                            if page_resp.status == 200:
-                                b_content = await page_resp.body()
-                                if b_content.startswith(b"%PDF-"):
-                                    file_bytes = b_content
-                                    download_success = True
-                                    print(f"[Scraper Senado] ✅ Descarga exitosa vía Browser Context: {len(file_bytes)} bytes")
-                        except Exception as br_err:
-                            print(f"[Scraper Senado] Error Browser al descargar {sec_archivo}: {br_err}")
+                            resp = await http_client.get(url_pdf)
+                            last_status = resp.status_code
+                            if resp.status_code == 200 and resp.content.startswith(b"%PDF-"):
+                                file_bytes = resp.content
+                                download_success = True
+                                successful_url = url_pdf
+                                print(f"[Scraper Senado] ✅ Descarga exitosa vía HTTP de {url_pdf}: {len(file_bytes)} bytes")
+                                break
+                            elif resp.status_code == 200:
+                                last_err_msg = f"HTTP 200 pero contenido no es PDF ({resp.headers.get('content-type', 'desconocido')})"
+                            else:
+                                last_err_msg = f"HTTP {resp.status_code}"
+                        except Exception as http_err:
+                            last_err_msg = f"Error de red: {http_err}"
+                            print(f"[Scraper Senado] Aviso HTTP al consultar {url_pdf}: {http_err}")
+
+                        # Intento 2 (Fallback): Navegar y descargar a través del contexto del navegador
+                        if not download_success:
+                            try:
+                                page_resp = await page.request.get(url_pdf)
+                                last_status = page_resp.status
+                                if page_resp.status == 200:
+                                    b_content = await page_resp.body()
+                                    if b_content.startswith(b"%PDF-"):
+                                        file_bytes = b_content
+                                        download_success = True
+                                        successful_url = url_pdf
+                                        print(f"[Scraper Senado] ✅ Descarga exitosa vía Browser Context de {url_pdf}: {len(file_bytes)} bytes")
+                                        break
+                                    else:
+                                        last_err_msg = "Respuesta del navegador no es PDF"
+                            except Exception as br_err:
+                                last_err_msg = f"Error navegador: {br_err}"
 
                     if not download_success or len(file_bytes) < 100:
-                        warn_msg = f"Sección '{sec_nombre}' ({sec_archivo}) no encontrada o no disponible para la fecha {fecha_iso}."
+                        if last_status == 404:
+                            motivo = f"No publicado por el Senado para la fecha {fecha_iso} (HTTP 404)."
+                        elif last_status == 403:
+                            motivo = f"Acceso restringido por WAF / Incapsula (HTTP 403)."
+                        else:
+                            motivo = f"No disponible en servidor del Senado ({last_err_msg or f'Código {last_status}'})."
+
+                        warn_msg = f"Sección '{sec_nombre}' ({sec_archivo}): {motivo}"
                         print(f"[Scraper Senado] ⚠️ {warn_msg}")
                         scraper_status["errores"].append(warn_msg)
+                        scraper_status["detalle_secciones"].append({
+                            "id": sec_id,
+                            "nombre": sec_nombre,
+                            "archivo": sec_archivo,
+                            "estado": "no_disponible" if last_status == 404 else "error",
+                            "codigo_http": last_status,
+                            "tamano_bytes": 0,
+                            "url_probada": candidate_urls[0] if candidate_urls else "",
+                            "motivo": motivo
+                        })
                         continue
 
                     # Guardar archivo en disco
@@ -323,6 +412,17 @@ async def run_senado_scraper_pipeline(fecha_param: Optional[str] = None, seccion
                         "archivo": safe_filename,
                         "bytes": len(file_bytes),
                         "hash": file_hash
+                    })
+
+                    scraper_status["detalle_secciones"].append({
+                        "id": sec_id,
+                        "nombre": sec_nombre,
+                        "archivo": sec_archivo,
+                        "estado": "descargado",
+                        "codigo_http": 200,
+                        "tamano_bytes": len(file_bytes),
+                        "url_probada": successful_url,
+                        "motivo": f"Descargado exitosamente ({len(file_bytes) // 1024} KB)"
                     })
 
                     # Registrar en PostgreSQL y encolar pipeline OCR + Claude
@@ -399,3 +499,170 @@ async def run_senado_scraper_pipeline(fecha_param: Optional[str] = None, seccion
         scraper_status["ultimo_fin"] = datetime.now().isoformat()
 
     return scraper_status
+
+
+async def check_senado_availability(fecha_param: Optional[str] = None, secciones_param: Optional[List[str]] = None) -> Dict[str, Any]:
+    """
+    Verifica rápidamente la disponibilidad en el portal del Senado para cada sección solicitada,
+    sin procesar OCR ni guardar archivos pesados.
+    Retorna el estado de disponibilidad y el código HTTP de cada sección para diagnóstico.
+    """
+    if fecha_param:
+        try:
+            fecha_dt = datetime.strptime(fecha_param.strip(), "%Y-%m-%d")
+        except ValueError:
+            fecha_dt = datetime.now()
+    else:
+        fecha_dt = datetime.now()
+        if fecha_dt.weekday() == 5:
+            fecha_dt -= timedelta(days=1)
+        elif fecha_dt.weekday() == 6:
+            fecha_dt -= timedelta(days=2)
+
+    yyyy = str(fecha_dt.year)
+    mm = f"{fecha_dt.month:02d}"
+    dd = f"{fecha_dt.day:02d}"
+    fecha_iso = f"{yyyy}-{mm}-{dd}"
+    fecha_slash = f"{yyyy}/{mm}/{dd}"
+
+    secciones_a_verificar = SECCIONES_SENADO
+    if secciones_param and len(secciones_param) > 0:
+        sec_targets = {str(s).strip().lower() for s in secciones_param}
+        filtered = [
+            s for s in SECCIONES_SENADO
+            if s["id"].lower() in sec_targets
+            or s["archivo"].lower() in sec_targets
+            or s["nombre"].lower() in sec_targets
+        ]
+        if filtered:
+            secciones_a_verificar = filtered
+
+    detalles = []
+    total_disponibles = 0
+
+    try:
+        async with async_playwright() as p:
+            browser, context, _ = await acquire_browser(p)
+            page = await context.new_page()
+
+            dom_links = {}
+            try:
+                await page.goto(
+                    "https://comunicacionsocial.senado.gob.mx/sintesis/sintesis.html",
+                    wait_until="domcontentloaded",
+                    timeout=20000
+                )
+                await page.wait_for_timeout(2500)
+                dom_links = await page.evaluate("""
+                    () => {
+                        const links = {};
+                        const elements = document.querySelectorAll('a[href], iframe[src], embed[src], source[src]');
+                        elements.forEach(el => {
+                            const url = el.href || el.src;
+                            if (url && (url.toLowerCase().includes('.pdf') || url.toLowerCase().includes('/book/'))) {
+                                const filename = url.split('/').pop().split('?')[0].toUpperCase();
+                                links[filename] = url;
+                            }
+                        });
+                        return links;
+                    }
+                """)
+            except Exception as nav_e:
+                print(f"[Check Senado] Aviso en navegación inicial: {nav_e}")
+
+            cookies = await context.cookies()
+            cookie_header = "; ".join([f"{c['name']}={c['value']}" for c in cookies])
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                "Referer": "https://comunicacionsocial.senado.gob.mx/sintesis/sintesis.html",
+                "Cookie": cookie_header
+            }
+
+            async with httpx.AsyncClient(headers=headers, timeout=15.0, follow_redirects=True) as http_client:
+                for sec in secciones_a_verificar:
+                    candidate_urls = build_candidate_urls(sec, fecha_slash, dom_links)
+                    disponible = False
+                    tamano = None
+                    last_status = 404
+                    tested_url = candidate_urls[0] if candidate_urls else ""
+
+                    for curl in candidate_urls:
+                        tested_url = curl
+                        try:
+                            resp = await http_client.get(curl, headers={"Range": "bytes=0-500"})
+                            last_status = resp.status_code
+                            if resp.status_code in [200, 206]:
+                                content_head = resp.content
+                                if content_head.startswith(b"%PDF-") or "pdf" in resp.headers.get("content-type", "").lower():
+                                    disponible = True
+                                    c_len = resp.headers.get("content-length") or resp.headers.get("content-range")
+                                    if c_len:
+                                        try:
+                                            if "/" in str(c_len):
+                                                tamano = int(str(c_len).split("/")[-1])
+                                            else:
+                                                tamano = int(c_len)
+                                        except Exception:
+                                            pass
+                                    break
+                        except Exception:
+                            last_status = 500
+
+                    # Fallback vía browser request si http_client no confirmó pero no es 404 definitivo
+                    if not disponible and last_status not in [404]:
+                        try:
+                            page_resp = await page.request.get(tested_url)
+                            last_status = page_resp.status
+                            if page_resp.status == 200:
+                                head_b = await page_resp.body()
+                                if head_b.startswith(b"%PDF-"):
+                                    disponible = True
+                                    tamano = len(head_b)
+                        except Exception:
+                            pass
+
+                    if disponible:
+                        total_disponibles += 1
+                        kb_str = f" (~{tamano // 1024} KB)" if tamano and tamano > 0 else ""
+                        motivo = f"Publicado y disponible para descarga en el portal del Senado{kb_str}"
+                    elif last_status == 404:
+                        motivo = f"No publicado por el Senado para la fecha {fecha_iso} (HTTP 404 Not Found)"
+                    elif last_status == 403:
+                        motivo = "Acceso restringido temporalmente por WAF / Incapsula (HTTP 403)"
+                    else:
+                        motivo = f"No disponible en servidor del Senado (Código {last_status})"
+
+                    detalles.append({
+                        "id": sec["id"],
+                        "nombre": sec["nombre"],
+                        "archivo": sec["archivo"],
+                        "disponible": disponible,
+                        "codigo_http": 200 if disponible else last_status,
+                        "tamano_bytes": tamano,
+                        "url_probada": tested_url,
+                        "motivo": motivo
+                    })
+
+            await browser.close()
+
+    except Exception as e:
+        print(f"[Check Senado] Error general comprobando disponibilidad: {e}")
+        for sec in secciones_a_verificar:
+            detalles.append({
+                "id": sec["id"],
+                "nombre": sec["nombre"],
+                "archivo": sec["archivo"],
+                "disponible": False,
+                "codigo_http": 500,
+                "tamano_bytes": None,
+                "url_probada": f"https://comunicacionsocial.senado.gob.mx/sintesis/book/{fecha_slash}/SINTESIS/{sec['archivo']}",
+                "motivo": f"Error conectando con el portal del Senado: {str(e)[:90]}"
+            })
+
+    return {
+        "fecha": fecha_iso,
+        "total_secciones": len(secciones_a_verificar),
+        "disponibles": total_disponibles,
+        "no_disponibles": len(secciones_a_verificar) - total_disponibles,
+        "detalles": detalles
+    }

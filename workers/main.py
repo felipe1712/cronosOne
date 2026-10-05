@@ -196,6 +196,13 @@ def get_senado_secciones_endpoint():
     from senado_scraper import SECCIONES_SENADO
     return SECCIONES_SENADO
 
+@app.post("/api/senado/verificar-disponibilidad")
+async def verificar_disponibilidad_senado_endpoint(payload: Optional[ScrapeSenadoRequest] = None):
+    from senado_scraper import check_senado_availability
+    fecha = payload.fecha if payload else None
+    secciones = payload.secciones if payload else None
+    return await check_senado_availability(fecha, secciones)
+
 def parse_pg_array(val):
     if val is None:
         return []

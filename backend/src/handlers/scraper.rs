@@ -114,3 +114,43 @@ pub async fn get_scraper_senado_secciones(
     }
 }
 
+/// Verifica la disponibilidad real de las secciones del Senado para una fecha dada
+pub async fn verificar_disponibilidad_senado(
+    State((_pool, config)): State<(DbPool, Arc<Config>)>,
+    Json(payload): Json<Option<ScraperJobRequest>>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let worker_url = format!("{}/api/senado/verificar-disponibilidad", config.worker_base_url);
+    let client = reqwest::Client::new();
+    let body = payload.unwrap_or_default();
+
+    info!("Verificando disponibilidad de secciones del Senado en worker: {}", worker_url);
+
+    let resp = client
+        .post(&worker_url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| {
+            error!("Error llamando a worker Python para verificar disponibilidad: {}", e);
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"error": format!("No se pudo contactar al worker Python: {}", e)})),
+            )
+        })?;
+
+    let status = resp.status();
+    let res_json: serde_json::Value = resp.json().await.unwrap_or_else(|_| {
+        json!({"error": "Respuesta no JSON del worker"})
+    });
+
+    if status.is_success() {
+        Ok((StatusCode::OK, Json(res_json)))
+    } else {
+        Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "Error reportado por el worker al verificar disponibilidad", "detalles": res_json})),
+        ))
+    }
+}
+
+

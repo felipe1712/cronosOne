@@ -82,6 +82,7 @@ pub fn create_router(pool: DbPool, config: Arc<Config>) -> Router {
         .route("/api/scraper/senado/ejecutar", post(scraper::ejecutar_scraper_senado))
         .route("/api/scraper/senado/status", get(scraper::get_scraper_senado_status))
         .route("/api/scraper/senado/secciones", get(scraper::get_scraper_senado_secciones))
+        .route("/api/scraper/senado/verificar", post(scraper::verificar_disponibilidad_senado))
         .layer(middleware::from_fn_with_state(config.clone(), require_auth));
 
     // Rutas públicas (consumidas por frontend login y cron n8n)
