@@ -1322,14 +1322,13 @@ pub async fn eliminar_boletin(
 
     #[derive(sqlx::FromRow)]
     struct DocInfo {
-        id: Uuid,
         fecha_boletin: NaiveDate,
         nombre_archivo: String,
         ruta_archivo: String,
     }
 
     let doc = match sqlx::query_as::<_, DocInfo>(
-        "SELECT id, fecha_boletin, nombre_archivo, ruta_archivo FROM boletines WHERE id = $1",
+        "SELECT fecha_boletin, nombre_archivo, ruta_archivo FROM boletines WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(&pool)
@@ -1427,12 +1426,11 @@ pub async fn eliminar_sintesis_diaria(
     if params.eliminar_documentos.unwrap_or(false) {
         #[derive(sqlx::FromRow)]
         struct FilePathRow {
-            id: Uuid,
             ruta_archivo: String,
         }
 
         let files = sqlx::query_as::<_, FilePathRow>(
-            "SELECT id, ruta_archivo FROM boletines WHERE fecha_boletin = $1",
+            "SELECT ruta_archivo FROM boletines WHERE fecha_boletin = $1",
         )
         .bind(fecha)
         .fetch_all(&pool)
