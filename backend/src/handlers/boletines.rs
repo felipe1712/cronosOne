@@ -852,13 +852,17 @@ pub async fn upload_multiple_boletines(
     Extension(auth_ctx): Extension<AuthContext>,
     mut multipart: Multipart,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    ensure_sintesis_diarias_schema(&pool).await;
-
     let mut fecha_boletin: Option<NaiveDate> = None;
     let mut origen = "manual".to_string();
     let mut uploaded_files: Vec<(String, Vec<u8>)> = Vec::new();
 
-    while let Ok(Some(field)) = multipart.next_field().await {
+    while let Some(field) = multipart.next_field().await.map_err(|e| {
+        error!("Error en multipart.next_field: {}", e);
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": format!("Error leyendo formulario multipart: {}", e)})),
+        )
+    })? {
         let name = field.name().unwrap_or("").to_string();
 
         if name == "fecha" || name == "fecha_boletin" {
@@ -881,10 +885,15 @@ pub async fn upload_multiple_boletines(
                 .to_string();
 
             if original_name.to_lowercase().ends_with(".pdf") {
-                if let Ok(bytes) = field.bytes().await {
-                    if !bytes.is_empty() {
-                        uploaded_files.push((original_name, bytes.to_vec()));
-                    }
+                let bytes = field.bytes().await.map_err(|e| {
+                    error!("Error leyendo bytes de {}: {}", original_name, e);
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({"error": format!("Error leyendo bytes de {}: {}", original_name, e)})),
+                    )
+                })?;
+                if !bytes.is_empty() {
+                    uploaded_files.push((original_name, bytes.to_vec()));
                 }
             }
         }
@@ -893,7 +902,7 @@ pub async fn upload_multiple_boletines(
     if uploaded_files.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(json!({"error": "No se recibieron archivos PDF válidos"})),
+            Json(json!({"error": "No se recibieron archivos PDF válidos para subir"})),
         ));
     }
 
@@ -909,17 +918,24 @@ pub async fn upload_multiple_boletines(
 
     for (file_name, file_bytes) in uploaded_files {
         let boletin_id = Uuid::new_v4();
-        let safe_file_name = format!("{}_{}", boletin_id, file_name);
+        let safe_file_name = format!("{}_{}", boletin_id, file_name.replace(" ", "_"));
         let target_path = upload_dir.join(&safe_file_name);
 
-        if let Ok(mut f) = tokio::fs::File::create(&target_path).await {
-            let _ = f.write_all(&file_bytes).await;
+        match tokio::fs::File::create(&target_path).await {
+            Ok(mut f) => {
+                if let Err(e) = f.write_all(&file_bytes).await {
+                    error!("Error escribiendo archivo {} en disco: {}", safe_file_name, e);
+                }
+            }
+            Err(e) => {
+                error!("Error creando archivo {} en disco: {}", target_path.display(), e);
+            }
         }
 
         let target_path_abs = std::fs::canonicalize(&target_path).unwrap_or_else(|_| target_path.clone());
         let target_path_str = target_path_abs.to_string_lossy().to_string();
 
-        let res = sqlx::query(
+        let insert_res = match sqlx::query(
             "INSERT INTO boletines (id, fecha_boletin, nombre_archivo, ruta_archivo, subido_por, estado, origen, incluido_en_sintesis)
              VALUES ($1, $2, $3, $4, $5, 'pendiente_ocr', $6, TRUE)",
         )
@@ -930,28 +946,61 @@ pub async fn upload_multiple_boletines(
         .bind(auth_ctx.user_id)
         .bind(&origen)
         .execute(&pool)
-        .await;
+        .await {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                tracing::warn!("Aviso insertando con subido_por ({}): {}. Reintentando con subido_por = NULL...", auth_ctx.user_id, e);
+                sqlx::query(
+                    "INSERT INTO boletines (id, fecha_boletin, nombre_archivo, ruta_archivo, subido_por, estado, origen, incluido_en_sintesis)
+                     VALUES ($1, $2, $3, $4, NULL, 'pendiente_ocr', $5, TRUE)",
+                )
+                .bind(boletin_id)
+                .bind(fecha)
+                .bind(&file_name)
+                .bind(&target_path_str)
+                .bind(&origen)
+                .execute(&pool)
+                .await
+                .map(|_| ())
+            }
+        };
 
-        if res.is_ok() {
-            creados.push(json!({
-                "id": boletin_id,
-                "nombre_archivo": file_name,
-                "estado": "pendiente_ocr",
-                "origen": origen
-            }));
+        match insert_res {
+            Ok(_) => {
+                info!("Boletín manual registrado: {} (ID: {}) para fecha {}", file_name, boletin_id, fecha);
+                creados.push(json!({
+                    "id": boletin_id,
+                    "nombre_archivo": file_name,
+                    "estado": "pendiente_ocr",
+                    "origen": origen
+                }));
 
-            // Notificar worker Python en background
-            let b_id_str = boletin_id.to_string();
-            let f_path = target_path_str.clone();
-            let w_url = worker_url.clone();
-            let cli = client.clone();
-            tokio::spawn(async move {
-                let _ = cli.post(&w_url).json(&json!({
-                    "boletin_id": b_id_str,
-                    "ruta_archivo": f_path
-                })).send().await;
-            });
+                // Notificar worker Python en background
+                let b_id_str = boletin_id.to_string();
+                let f_path = target_path_str.clone();
+                let w_url = worker_url.clone();
+                let cli = client.clone();
+                tokio::spawn(async move {
+                    let resp = cli.post(&w_url).json(&json!({
+                        "boletin_id": b_id_str,
+                        "ruta_archivo": f_path
+                    })).send().await;
+                    if let Err(err) = resp {
+                        tracing::error!("Error notificando a worker Python para {}: {}", b_id_str, err);
+                    }
+                });
+            }
+            Err(err) => {
+                error!("Error definitivo insertando boletín {} en BD: {}", file_name, err);
+            }
         }
+    }
+
+    if creados.is_empty() {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "No se pudo registrar ningún documento en la base de datos"})),
+        ));
     }
 
     Ok((

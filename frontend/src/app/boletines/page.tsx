@@ -99,6 +99,7 @@ export default function BoletinesPage() {
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
   const [uploadingFiles, setUploadingFiles] = useState<boolean>(false);
   const [uploadModalOpen, setUploadModalOpen] = useState<boolean>(false);
+  const [uploadModalError, setUploadModalError] = useState<string | null>(null);
 
   // Diálogo de Selección de Secciones del Senado
   const [senadoModalOpen, setSenadoModalOpen] = useState<boolean>(false);
@@ -214,6 +215,29 @@ export default function BoletinesPage() {
       }
     };
   }, []);
+
+  // Sondeo reactivo mientras haya documentos en procesamiento OCR (Surya / Claude)
+  useEffect(() => {
+    const hayDocsEnProceso = workspace?.documentos?.some(
+      (d) => d.estado === "pendiente_ocr" || d.estado === "en_ocr"
+    );
+
+    if (hayDocsEnProceso) {
+      const interval = setInterval(async () => {
+        try {
+          const resp = await ApiService.getWorkspaceFecha(fechaTrabajo);
+          setWorkspace(resp);
+          if (resp.sintesis && resp.sintesis.texto && !editedText) {
+            setEditedText(resp.sintesis.texto);
+          }
+        } catch {
+          // Ignorar errores transitorios de polling en segundo plano
+        }
+      }, 3500);
+
+      return () => clearInterval(interval);
+    }
+  }, [workspace?.documentos, fechaTrabajo, editedText]);
 
   const handleCambiarFecha = (nuevaFecha: string) => {
     setFechaTrabajo(nuevaFecha);
@@ -374,12 +398,13 @@ export default function BoletinesPage() {
 
   const handleUploadStagedFiles = async () => {
     if (stagedFiles.length === 0) {
-      setError("Seleccione al menos un archivo PDF para subir.");
+      setUploadModalError("Seleccione al menos un archivo PDF para subir.");
       return;
     }
 
     try {
       setUploadingFiles(true);
+      setUploadModalError(null);
       setError(null);
       const formData = new FormData();
       formData.append("fecha", fechaTrabajo);
@@ -392,10 +417,13 @@ export default function BoletinesPage() {
       setSuccess(`✅ ${res.mensaje}`);
       setStagedFiles([]);
       setUploadModalOpen(false);
-      fetchWorkspace(fechaTrabajo);
-      fetchHistorial();
+      setUploadModalError(null);
+      await fetchWorkspace(fechaTrabajo);
+      await fetchHistorial();
     } catch (err: any) {
-      setError(err.message || "Error al subir los documentos.");
+      const msg = err.message || "Error al subir los documentos.";
+      setUploadModalError(msg);
+      setError(msg);
     } finally {
       setUploadingFiles(false);
     }
@@ -855,7 +883,10 @@ export default function BoletinesPage() {
               <Button
                 variant="outlined"
                 startIcon={<CloudUploadIcon />}
-                onClick={() => setUploadModalOpen(true)}
+                onClick={() => {
+                  setUploadModalError(null);
+                  setUploadModalOpen(true);
+                }}
                 sx={{ textTransform: "none", fontWeight: 600, borderRadius: "8px" }}
               >
                 Subir Documentos
@@ -1827,6 +1858,16 @@ export default function BoletinesPage() {
           Subir Múltiples Documentos al Día {fechaTrabajo}
         </DialogTitle>
         <DialogContent sx={{ pt: 2.5 }}>
+          {uploadModalError && (
+            <Alert
+              severity="error"
+              sx={{ mb: 2, borderRadius: "8px" }}
+              onClose={() => setUploadModalError(null)}
+            >
+              {uploadModalError}
+            </Alert>
+          )}
+
           <Typography variant="body2" sx={{ color: "#475569", mb: 2 }}>
             Arrastre o seleccione todos los boletines, alertas o reportes sectoriales (formato PDF) que formarán parte de la síntesis del día.
           </Typography>
