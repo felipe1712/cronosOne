@@ -119,31 +119,31 @@ async def process_pdf_ocr(file_path: str) -> List[Dict[str, Any]]:
     for ocr_url in candidate_urls:
         try:
             async with httpx.AsyncClient(timeout=300.0) as client:
-                # Intento 1.A: Pasar ruta absoluta local (sin transferencia de bytes por socket)
+                # Intento 1.A: Pasar ruta absoluta local en JSON (sin transferencia de bytes por socket)
                 try:
-                    resp_path = await client.post(ocr_url, data={"file_path": file_path})
+                    resp_path = await client.post(ocr_url, json={"file_path": file_path})
                     if resp_path.status_code == 200:
                         data = resp_path.json()
                         pages = data.get("pages") if isinstance(data, dict) else data
-                        if isinstance(pages, list) and pages:
-                            print(f"[Surya OCR] ✅ Procesamiento exitoso vía ruta en {ocr_url} ({len(pages)} páginas)")
+                        if isinstance(pages, list) and pages and any(len(p.get("text", "")) > 30 for p in pages):
+                            print(f"[Surya OCR] ✅ Procesamiento exitoso vía ruta JSON en {ocr_url} ({len(pages)} páginas)")
                             return pages
-                except Exception:
-                    pass
+                except Exception as ex_json:
+                    print(f"[Surya OCR] Aviso en intento ruta JSON: {ex_json}")
 
                 # Intento 1.B: Subida multipart del archivo
                 with open(file_path, "rb") as f:
                     files = {"file": (os.path.basename(file_path), f, "application/pdf")}
-                    print(f"[Surya OCR] Enviando archivo al microservicio local en {ocr_url}...")
+                    print(f"[Surya OCR] Enviando archivo multipart al microservicio local en {ocr_url}...")
                     response = await client.post(ocr_url, files=files)
                     if response.status_code == 200:
                         data = response.json()
                         pages = data.get("pages") if isinstance(data, dict) else data
-                        if isinstance(pages, list) and pages:
+                        if isinstance(pages, list) and pages and any(len(p.get("text", "")) > 30 for p in pages):
                             print(f"[Surya OCR] ✅ Procesamiento exitoso multipart en {ocr_url} ({len(pages)} páginas)")
                             return pages
                     else:
-                        print(f"[Surya OCR] {ocr_url} devolvió HTTP {response.status_code}: {response.text[:150]}")
+                        print(f"[Surya OCR] {ocr_url} devolvió HTTP {response.status_code}: {response.text[:200]}")
         except Exception as e:
             print(f"[Surya OCR] Microservicio no disponible en {ocr_url}: {e}")
 

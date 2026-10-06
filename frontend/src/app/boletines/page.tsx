@@ -59,6 +59,7 @@ import CheckBoxIcon from "@mui/icons-material/CheckBox";
 import LayersIcon from "@mui/icons-material/Layers";
 import SearchIcon from "@mui/icons-material/Search";
 import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
+import AutorenewIcon from "@mui/icons-material/Autorenew";
 
 import {
   ApiService,
@@ -700,6 +701,19 @@ export default function BoletinesPage() {
     }
   };
 
+  const handleReprocessDoc = async (id: string, nombre: string) => {
+    try {
+      setSuccess(`⏳ Encolando re-procesamiento OCR con Surya para: "${nombre}"...`);
+      await ApiService.procesarBoletin(id);
+      setSuccess(`✅ Re-procesamiento iniciado para "${nombre}". Los modelos Surya extraerán el contenido de las portadas.`);
+      setTimeout(() => {
+        fetchWorkspace(fechaTrabajo);
+      }, 2500);
+    } catch (err: any) {
+      setError(err.message || "Error al solicitar el re-procesamiento OCR.");
+    }
+  };
+
   const getStatusChip = (estado: string) => {
     switch (estado) {
       case "aprobado":
@@ -1127,6 +1141,20 @@ export default function BoletinesPage() {
                         <Tooltip title="Ver texto extraído y secciones">
                           <IconButton size="small" onClick={() => handleOpenDocPreview(doc.id)}>
                             <VisibilityIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Re-procesar con Surya OCR">
+                          <IconButton
+                            size="small"
+                            color="primary"
+                            onClick={() => handleReprocessDoc(doc.id, doc.nombre_archivo)}
+                            sx={{
+                              border: "1px solid #bfdbfe",
+                              backgroundColor: "#eff6ff",
+                              "&:hover": { backgroundColor: "#dbeafe" },
+                            }}
+                          >
+                            <AutorenewIcon fontSize="small" />
                           </IconButton>
                         </Tooltip>
                         <Tooltip title="Eliminar documento del universo">
@@ -2081,9 +2109,24 @@ export default function BoletinesPage() {
               <Typography variant="subtitle1" sx={{ fontWeight: 700, color: "#1e293b" }}>
                 {previewDocDetail.boletin.nombre_archivo}
               </Typography>
-              <Typography variant="caption" sx={{ color: "#64748b", display: "block", mb: 2 }}>
-                ID: {previewDocDetail.boletin.id} | Fecha: {previewDocDetail.boletin.fecha_boletin} | Estado: {previewDocDetail.boletin.estado}
-              </Typography>
+              <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 2, flexWrap: "wrap", gap: 1 }}>
+                <Typography variant="caption" sx={{ color: "#64748b" }}>
+                  ID: {previewDocDetail.boletin.id} | Fecha: {previewDocDetail.boletin.fecha_boletin} | Estado: {previewDocDetail.boletin.estado}
+                </Typography>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  color="primary"
+                  startIcon={<AutorenewIcon />}
+                  onClick={() => {
+                    handleReprocessDoc(previewDocDetail.boletin.id, previewDocDetail.boletin.nombre_archivo);
+                    setPreviewDocModalOpen(false);
+                  }}
+                  sx={{ textTransform: "none", fontSize: "0.78rem" }}
+                >
+                  Re-procesar OCR (Surya)
+                </Button>
+              </Box>
 
               <Typography variant="subtitle2" sx={{ fontWeight: 700, color: "#475569", mb: 1 }}>
                 Secciones extraídas por OCR Surya ({previewDocDetail.secciones?.length || 0}):

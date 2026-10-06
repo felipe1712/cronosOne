@@ -48,7 +48,10 @@ async def run_bulletin_pipeline(boletin_id: str, ruta_archivo: str):
         print(f"[Pipeline] Segmentando {total_paginas} páginas...")
         secciones = segment_bulletin(pages)
 
-        # 4. Guardar secciones en PostgreSQL
+        # 4. Guardar secciones en PostgreSQL (limpiando previas si es reprocesamiento)
+        cur.execute("DELETE FROM secciones WHERE boletin_id = %s", (boletin_id,))
+        cur.execute("DELETE FROM sintesis_generadas WHERE boletin_id = %s", (boletin_id,))
+
         for sec in secciones:
             cur.execute(
                 """

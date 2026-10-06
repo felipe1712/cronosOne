@@ -10,6 +10,8 @@ ExecStart=/opt/cronosOne/workers/venv/bin/uvicorn surya_service:app --host 127.0
 Restart=always
 RestartSec=5
 Environment=PYTHONPATH=/opt/cronosOne/workers
+Environment=TORCH_DEVICE=cpu
+Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=-/opt/cronosOne/workers/.env
 
 [Install]
