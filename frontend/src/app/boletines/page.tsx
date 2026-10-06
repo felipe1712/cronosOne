@@ -143,7 +143,13 @@ export default function BoletinesPage() {
   const [loadingReview, setLoadingReview] = useState<boolean>(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState<boolean>(false);
   const [dateToDelete, setDateToDelete] = useState<string | null>(null);
+  const [deleteDateWithDocs, setDeleteDateWithDocs] = useState<boolean>(false);
   const [deletingSintesis, setDeletingSintesis] = useState<boolean>(false);
+
+  // Eliminación de Documentos Individuales del Universo del Día
+  const [docToDelete, setDocToDelete] = useState<{ id: string; nombre: string } | null>(null);
+  const [deleteDocModalOpen, setDeleteDocModalOpen] = useState<boolean>(false);
+  const [deletingDoc, setDeletingDoc] = useState<boolean>(false);
 
   // Mensajes de Alerta
   const [error, setError] = useState<string | null>(null);
@@ -643,8 +649,9 @@ export default function BoletinesPage() {
     }
   };
 
-  const handlePromptDeleteSintesis = (fecha: string) => {
+  const handlePromptDeleteSintesis = (fecha: string, defaultDeleteWithDocs = false) => {
     setDateToDelete(fecha);
+    setDeleteDateWithDocs(defaultDeleteWithDocs);
     setDeleteConfirmOpen(true);
   };
 
@@ -652,21 +659,44 @@ export default function BoletinesPage() {
     if (!dateToDelete) return;
     try {
       setDeletingSintesis(true);
-      await ApiService.eliminarSintesisDiaria(dateToDelete);
-      setSuccess(`✅ Síntesis consolidada del día ${dateToDelete} eliminada correctamente.`);
+      const res = await ApiService.eliminarSintesisDiaria(dateToDelete, deleteDateWithDocs);
+      setSuccess(`✅ ${res.mensaje}`);
       setDeleteConfirmOpen(false);
       if (reviewModalOpen && reviewSintesisData?.fecha === dateToDelete) {
         setReviewModalOpen(false);
       }
       if (fechaTrabajo === dateToDelete) {
-        fetchWorkspace(dateToDelete);
+        await fetchWorkspace(dateToDelete);
       }
-      fetchHistorial();
+      await fetchHistorial();
     } catch (err: any) {
       setError(err.message || "Error al eliminar la síntesis diaria.");
     } finally {
       setDeletingSintesis(false);
       setDateToDelete(null);
+      setDeleteDateWithDocs(false);
+    }
+  };
+
+  const handlePromptDeleteDoc = (id: string, nombre: string) => {
+    setDocToDelete({ id, nombre });
+    setDeleteDocModalOpen(true);
+  };
+
+  const handleConfirmDeleteDoc = async () => {
+    if (!docToDelete) return;
+    try {
+      setDeletingDoc(true);
+      const res = await ApiService.eliminarBoletin(docToDelete.id);
+      setSuccess(`✅ ${res.mensaje}`);
+      setDeleteDocModalOpen(false);
+      await fetchWorkspace(fechaTrabajo);
+      await fetchHistorial();
+    } catch (err: any) {
+      setError(err.message || "Error al eliminar el documento.");
+    } finally {
+      setDeletingDoc(false);
+      setDocToDelete(null);
     }
   };
 
@@ -1093,11 +1123,27 @@ export default function BoletinesPage() {
                     </TableCell>
                     <TableCell>{getStatusChip(doc.estado)}</TableCell>
                     <TableCell align="right">
-                      <Tooltip title="Ver texto extraído y secciones">
-                        <IconButton size="small" onClick={() => handleOpenDocPreview(doc.id)}>
-                          <VisibilityIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
+                      <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+                        <Tooltip title="Ver texto extraído y secciones">
+                          <IconButton size="small" onClick={() => handleOpenDocPreview(doc.id)}>
+                            <VisibilityIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Eliminar documento del universo">
+                          <IconButton
+                            size="small"
+                            color="error"
+                            onClick={() => handlePromptDeleteDoc(doc.id, doc.nombre_archivo)}
+                            sx={{
+                              border: "1px solid #fecaca",
+                              backgroundColor: "#fef2f2",
+                              "&:hover": { backgroundColor: "#fee2e2" },
+                            }}
+                          >
+                            <DeleteOutlineIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </Stack>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -1538,37 +1584,35 @@ export default function BoletinesPage() {
                             {isCurrent ? "Trabajando Día" : "Trabajar Día"}
                           </Button>
                           {f.sintesis_id && (
-                            <>
-                              <Tooltip title="Revisar Síntesis Consolidada">
-                                <IconButton
-                                  size="small"
-                                  color="info"
-                                  onClick={() => handleOpenReview(f.fecha)}
-                                  sx={{
-                                    border: "1px solid #bfdbfe",
-                                    backgroundColor: "#eff6ff",
-                                    "&:hover": { backgroundColor: "#dbeafe" },
-                                  }}
-                                >
-                                  <VisibilityIcon fontSize="small" />
-                                </IconButton>
-                              </Tooltip>
-                              <Tooltip title="Eliminar Síntesis Consolidada">
-                                <IconButton
-                                  size="small"
-                                  color="error"
-                                  onClick={() => handlePromptDeleteSintesis(f.fecha)}
-                                  sx={{
-                                    border: "1px solid #fecaca",
-                                    backgroundColor: "#fef2f2",
-                                    "&:hover": { backgroundColor: "#fee2e2" },
-                                  }}
-                                >
-                                  <DeleteOutlineIcon fontSize="small" />
-                                </IconButton>
-                              </Tooltip>
-                            </>
+                            <Tooltip title="Revisar Síntesis Consolidada">
+                              <IconButton
+                                size="small"
+                                color="info"
+                                onClick={() => handleOpenReview(f.fecha)}
+                                sx={{
+                                  border: "1px solid #bfdbfe",
+                                  backgroundColor: "#eff6ff",
+                                  "&:hover": { backgroundColor: "#dbeafe" },
+                                }}
+                              >
+                                <VisibilityIcon fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
                           )}
+                          <Tooltip title={f.sintesis_id ? "Eliminar Síntesis o Registro del Día" : "Eliminar Fecha y Registros no Procesados"}>
+                            <IconButton
+                              size="small"
+                              color="error"
+                              onClick={() => handlePromptDeleteSintesis(f.fecha, !f.sintesis_id || f.total_documentos > 0)}
+                              sx={{
+                                border: "1px solid #fecaca",
+                                backgroundColor: "#fef2f2",
+                                "&:hover": { backgroundColor: "#fee2e2" },
+                              }}
+                            >
+                              <DeleteOutlineIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
                         </Stack>
                       </TableCell>
                     </TableRow>
@@ -2195,7 +2239,7 @@ export default function BoletinesPage() {
       </Dialog>
 
       {/* ===================================================================== */}
-      {/* DIÁLOGO: CONFIRMAR ELIMINACIÓN DE SÍNTESIS                           */}
+      {/* DIÁLOGO: CONFIRMAR ELIMINACIÓN DE SÍNTESIS / FECHA                    */}
       {/* ===================================================================== */}
       <Dialog
         open={deleteConfirmOpen}
@@ -2205,15 +2249,34 @@ export default function BoletinesPage() {
         PaperProps={{ sx: { borderRadius: "12px" } }}
       >
         <DialogTitle sx={{ fontWeight: 700, color: "#b91c1c" }}>
-          Eliminar Síntesis Consolidada
+          Eliminar Registro / Síntesis del Día
         </DialogTitle>
         <DialogContent>
           <Typography variant="body2" sx={{ color: "#475569" }}>
-            ¿Está seguro de que desea eliminar la síntesis consolidada del día <strong>{dateToDelete}</strong>?
+            ¿Está seguro de que desea eliminar el registro de la fecha <strong>{dateToDelete}</strong>?
           </Typography>
-          <Typography variant="caption" sx={{ color: "#64748b", display: "block", mt: 1.5 }}>
-            Los documentos PDF y OCR asociados a esta fecha se conservarán intactos en el universo de documentos y podrá volver a generar la síntesis cuando lo desee.
-          </Typography>
+          <Box sx={{ mt: 2, p: 1.5, borderRadius: "8px", backgroundColor: "#f8fafc", border: "1px solid #e2e8f0" }}>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={deleteDateWithDocs}
+                  onChange={(e) => setDeleteDateWithDocs(e.target.checked)}
+                  color="error"
+                  size="small"
+                />
+              }
+              label={
+                <Typography variant="body2" sx={{ fontWeight: 600, color: "#334155" }}>
+                  Eliminar también los documentos PDF de este día (limpiar fecha por completo)
+                </Typography>
+              }
+            />
+            <Typography variant="caption" sx={{ color: "#64748b", display: "block", pl: 3.8 }}>
+              {deleteDateWithDocs
+                ? "Se eliminarán los archivos y la fecha desaparecerá completamente del historial."
+                : "Solo se eliminará la síntesis generada; los documentos permanecerán en el universo."}
+            </Typography>
+          </Box>
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>
           <Button
@@ -2232,6 +2295,48 @@ export default function BoletinesPage() {
             sx={{ textTransform: "none", fontWeight: 700 }}
           >
             {deletingSintesis ? "Eliminando..." : "Sí, Eliminar"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* ===================================================================== */}
+      {/* DIÁLOGO: CONFIRMAR ELIMINACIÓN DE DOCUMENTO INDIVIDUAL                */}
+      {/* ===================================================================== */}
+      <Dialog
+        open={deleteDocModalOpen}
+        onClose={() => !deletingDoc && setDeleteDocModalOpen(false)}
+        maxWidth="xs"
+        fullWidth
+        PaperProps={{ sx: { borderRadius: "12px" } }}
+      >
+        <DialogTitle sx={{ fontWeight: 700, color: "#b91c1c" }}>
+          Eliminar Documento
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" sx={{ color: "#475569" }}>
+            ¿Está seguro de que desea eliminar el documento <strong>{docToDelete?.nombre}</strong>?
+          </Typography>
+          <Typography variant="caption" sx={{ color: "#64748b", display: "block", mt: 1.5 }}>
+            Se eliminará el archivo en disco, sus secciones extraídas y su asociación con la síntesis del día. Esta acción no se puede deshacer.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ p: 2 }}>
+          <Button
+            onClick={() => setDeleteDocModalOpen(false)}
+            disabled={deletingDoc}
+            sx={{ textTransform: "none" }}
+          >
+            Cancelar
+          </Button>
+          <Button
+            variant="contained"
+            color="error"
+            startIcon={deletingDoc ? <CircularProgress size={16} color="inherit" /> : <DeleteOutlineIcon />}
+            onClick={handleConfirmDeleteDoc}
+            disabled={deletingDoc}
+            sx={{ textTransform: "none", fontWeight: 700 }}
+          >
+            {deletingDoc ? "Eliminando..." : "Sí, Eliminar Documento"}
           </Button>
         </DialogActions>
       </Dialog>

@@ -487,9 +487,14 @@ export const ApiService = {
       }
     ),
 
-  eliminarSintesisDiaria: (fecha: string) =>
-    apiFetch<{ mensaje: string; filas_afectadas: number; fecha: string }>(
-      `/sintesis-diarias/${fecha}`,
+  eliminarBoletin: (id: string) =>
+    apiFetch<{ mensaje: string; id: string; nombre_archivo: string }>(`/boletines/${id}`, {
+      method: 'DELETE',
+    }),
+
+  eliminarSintesisDiaria: (fecha: string, eliminarDocumentos = false) =>
+    apiFetch<{ mensaje: string; filas_afectadas: number; documentos_eliminados?: number; fecha: string }>(
+      `/sintesis-diarias/${fecha}${eliminarDocumentos ? '?eliminar_documentos=true' : ''}`,
       {
         method: 'DELETE',
       }

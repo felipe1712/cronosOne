@@ -1314,9 +1314,92 @@ pub async fn aprobar_sintesis_diaria(
     ))
 }
 
+pub async fn eliminar_boletin(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+    Path(id): Path<Uuid>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    ensure_sintesis_diarias_schema(&pool).await;
+
+    #[derive(sqlx::FromRow)]
+    struct DocInfo {
+        id: Uuid,
+        fecha_boletin: NaiveDate,
+        nombre_archivo: String,
+        ruta_archivo: String,
+    }
+
+    let doc = match sqlx::query_as::<_, DocInfo>(
+        "SELECT id, fecha_boletin, nombre_archivo, ruta_archivo FROM boletines WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&pool)
+    .await
+    {
+        Ok(Some(d)) => d,
+        Ok(None) => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "Documento no encontrado"})),
+            ));
+        }
+        Err(e) => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("Error consultando documento: {}", e)})),
+            ));
+        }
+    };
+
+    // 1. Eliminar de la base de datos (secciones y sintesis_generadas tienen ON DELETE CASCADE)
+    let res = sqlx::query("DELETE FROM boletines WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("Error eliminando documento de base de datos: {}", e)})),
+            )
+        })?;
+
+    // 2. Remover ID del array documentos_ids en sintesis_diarias si existe
+    let _ = sqlx::query(
+        "UPDATE sintesis_diarias SET documentos_ids = array_remove(documentos_ids, $1), actualizado_en = now() WHERE fecha = $2",
+    )
+    .bind(id)
+    .bind(doc.fecha_boletin)
+    .execute(&pool)
+    .await;
+
+    // 3. Eliminar archivo físico de disco si existe
+    let _ = tokio::fs::remove_file(&doc.ruta_archivo).await;
+
+    info!(
+        "Documento '{}' ({}) de la fecha {} eliminado exitosamente",
+        doc.nombre_archivo, id, doc.fecha_boletin
+    );
+
+    Ok((
+        StatusCode::OK,
+        Json(json!({
+            "mensaje": format!("Documento '{}' eliminado exitosamente", doc.nombre_archivo),
+            "id": id,
+            "nombre_archivo": doc.nombre_archivo,
+            "fecha": doc.fecha_boletin,
+            "filas_afectadas": res.rows_affected()
+        })),
+    ))
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct DeleteSintesisQuery {
+    pub eliminar_documentos: Option<bool>,
+}
+
 pub async fn eliminar_sintesis_diaria(
     State((pool, _)): State<(DbPool, Arc<Config>)>,
     Path(fecha_str): Path<String>,
+    Query(params): Query<DeleteSintesisQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     ensure_sintesis_diarias_schema(&pool).await;
 
@@ -1338,17 +1421,52 @@ pub async fn eliminar_sintesis_diaria(
             )
         })?;
 
-    // Revertir estado de los boletines que estaban en 'aprobado' para esa fecha a 'ocr_completo'
-    let _ = sqlx::query("UPDATE boletines SET estado = 'ocr_completo' WHERE fecha_boletin = $1 AND estado = 'aprobado'")
+    let mut docs_eliminados = 0;
+
+    // Si se solicitó eliminar también los documentos asociados (para limpiar el día por completo)
+    if params.eliminar_documentos.unwrap_or(false) {
+        #[derive(sqlx::FromRow)]
+        struct FilePathRow {
+            id: Uuid,
+            ruta_archivo: String,
+        }
+
+        let files = sqlx::query_as::<_, FilePathRow>(
+            "SELECT id, ruta_archivo FROM boletines WHERE fecha_boletin = $1",
+        )
         .bind(fecha)
-        .execute(&pool)
-        .await;
+        .fetch_all(&pool)
+        .await
+        .unwrap_or_default();
+
+        docs_eliminados = files.len();
+
+        for f in files {
+            let _ = tokio::fs::remove_file(&f.ruta_archivo).await;
+        }
+
+        let _ = sqlx::query("DELETE FROM boletines WHERE fecha_boletin = $1")
+            .bind(fecha)
+            .execute(&pool)
+            .await;
+    } else {
+        // Revertir estado de los boletines que estaban en 'aprobado' para esa fecha a 'ocr_completo'
+        let _ = sqlx::query("UPDATE boletines SET estado = 'ocr_completo' WHERE fecha_boletin = $1 AND estado = 'aprobado'")
+            .bind(fecha)
+            .execute(&pool)
+            .await;
+    }
 
     Ok((
         StatusCode::OK,
         Json(json!({
-            "mensaje": format!("Síntesis diaria del {} eliminada exitosamente", fecha),
+            "mensaje": if params.eliminar_documentos.unwrap_or(false) {
+                format!("Fecha {} y sus {} documentos eliminados correctamente", fecha, docs_eliminados)
+            } else {
+                format!("Síntesis diaria del {} eliminada exitosamente", fecha)
+            },
             "filas_afectadas": res.rows_affected(),
+            "documentos_eliminados": docs_eliminados,
             "fecha": fecha
         })),
     ))
