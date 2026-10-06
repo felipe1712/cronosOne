@@ -27,8 +27,8 @@ pub fn create_router(pool: DbPool, config: Arc<Config>) -> Router {
         .route("/api/auth/me", get(auth::me))
         // Boletines Coparmex y Monitoreo Ejecutivo
         .route("/api/boletines", get(boletines::list_boletines))
-        .route("/api/boletines/upload", post(boletines::upload_boletin).layer(DefaultBodyLimit::max(100 * 1024 * 1024)))
-        .route("/api/boletines/upload-multiple", post(boletines::upload_multiple_boletines).layer(DefaultBodyLimit::max(100 * 1024 * 1024)))
+        .route("/api/boletines/upload", post(boletines::upload_boletin).layer(DefaultBodyLimit::disable()))
+        .route("/api/boletines/upload-multiple", post(boletines::upload_multiple_boletines).layer(DefaultBodyLimit::disable()))
         .route("/api/boletines/:id", get(boletines::get_boletin))
         .route("/api/boletines/:id/procesar", post(boletines::procesar_boletin))
         .route("/api/boletines/:id/sintesis", put(boletines::actualizar_sintesis))

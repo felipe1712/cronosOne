@@ -884,17 +884,25 @@ pub async fn upload_multiple_boletines(
                 .unwrap_or("documento.pdf")
                 .to_string();
 
-            if original_name.to_lowercase().ends_with(".pdf") {
+            let base_name = std::path::Path::new(&original_name)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(&original_name)
+                .to_string();
+
+            if base_name.to_lowercase().ends_with(".pdf") {
                 let bytes = field.bytes().await.map_err(|e| {
-                    error!("Error leyendo bytes de {}: {}", original_name, e);
+                    error!("Error leyendo bytes de {}: {}", base_name, e);
                     (
                         StatusCode::BAD_REQUEST,
-                        Json(json!({"error": format!("Error leyendo bytes de {}: {}", original_name, e)})),
+                        Json(json!({"error": format!("Error leyendo bytes de {}: {}", base_name, e)})),
                     )
                 })?;
                 if !bytes.is_empty() {
-                    uploaded_files.push((original_name, bytes.to_vec()));
+                    uploaded_files.push((base_name, bytes.to_vec()));
                 }
+            } else {
+                tracing::warn!("Archivo descartado por no tener extensión .pdf: {}", base_name);
             }
         }
     }
@@ -902,7 +910,7 @@ pub async fn upload_multiple_boletines(
     if uploaded_files.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(json!({"error": "No se recibieron archivos PDF válidos para subir"})),
+            Json(json!({"error": "No se recibieron archivos PDF válidos para subir (verifique que los archivos tengan extensión .pdf)"})),
         ));
     }
 
