@@ -1,5 +1,9 @@
 import os
 import httpx
+import shutil
+import subprocess
+import tempfile
+import asyncio
 from typing import Dict, Any, List
 from config import settings
 from pypdf import PdfReader
@@ -32,91 +36,10 @@ def resolve_file_path(file_path: str) -> str:
 
     return file_path
 
-import shutil
-import subprocess
-import tempfile
-import base64
-import asyncio
-
-def get_largest_image_from_page(page) -> tuple[bytes, str] | None:
-    """Extrae la imagen principal de la página del PDF (la portada del periódico)."""
-    if not hasattr(page, "images"):
-        return None
-    try:
-        images_list = list(page.images)
-        if not images_list:
-            return None
-        largest_img = None
-        max_bytes = 0
-        for img in images_list:
-            data = getattr(img, "data", None)
-            if data and len(data) > max_bytes:
-                max_bytes = len(data)
-                largest_img = (data, getattr(img, "name", "page.jpg"))
-        # Descartar logos pequeños (debe pesar más de 12 KB)
-        if largest_img and max_bytes > 12000:
-            ext = os.path.splitext(largest_img[1])[1].lower().lstrip(".")
-            media_type = "image/jpeg" if ext in ["jpg", "jpeg"] else f"image/{ext}" if ext in ["png", "webp"] else "image/jpeg"
-            return largest_img[0], media_type
-    except Exception as e:
-        print(f"[Image Parser] Error obteniendo imagen de portada: {e}")
-    return None
-
-async def transcribe_image_with_claude(image_bytes: bytes, media_type: str, page_num: int) -> str:
-    """Utiliza Claude Vision API para transcribir portadas escaneadas con máxima precisión."""
-    if not settings.anthropic_api_key:
-        print("[Claude Vision OCR] ANTHROPIC_API_KEY no configurada. Omitiendo OCR visual.")
-        return ""
-    try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-        b64 = base64.b64encode(image_bytes).decode("utf-8")
-
-        prompt = (
-            f"Analiza con visión artificial la imagen de esta portada de periódico nacional (Página {page_num}).\n"
-            "Realiza un OCR y extracción de contenido completo en español estructurado:\n"
-            "1. Nombre del Periódico (ej. Reforma, El Universal, Milenio, El Financiero, La Jornada, etc.) y Fecha.\n"
-            "2. Titular principal (nota de ocho / portada) con su desarrollo y subtítulo.\n"
-            "3. Todos los titulares secundarios, balazos, notas destacadas y columnas de opinión (especialmente política, economía, seguridad y negocios).\n"
-            "4. Cifras clave, nombres propios y declaraciones relevantes.\n\n"
-            "Devuelve el texto organizado y limpio, sin saludos ni comentarios introductorios."
-        )
-
-        def _call_claude():
-            model = settings.claude_model or "claude-3-5-sonnet-20241022"
-            resp = client.messages.create(
-                model=model,
-                max_tokens=2048,
-                messages=[{
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": media_type,
-                                "data": b64
-                            }
-                        },
-                        {
-                            "type": "text",
-                            "text": prompt
-                        }
-                    ]
-                }]
-            )
-            parts = [b.text for b in resp.content if hasattr(b, "text")]
-            return "\n".join(parts).strip()
-
-        return await asyncio.to_thread(_call_claude)
-    except Exception as e:
-        print(f"[Claude Vision OCR] Error en página {page_num}: {e}")
-        return ""
-
 def try_local_tesseract_ocr(file_path: str) -> List[Dict[str, Any]]:
     """
-    Fallback usando herramientas nativas del sistema (tesseract + pdftoppm)
-    para PDFs escaneados donde cada página es una imagen rasterizada.
+    Fallback 100% local usando tesseract y pdftoppm del sistema operativo
+    si el servicio de Surya no estuviera respondiendo.
     """
     pdftoppm = shutil.which("pdftoppm")
     tesseract = shutil.which("tesseract")
@@ -124,7 +47,7 @@ def try_local_tesseract_ocr(file_path: str) -> List[Dict[str, Any]]:
         return []
 
     try:
-        print("[Tesseract OCR] pdftoppm y tesseract detectados en el sistema. Ejecutando OCR local...")
+        print("[Tesseract OCR Local] Herramientas del sistema detectadas. Ejecutando OCR local...")
         pages = []
         with tempfile.TemporaryDirectory() as tmpdir:
             cmd_ppm = [pdftoppm, "-png", "-r", "150", file_path, os.path.join(tmpdir, "page")]
@@ -151,17 +74,34 @@ def try_local_tesseract_ocr(file_path: str) -> List[Dict[str, Any]]:
                     "lines": [line.strip() for line in text.splitlines() if line.strip()]
                 })
 
-        print(f"[Tesseract OCR] Procesadas {len(pages)} páginas exitosamente con OCR local.")
+        print(f"[Tesseract OCR Local] Procesadas {len(pages)} páginas exitosamente.")
         return pages
     except Exception as e:
-        print(f"[Tesseract OCR] Falló ejecución local de tesseract ({e}). Continuando...")
+        print(f"[Tesseract OCR Local] Error en ejecución ({e}).")
         return []
+
+def try_inprocess_surya_ocr(file_path: str) -> List[Dict[str, Any]]:
+    """
+    Ejecuta Surya OCR directamente dentro del proceso del worker si las bibliotecas
+    están instaladas localmente en el entorno virtual.
+    """
+    try:
+        print("[Surya In-Process] Intentando ejecución directa de Surya OCR en memoria...")
+        from surya_service import run_surya_ocr_pipeline
+        pages = run_surya_ocr_pipeline(file_path)
+        if pages and any(len(p.get("text", "")) > 30 for p in pages):
+            print(f"[Surya In-Process] ✅ {len(pages)} páginas procesadas exitosamente.")
+            return pages
+    except ImportError as e:
+        print(f"[Surya In-Process] Módulo surya-ocr no disponible en el venv: {e}")
+    except Exception as e:
+        print(f"[Surya In-Process] Error ejecutando pipeline local: {e}")
+    return []
 
 async def process_pdf_ocr(file_path: str) -> List[Dict[str, Any]]:
     """
-    Envía el PDF al servicio interno Surya OCR en el servidor.
-    Si el servicio no responde, utiliza fallback con tesseract o Claude Vision AI.
-    Retorna una lista de páginas con texto estructurado.
+    Envía el PDF al servicio interno local Surya OCR (puerto 5000).
+    Procesamiento 100% privado y local en el servidor, sin terceros.
     """
     resolved_path = resolve_file_path(file_path)
     if not os.path.exists(resolved_path):
@@ -169,47 +109,56 @@ async def process_pdf_ocr(file_path: str) -> List[Dict[str, Any]]:
 
     file_path = resolved_path
 
-    # 1. Intentar llamar al servicio Surya OCR (probar URL configurada y candidatos habituales)
+    # 1. Intentar llamar al microservicio local Surya OCR en localhost:5000
     candidate_urls = [settings.surya_ocr_url]
     if "5000" not in settings.surya_ocr_url:
         candidate_urls.append("http://127.0.0.1:5000/ocr")
-        candidate_urls.append("http://127.0.0.1:5000/api/ocr")
     elif "/ocr" not in settings.surya_ocr_url:
         candidate_urls.append(f"{settings.surya_ocr_url.rstrip('/')}/ocr")
 
     for ocr_url in candidate_urls:
         try:
-            async with httpx.AsyncClient(timeout=180.0) as client:
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                # Intento 1.A: Pasar ruta absoluta local (sin transferencia de bytes por socket)
+                try:
+                    resp_path = await client.post(ocr_url, data={"file_path": file_path})
+                    if resp_path.status_code == 200:
+                        data = resp_path.json()
+                        pages = data.get("pages") if isinstance(data, dict) else data
+                        if isinstance(pages, list) and pages:
+                            print(f"[Surya OCR] ✅ Procesamiento exitoso vía ruta en {ocr_url} ({len(pages)} páginas)")
+                            return pages
+                except Exception:
+                    pass
+
+                # Intento 1.B: Subida multipart del archivo
                 with open(file_path, "rb") as f:
                     files = {"file": (os.path.basename(file_path), f, "application/pdf")}
-                    print(f"[Surya OCR] Consultando servicio OCR en {ocr_url}...")
+                    print(f"[Surya OCR] Enviando archivo al microservicio local en {ocr_url}...")
                     response = await client.post(ocr_url, files=files)
                     if response.status_code == 200:
                         data = response.json()
-                        if isinstance(data, list) and data:
-                            print(f"[Surya OCR] ✅ Respuesta exitosa desde {ocr_url} ({len(data)} páginas)")
-                            return data
-                        elif isinstance(data, dict):
-                            for key in ["pages", "results", "ocr", "data", "secciones"]:
-                                if key in data and isinstance(data[key], list) and data[key]:
-                                    print(f"[Surya OCR] ✅ Respuesta exitosa desde {ocr_url} con clave '{key}' ({len(data[key])} páginas)")
-                                    return data[key]
-                            if "text" in data and isinstance(data["text"], str) and data["text"].strip():
-                                print(f"[Surya OCR] ✅ Respuesta de texto plano desde {ocr_url}")
-                                return [{"page": 1, "text": data["text"], "lines": data["text"].splitlines()}]
+                        pages = data.get("pages") if isinstance(data, dict) else data
+                        if isinstance(pages, list) and pages:
+                            print(f"[Surya OCR] ✅ Procesamiento exitoso multipart en {ocr_url} ({len(pages)} páginas)")
+                            return pages
                     else:
-                        print(f"[Surya OCR] Endpoint {ocr_url} devolvió HTTP {response.status_code}: {response.text[:150]}")
+                        print(f"[Surya OCR] {ocr_url} devolvió HTTP {response.status_code}: {response.text[:150]}")
         except Exception as e:
-            print(f"[Surya OCR] No se pudo conectar con {ocr_url}: {e}")
+            print(f"[Surya OCR] Microservicio no disponible en {ocr_url}: {e}")
 
-    # 2. Fallback con Tesseract nativo si está disponible en el servidor (ideal para imágenes de periódicos)
+    # 2. Intentar ejecución directa in-process de Surya si el microservicio HTTP no está activo
+    inproc_pages = try_inprocess_surya_ocr(file_path)
+    if inproc_pages:
+        return inproc_pages
+
+    # 3. Fallback con Tesseract local si está instalado en el servidor Linux
     tess_pages = try_local_tesseract_ocr(file_path)
-    if tess_pages:
-        has_real_content = any(len(p.get("text", "")) > 50 for p in tess_pages)
-        if has_real_content:
-            return tess_pages
+    if tess_pages and any(len(p.get("text", "")) > 50 for p in tess_pages):
+        return tess_pages
 
-    # 3. Fallback de extracción de texto digital con pypdf
+    # 4. Fallback digital con pypdf (para documentos vectoriales con texto real incrustado)
+    print(f"[Fallback OCR] Extrayendo texto digital con pypdf para: {os.path.basename(file_path)}")
     pages_result = []
     reader = PdfReader(file_path)
     total_pages = len(reader.pages)
@@ -225,42 +174,8 @@ async def process_pdf_ocr(file_path: str) -> List[Dict[str, Any]]:
 
     texts = [p["text"] for p in pages_result if p["text"]]
     unique_texts = set(t.strip() for t in texts)
-    is_image_only = (
-        len(pages_result) > 1 and len(unique_texts) <= 2 and all(len(t) < 300 for t in unique_texts)
-    ) or (total_pages > 0 and not any(len(p.get("text", "")) > 150 for p in pages_result))
+    if len(pages_result) > 1 and len(unique_texts) <= 2 and all(len(t) < 300 for t in unique_texts):
+        print(f"[Fallback OCR] ⚠️ ATENCIÓN: El PDF '{os.path.basename(file_path)}' contiene imágenes de portadas y el microservicio local de Surya OCR no está activo en el puerto 5000.")
+        print(f"[Fallback OCR] ⚠️ Inicie el servicio 'exposureiq-surya' para que Surya OCR procese las portadas de forma 100% local.")
 
-    # 4. Fallback de Visión Artificial (Claude Vision) para PDFs escaneados / portadas de periódicos
-    if is_image_only and settings.anthropic_api_key:
-        print(f"[Fallback OCR] ⚠️ AVISO: El PDF '{os.path.basename(file_path)}' contiene imágenes de portadas sin texto digital real.")
-        print(f"[Claude Vision OCR] 🤖 Activando extracción visual con Claude Vision API para las {total_pages} páginas...")
-
-        sem = asyncio.Semaphore(3)
-
-        async def _process_single_page(idx: int, page_obj):
-            img_info = get_largest_image_from_page(page_obj)
-            if not img_info:
-                return idx, ""
-            raw_bytes, m_type = img_info
-            async with sem:
-                print(f"[Claude Vision OCR] Transcribiendo visualmente portada {idx + 1} de {total_pages}...")
-                txt = await transcribe_image_with_claude(raw_bytes, m_type, idx + 1)
-                return idx, txt
-
-        tasks = [_process_single_page(i, page) for i, page in enumerate(reader.pages)]
-        results = await asyncio.gather(*tasks)
-
-        vision_count = 0
-        for idx, vision_text in results:
-            if vision_text and len(vision_text) > 80:
-                pages_result[idx]["text"] = vision_text
-                pages_result[idx]["lines"] = [l.strip() for l in vision_text.splitlines() if l.strip()]
-                vision_count += 1
-
-        if vision_count > 0:
-            print(f"[Claude Vision OCR] ✅ {vision_count}/{total_pages} portadas transcritas con éxito usando visión artificial.")
-            return pages_result
-        else:
-            print("[Claude Vision OCR] No se pudieron extraer imágenes de las páginas o falló la API.")
-
-    print(f"[Fallback OCR] Extraídas {total_pages} páginas exitosamente con pypdf.")
     return pages_result

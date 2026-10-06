@@ -174,11 +174,31 @@ Environment=NODE_ENV=production
 WantedBy=multi-user.target
 ```
 
+### 5.4. Motor Local Surya OCR (`/etc/systemd/system/exposureiq-surya.service`)
+```ini
+[Unit]
+Description=ExposureIQ Surya OCR Service (Local Engine)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/cronosOne/workers
+ExecStart=/opt/cronosOne/workers/venv/bin/uvicorn surya_service:app --host 127.0.0.1 --port 5000
+Restart=always
+RestartSec=5
+Environment=PYTHONPATH=/opt/cronosOne/workers
+EnvironmentFile=-/opt/cronosOne/workers/.env
+
+[Install]
+WantedBy=multi-user.target
+```
+
 Activa y arranca los servicios:
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now exposureiq-backend exposureiq-workers exposureiq-frontend
-sudo systemctl status exposureiq-backend exposureiq-workers exposureiq-frontend
+sudo systemctl enable --now exposureiq-surya exposureiq-backend exposureiq-workers exposureiq-frontend
+sudo systemctl status exposureiq-surya exposureiq-backend exposureiq-workers exposureiq-frontend
 ```
 
 ---
