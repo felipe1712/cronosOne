@@ -25,10 +25,12 @@ def main():
     # PASO 1: Localizar PDF de prueba
     # -------------------------------------------------------------
     print_step("PASO 1: Localización del archivo PDF de prueba")
+    from surya_service import resolve_target_path
     pdf_path = None
-    if len(sys.argv) > 1 and os.path.exists(sys.argv[1]):
-        pdf_path = sys.argv[1]
-    else:
+    if len(sys.argv) > 1:
+        pdf_path = resolve_target_path(sys.argv[1])
+
+    if not pdf_path:
         candidates = [
             "/opt/cronosOne/backend/uploads/*primeras*.pdf",
             "/opt/cronosOne/backend/uploads/*PRIMERAS*.pdf",
@@ -39,7 +41,6 @@ def main():
         for pattern in candidates:
             matches = glob.glob(pattern)
             if matches:
-                # Tomar el más reciente
                 matches.sort(key=lambda x: os.path.getmtime(x), reverse=True)
                 pdf_path = matches[0]
                 break
@@ -49,7 +50,7 @@ def main():
         print("   Por favor pasa la ruta como argumento: python debug_ocr.py /ruta/al/archivo.pdf")
         return
 
-    print(f"📄 Archivo seleccionado: {pdf_path}")
+    print(f"📄 Archivo resuelto: {pdf_path}")
     print(f"   Tamaño: {os.path.getsize(pdf_path) / (1024 * 1024):.2f} MB")
 
     # -------------------------------------------------------------
@@ -118,53 +119,29 @@ def main():
         traceback.print_exc()
 
     # -------------------------------------------------------------
-    # PASO 5: Ejecución directa de Surya OCR sobre la página 1
+    # PASO 5: Ejecución de OCR con CLI oficial de Surya
     # -------------------------------------------------------------
-    print_step("PASO 5: Ejecución de OCR Surya sobre la página 1")
-    if pil_image and det_model and rec_model:
-        try:
-            from surya.ocr import run_ocr
-            from surya_service import extract_lines_from_prediction
-            
-            print("   ⏳ Ejecutando run_ocr sobre la imagen de la página 1...")
-            start_t = time.time()
-            try:
-                preds = run_ocr(
-                    [pil_image],
-                    [["es"]],
-                    det_model,
-                    det_processor,
-                    rec_model,
-                    rec_processor
-                )
-            except TypeError:
-                preds = run_ocr(
-                    images=[pil_image],
-                    langs=[["es"]],
-                    det_model=det_model,
-                    det_processor=det_processor,
-                    rec_model=rec_model,
-                    rec_processor=rec_processor
-                )
-            dur = time.time() - start_t
-            print(f"   ✅ run_ocr completado en {dur:.2f}s!")
-            
-            lines = extract_lines_from_prediction(preds[0]) if preds else []
-            print(f"   📝 Total de líneas de texto extraídas: {len(lines)}")
+    print_step("PASO 5: Ejecución de OCR con CLI oficial de Surya")
+    try:
+        from surya_service import run_surya_cli
+        start_t = time.time()
+        print(f"   ⏳ Ejecutando surya_ocr en CLI para: {pdf_path}...")
+        cli_pages = run_surya_cli(pdf_path)
+        dur = time.time() - start_t
+        if cli_pages:
+            print(f"   ✅ CLI surya_ocr completó exitosamente en {dur:.2f}s! Total de páginas: {len(cli_pages)}")
+            p1_lines = cli_pages[0].get("lines", [])
+            print(f"   📝 Página 1: {len(p1_lines)} líneas extraídas.")
             print("   --- MUESTRA DEL TEXTO EXTRAÍDO (Primeras 15 líneas) ---")
-            for l in lines[:15]:
+            for l in p1_lines[:15]:
                 print(f"   | {l}")
             print("   --------------------------------------------------------")
-            
-            if len(lines) > 5:
-                print("   🎉 SURYA OCR ESTÁ FUNCIONANDO PERFECTAMENTE EN MEMORIA!")
-            else:
-                print("   ⚠️ Surya no detectó suficientes líneas de texto en la imagen.")
-        except Exception as e:
-            print(f"   ❌ ERROR ejecutando run_ocr: {e}")
-            traceback.print_exc()
-    else:
-        print("   ⏭️ Omitido porque falló el renderizado o la carga de modelos.")
+            print("   🎉 SURYA OCR CLI FUNCIONA CORRECTAMENTE!")
+        else:
+            print("   ❌ CLI surya_ocr no devolvió resultados.")
+    except Exception as e:
+        print(f"   ❌ Error en CLI surya_ocr: {e}")
+        traceback.print_exc()
 
     # -------------------------------------------------------------
     # PASO 6: Probar llamada HTTP al microservicio en localhost:5000

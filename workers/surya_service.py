@@ -21,13 +21,47 @@ _det_processor = None
 _rec_model = None
 _rec_processor = None
 
+def resolve_target_path(path_str: str) -> Optional[str]:
+    """Resuelve la ruta del archivo tolerando nombres de archivo con o sin prefijo UUID."""
+    if not path_str:
+        return None
+    if os.path.exists(path_str):
+        return os.path.abspath(path_str)
+
+    filename = os.path.basename(path_str)
+    search_dirs = [
+        "/opt/cronosOne/backend/uploads",
+        "/opt/cronosOne/backend",
+        "/opt/cronosOne/workers",
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backend", "uploads")),
+    ]
+
+    clean_name = filename.replace(" ", "_").lower().replace(".pdf", "")
+    for sdir in search_dirs:
+        if not os.path.exists(sdir):
+            continue
+        exact = os.path.join(sdir, filename)
+        if os.path.exists(exact):
+            return exact
+        try:
+            for f in os.listdir(sdir):
+                f_lower = f.lower()
+                if clean_name in f_lower or f_lower.endswith(clean_name + ".pdf"):
+                    return os.path.join(sdir, f)
+                parts = [p for p in clean_name.split("_") if len(p) > 3]
+                if len(parts) >= 2 and all(p in f_lower for p in parts[:3]):
+                    return os.path.join(sdir, f)
+        except Exception:
+            pass
+
+    return None
+
 def get_surya_models():
     """Carga los modelos de detección y reconocimiento de Surya de forma lazy con soporte multi-versión."""
     global _det_model, _det_processor, _rec_model, _rec_processor
     if _det_model is None or _rec_model is None:
-        print("[Surya Service] Cargando modelos de Surya OCR en memoria...")
+        print("[Surya Service] Verificando modelos de Surya OCR en memoria...")
 
-        # 1. Detección (Model & Processor)
         det_proc = None
         det_mod = None
 
@@ -35,27 +69,25 @@ def get_surya_models():
             from surya.model.detection.processor import load_processor as load_det_proc
             det_proc = load_det_proc()
         except Exception:
-            try:
-                from surya.model.detection.model import load_processor as load_det_proc
-                det_proc = load_det_proc()
-            except Exception:
-                pass
+            pass
 
         try:
             from surya.model.detection.model import load_model as load_det_mod
             det_mod = load_det_mod()
         except Exception:
+            pass
+
+        if det_mod is None:
             try:
-                from surya.model.detection import load_model as load_det_mod
+                from surya.model.detection.segformer import load_model as load_det_mod, load_processor as load_det_proc
                 det_mod = load_det_mod()
+                det_proc = load_det_proc()
             except Exception:
-                from surya.detection import load_model as load_det_mod
-                det_mod = load_det_mod()
+                pass
 
         if isinstance(det_mod, tuple):
             det_proc, det_mod = det_mod[0], det_mod[1]
 
-        # 2. Reconocimiento (Model & Processor)
         rec_proc = None
         rec_mod = None
 
@@ -63,25 +95,20 @@ def get_surya_models():
             from surya.model.recognition.processor import load_processor as load_rec_proc
             rec_proc = load_rec_proc()
         except Exception:
-            try:
-                from surya.model.recognition.model import load_processor as load_rec_proc
-                rec_proc = load_rec_proc()
-            except Exception:
-                pass
+            pass
 
         try:
             from surya.model.recognition.model import load_model as load_rec_mod
             rec_mod = load_rec_mod()
         except Exception:
-            try:
-                from surya.model.recognition import load_model as load_rec_mod
-                rec_mod = load_rec_mod()
-            except Exception:
-                from surya.recognition import load_model as load_rec_mod
-                rec_mod = load_rec_mod()
+            pass
 
         if isinstance(rec_mod, tuple):
             rec_proc, rec_mod = rec_mod[0], rec_mod[1]
+
+        if det_mod is None or rec_mod is None:
+            print("[Surya Service] Modelos en memoria no inicializados directamente. Se utilizará el motor oficial CLI surya_ocr.")
+            return None, None, None, None
 
         _det_processor = det_proc
         _det_model = det_mod
@@ -189,9 +216,16 @@ def run_surya_cli(file_path: str) -> List[Dict[str, Any]]:
 
     try:
         with tempfile.TemporaryDirectory() as out_dir:
-            cmd = [surya_bin, file_path, "--langs", "es", "--results_dir", out_dir]
+            # En versiones actuales de surya_ocr no se usa --langs (modelo multilingüe unificado)
+            cmd = [surya_bin, file_path, "--results_dir", out_dir]
             print(f"[Surya CLI] Ejecutando: {' '.join(cmd)}")
             res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=600)
+
+            # Si falla porque una versión requería --langs, reintentar con --langs
+            if res.returncode != 0 and "--langs" in res.stderr:
+                cmd = [surya_bin, file_path, "--langs", "es", "--results_dir", out_dir]
+                print(f"[Surya CLI] Reintentando con --langs: {' '.join(cmd)}")
+                res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=600)
 
             results_file = None
             for root, _, files in os.walk(out_dir):
@@ -200,7 +234,7 @@ def run_surya_cli(file_path: str) -> List[Dict[str, Any]]:
                     break
 
             if not results_file or not os.path.exists(results_file):
-                print(f"[Surya CLI] Código {res.returncode}. No se halló results.json. Stderr: {res.stderr[:200]}")
+                print(f"[Surya CLI] Código {res.returncode}. No se halló results.json. Stderr: {res.stderr[:300]}")
                 return []
 
             with open(results_file, "r", encoding="utf-8", errors="ignore") as f:
@@ -274,83 +308,55 @@ def run_tesseract_on_images(images: list) -> List[Dict[str, Any]]:
 
 def run_surya_ocr_pipeline(file_path: str) -> List[Dict[str, Any]]:
     """Ejecuta el OCR de Surya sobre el PDF o imagen local."""
-    from PIL import Image
+    resolved = resolve_target_path(file_path)
+    if resolved:
+        file_path = resolved
 
+    # Prioridad 1: Intentar con la CLI oficial de Surya (ejecución robusta y nativa)
+    print(f"[Surya Pipeline] Intentando OCR con CLI oficial de Surya para: {file_path}")
+    cli_pages = run_surya_cli(file_path)
+    if cli_pages and any(len(p.get("text", "")) > 40 for p in cli_pages):
+        print(f"[Surya Pipeline] ✅ CLI surya_ocr completó exitosamente ({len(cli_pages)} páginas).")
+        return cli_pages
+
+    # Prioridad 2: Renderizar páginas a imágenes PIL
+    from PIL import Image
     images = []
     lower_path = file_path.lower()
-
     if lower_path.endswith(".pdf"):
         images = pdf_to_pil_images(file_path)
     elif lower_path.endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff")):
-        img = Image.open(file_path).convert("RGB")
-        images = [img]
+        images = [Image.open(file_path).convert("RGB")]
 
-    if not images:
-        cli_result = run_surya_cli(file_path)
-        if cli_result:
-            return cli_result
-        raise ValueError(f"No se pudieron extraer imágenes legibles del archivo: {file_path}")
+    # Intentar con modelos en memoria si están disponibles
+    det_model, det_processor, rec_model, rec_processor = get_surya_models()
+    if det_model is not None and rec_model is not None and images:
+        try:
+            from surya.ocr import run_ocr
+            langs = ["es"]
+            pages_result = []
+            for idx, img in enumerate(images):
+                page_num = idx + 1
+                try:
+                    preds = run_ocr([img], [langs], det_model, det_processor, rec_model, rec_processor)
+                except TypeError:
+                    preds = run_ocr(images=[img], langs=[langs], det_model=det_model, det_processor=det_processor, rec_model=rec_model, rec_processor=rec_processor)
+                lines = extract_lines_from_prediction(preds[0]) if preds else []
+                pages_result.append({
+                    "page": page_num,
+                    "text": "\n".join(lines).strip(),
+                    "lines": lines
+                })
+            if any(len(p.get("text", "")) > 40 for p in pages_result):
+                return pages_result
+        except Exception as py_err:
+            print(f"[Surya Pipeline] Aviso: Falló OCR en memoria: {py_err}")
 
-    # Intentar ejecutar con los modelos Surya cargados en memoria
-    try:
-        det_model, det_processor, rec_model, rec_processor = get_surya_models()
-        from surya.ocr import run_ocr
-
-        langs = ["es"]
-        pages_result = []
-
-        # Procesar página por página para control estricto de memoria RAM en servidores
-        for idx, img in enumerate(images):
-            page_num = idx + 1
-            print(f"[Surya Service] Procesando OCR en página {page_num} de {len(images)}...")
-
-            try:
-                predictions = run_ocr(
-                    [img],
-                    [langs],
-                    det_model,
-                    det_processor,
-                    rec_model,
-                    rec_processor
-                )
-            except TypeError:
-                predictions = run_ocr(
-                    images=[img],
-                    langs=[langs],
-                    det_model=det_model,
-                    det_processor=det_processor,
-                    rec_model=rec_model,
-                    rec_processor=rec_processor
-                )
-
-            lines = []
-            if predictions:
-                lines = extract_lines_from_prediction(predictions[0])
-
-            page_text = "\n".join(lines).strip()
-            print(f"[Surya Service] Página {page_num}: {len(lines)} líneas detectadas ({len(page_text)} caracteres).")
-
-            pages_result.append({
-                "page": page_num,
-                "text": page_text,
-                "lines": lines
-            })
-
-        if any(len(p["text"]) > 40 for p in pages_result):
-            return pages_result
-
-    except Exception as py_err:
-        print(f"[Surya Service] Aviso: Falló ejecución Python en memoria ({py_err}). Probando fallback CLI...")
-
-    # Fallback 1: Ejecutar vía CLI de Surya
-    cli_pages = run_surya_cli(file_path)
-    if cli_pages and any(len(p["text"]) > 40 for p in cli_pages):
-        return cli_pages
-
-    # Fallback 2: Tesseract nativo sobre las imágenes renderizadas
-    tess_pages = run_tesseract_on_images(images)
-    if tess_pages and any(len(p["text"]) > 40 for p in tess_pages):
-        return tess_pages
+    # Prioridad 3: Fallback local con Tesseract nativo sobre las imágenes renderizadas
+    if images:
+        tess_pages = run_tesseract_on_images(images)
+        if tess_pages and any(len(p.get("text", "")) > 40 for p in tess_pages):
+            return tess_pages
 
     raise RuntimeError(f"No se pudo completar el OCR para {file_path} con ningún motor local.")
 
@@ -390,17 +396,15 @@ async def ocr_endpoint(
     temp_file_to_clean = None
 
     # 1. Form field
-    if file_path and os.path.exists(file_path):
-        target_path = file_path
+    if file_path:
+        target_path = resolve_target_path(file_path)
 
     # 2. JSON body
     if not target_path:
         try:
             body = await request.json()
             if isinstance(body, dict) and "file_path" in body:
-                candidate = body["file_path"]
-                if candidate and os.path.exists(candidate):
-                    target_path = candidate
+                target_path = resolve_target_path(body["file_path"])
         except Exception:
             pass
 
