@@ -35,6 +35,83 @@ def resolve_file_path(file_path: str) -> str:
 import shutil
 import subprocess
 import tempfile
+import base64
+import asyncio
+
+def get_largest_image_from_page(page) -> tuple[bytes, str] | None:
+    """Extrae la imagen principal de la página del PDF (la portada del periódico)."""
+    if not hasattr(page, "images"):
+        return None
+    try:
+        images_list = list(page.images)
+        if not images_list:
+            return None
+        largest_img = None
+        max_bytes = 0
+        for img in images_list:
+            data = getattr(img, "data", None)
+            if data and len(data) > max_bytes:
+                max_bytes = len(data)
+                largest_img = (data, getattr(img, "name", "page.jpg"))
+        # Descartar logos pequeños (debe pesar más de 12 KB)
+        if largest_img and max_bytes > 12000:
+            ext = os.path.splitext(largest_img[1])[1].lower().lstrip(".")
+            media_type = "image/jpeg" if ext in ["jpg", "jpeg"] else f"image/{ext}" if ext in ["png", "webp"] else "image/jpeg"
+            return largest_img[0], media_type
+    except Exception as e:
+        print(f"[Image Parser] Error obteniendo imagen de portada: {e}")
+    return None
+
+async def transcribe_image_with_claude(image_bytes: bytes, media_type: str, page_num: int) -> str:
+    """Utiliza Claude Vision API para transcribir portadas escaneadas con máxima precisión."""
+    if not settings.anthropic_api_key:
+        print("[Claude Vision OCR] ANTHROPIC_API_KEY no configurada. Omitiendo OCR visual.")
+        return ""
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        b64 = base64.b64encode(image_bytes).decode("utf-8")
+
+        prompt = (
+            f"Analiza con visión artificial la imagen de esta portada de periódico nacional (Página {page_num}).\n"
+            "Realiza un OCR y extracción de contenido completo en español estructurado:\n"
+            "1. Nombre del Periódico (ej. Reforma, El Universal, Milenio, El Financiero, La Jornada, etc.) y Fecha.\n"
+            "2. Titular principal (nota de ocho / portada) con su desarrollo y subtítulo.\n"
+            "3. Todos los titulares secundarios, balazos, notas destacadas y columnas de opinión (especialmente política, economía, seguridad y negocios).\n"
+            "4. Cifras clave, nombres propios y declaraciones relevantes.\n\n"
+            "Devuelve el texto organizado y limpio, sin saludos ni comentarios introductorios."
+        )
+
+        def _call_claude():
+            model = settings.claude_model or "claude-3-5-sonnet-20241022"
+            resp = client.messages.create(
+                model=model,
+                max_tokens=2048,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": media_type,
+                                "data": b64
+                            }
+                        },
+                        {
+                            "type": "text",
+                            "text": prompt
+                        }
+                    ]
+                }]
+            )
+            parts = [b.text for b in resp.content if hasattr(b, "text")]
+            return "\n".join(parts).strip()
+
+        return await asyncio.to_thread(_call_claude)
+    except Exception as e:
+        print(f"[Claude Vision OCR] Error en página {page_num}: {e}")
+        return ""
 
 def try_local_tesseract_ocr(file_path: str) -> List[Dict[str, Any]]:
     """
@@ -83,7 +160,7 @@ def try_local_tesseract_ocr(file_path: str) -> List[Dict[str, Any]]:
 async def process_pdf_ocr(file_path: str) -> List[Dict[str, Any]]:
     """
     Envía el PDF al servicio interno Surya OCR en el servidor.
-    Si el servicio no responde, utiliza fallback con tesseract o pypdf.
+    Si el servicio no responde, utiliza fallback con tesseract o Claude Vision AI.
     Retorna una lista de páginas con texto estructurado.
     """
     resolved_path = resolve_file_path(file_path)
@@ -148,10 +225,42 @@ async def process_pdf_ocr(file_path: str) -> List[Dict[str, Any]]:
 
     texts = [p["text"] for p in pages_result if p["text"]]
     unique_texts = set(t.strip() for t in texts)
-    if len(pages_result) > 1 and len(unique_texts) <= 2 and all(len(t) < 300 for t in unique_texts):
-        print(f"[Fallback OCR] ⚠️ AVISO: El PDF '{os.path.basename(file_path)}' contiene imágenes de páginas sin texto vectorial embebido.")
-        print(f"[Fallback OCR] ⚠️ El texto digital extraído es solo el encabezado repetitivo: {list(unique_texts)[:1]}")
-        print(f"[Fallback OCR] ⚠️ Para procesar las portadas de periódicos, asegúrate de que el servicio Surya OCR esté en http://127.0.0.1:5000/ocr o instala tesseract-ocr en el sistema.")
+    is_image_only = (
+        len(pages_result) > 1 and len(unique_texts) <= 2 and all(len(t) < 300 for t in unique_texts)
+    ) or (total_pages > 0 and not any(len(p.get("text", "")) > 150 for p in pages_result))
+
+    # 4. Fallback de Visión Artificial (Claude Vision) para PDFs escaneados / portadas de periódicos
+    if is_image_only and settings.anthropic_api_key:
+        print(f"[Fallback OCR] ⚠️ AVISO: El PDF '{os.path.basename(file_path)}' contiene imágenes de portadas sin texto digital real.")
+        print(f"[Claude Vision OCR] 🤖 Activando extracción visual con Claude Vision API para las {total_pages} páginas...")
+
+        sem = asyncio.Semaphore(3)
+
+        async def _process_single_page(idx: int, page_obj):
+            img_info = get_largest_image_from_page(page_obj)
+            if not img_info:
+                return idx, ""
+            raw_bytes, m_type = img_info
+            async with sem:
+                print(f"[Claude Vision OCR] Transcribiendo visualmente portada {idx + 1} de {total_pages}...")
+                txt = await transcribe_image_with_claude(raw_bytes, m_type, idx + 1)
+                return idx, txt
+
+        tasks = [_process_single_page(i, page) for i, page in enumerate(reader.pages)]
+        results = await asyncio.gather(*tasks)
+
+        vision_count = 0
+        for idx, vision_text in results:
+            if vision_text and len(vision_text) > 80:
+                pages_result[idx]["text"] = vision_text
+                pages_result[idx]["lines"] = [l.strip() for l in vision_text.splitlines() if l.strip()]
+                vision_count += 1
+
+        if vision_count > 0:
+            print(f"[Claude Vision OCR] ✅ {vision_count}/{total_pages} portadas transcritas con éxito usando visión artificial.")
+            return pages_result
+        else:
+            print("[Claude Vision OCR] No se pudieron extraer imágenes de las páginas o falló la API.")
 
     print(f"[Fallback OCR] Extraídas {total_pages} páginas exitosamente con pypdf.")
     return pages_result
