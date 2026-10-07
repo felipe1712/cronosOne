@@ -748,7 +748,6 @@ export default function ConfiguracionPage() {
                           const m = e.target.value;
                           setSelectedModel(m);
                           setTestResult(null);
-                          handleSaveModel(m);
                         }}
                       >
                         {availableModels.map((m) => (
@@ -782,7 +781,6 @@ export default function ConfiguracionPage() {
                         const m = e.target.value;
                         setSelectedModel(m);
                         setTestResult(null);
-                        handleSaveModel(m);
                       }}
                     >
                       <Grid container spacing={2}>
@@ -796,7 +794,6 @@ export default function ConfiguracionPage() {
                                 onClick={() => {
                                   setSelectedModel(m.id);
                                   setTestResult(null);
-                                  handleSaveModel(m.id);
                                 }}
                                 sx={{
                                   p: 2,
@@ -896,14 +893,18 @@ export default function ConfiguracionPage() {
                     {/* Botones de Acción */}
                     <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
                       <Button
-                        variant="contained"
-                        color="primary"
-                        startIcon={<SaveIcon />}
-                        onClick={() => handleSaveModel()}
-                        disabled={savingModel || testing || selectedModel === activeModel}
+                        variant={selectedModel === activeModel ? "outlined" : "contained"}
+                        color={selectedModel === activeModel ? "success" : "primary"}
+                        startIcon={selectedModel === activeModel ? <CheckCircleIcon /> : <SaveIcon />}
+                        onClick={() => handleSaveModel(selectedModel)}
+                        disabled={savingModel || testing}
                         sx={{ fontWeight: 600, px: 3, textTransform: "none", borderRadius: "8px" }}
                       >
-                        {savingModel ? "Guardando..." : "Guardar y Activar Modelo"}
+                        {savingModel
+                          ? "Guardando en PostgreSQL..."
+                          : selectedModel === activeModel
+                          ? "✓ Modelo Activo en BD (Clic para Re-confirmar)"
+                          : "Guardar y Activar Modelo"}
                       </Button>
 
                       <Button
