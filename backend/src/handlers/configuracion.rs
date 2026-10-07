@@ -299,9 +299,25 @@ pub async fn get_configuraciones(
         }
     }
 
+    if !config_map.contains_key("CLAUDE_MODEL") || current_model.trim().is_empty() {
+        upsert_config(&pool, "CLAUDE_MODEL", &current_model, "Modelo de Anthropic Claude seleccionado para la síntesis de boletines", "ia").await;
+        config_map.insert("CLAUDE_MODEL".to_string(), json!(&current_model));
+    }
+
+    if !config_map.contains_key("CLAUDE_SYSTEM_PROMPT") || current_prompt.trim().is_empty() {
+        current_prompt = DEFAULT_SYSTEM_PROMPT.to_string();
+        upsert_config(&pool, "CLAUDE_SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT, "Instrucciones del sistema para el análisis y síntesis de boletines", "ia").await;
+        config_map.insert("CLAUDE_SYSTEM_PROMPT".to_string(), json!(DEFAULT_SYSTEM_PROMPT));
+    }
+
+    if !config_map.contains_key("WHATSAPP_PROVIDER") || whatsapp_provider.trim().is_empty() {
+        upsert_config(&pool, "WHATSAPP_PROVIDER", "kapso", "Proveedor activo de WhatsApp: kapso o waha", "whatsapp").await;
+        config_map.insert("WHATSAPP_PROVIDER".to_string(), json!("kapso"));
+    }
+
     if director_whatsapp_phone.trim().is_empty() {
         if let Ok(env_phone) = std::env::var("DIRECTOR_WHATSAPP_PHONE") {
-            if env_phone.trim() != "5215512345678" {
+            if env_phone.trim() != "5215512345678" && !env_phone.trim().is_empty() {
                 director_whatsapp_phone = env_phone;
             }
         } else if config.director_whatsapp.trim() != "5215512345678" && !config.director_whatsapp.trim().is_empty() {
@@ -319,6 +335,12 @@ pub async fn get_configuraciones(
         }
     }
 
+    if !director_whatsapp_phone.trim().is_empty() {
+        // Persistir físicamente en PostgreSQL para que nunca quede vacía en configuraciones_sistema
+        upsert_config(&pool, "DIRECTOR_WHATSAPP_PHONE", &director_whatsapp_phone, "Número de WhatsApp de destino del Director en formato E.164", "whatsapp").await;
+        config_map.insert("DIRECTOR_WHATSAPP_PHONE".to_string(), json!(&director_whatsapp_phone));
+    }
+
     if kapso_api_key.trim().is_empty() {
         if let Ok(env_key) = std::env::var("KAPSO_API_KEY") {
             kapso_api_key = env_key.trim().to_string();
@@ -327,6 +349,7 @@ pub async fn get_configuraciones(
         }
         if !kapso_api_key.is_empty() {
             upsert_config(&pool, "KAPSO_API_KEY", &kapso_api_key, "Clave de API del proyecto en Kapso (X-API-Key)", "whatsapp").await;
+            config_map.insert("KAPSO_API_KEY".to_string(), json!(&kapso_api_key));
         }
     }
 
@@ -338,6 +361,7 @@ pub async fn get_configuraciones(
         }
         if !kapso_phone_number_id.is_empty() {
             upsert_config(&pool, "KAPSO_PHONE_NUMBER_ID", &kapso_phone_number_id, "Identificador de número telefónico de WhatsApp en Kapso / Meta", "whatsapp").await;
+            config_map.insert("KAPSO_PHONE_NUMBER_ID".to_string(), json!(&kapso_phone_number_id));
         }
     }
 
@@ -349,6 +373,11 @@ pub async fn get_configuraciones(
         .or_else(|| std::env::var("WHATSAPP_TEMPLATE_NAME").ok())
         .unwrap_or_else(|| "hello_world".to_string());
 
+    if !config_map.contains_key("WHATSAPP_TEMPLATE_NAME") {
+        upsert_config(&pool, "WHATSAPP_TEMPLATE_NAME", &whatsapp_template_name, "Nombre exacto de la plantilla aprobada en Meta Cloud API / WABA", "whatsapp").await;
+        config_map.insert("WHATSAPP_TEMPLATE_NAME".to_string(), json!(&whatsapp_template_name));
+    }
+
     let whatsapp_template_language = config_map
         .get("WHATSAPP_TEMPLATE_LANGUAGE")
         .and_then(|v| v.as_str())
@@ -356,6 +385,11 @@ pub async fn get_configuraciones(
         .filter(|s| !s.is_empty())
         .or_else(|| std::env::var("WHATSAPP_TEMPLATE_LANGUAGE").ok())
         .unwrap_or_else(|| "es_MX".to_string());
+
+    if !config_map.contains_key("WHATSAPP_TEMPLATE_LANGUAGE") {
+        upsert_config(&pool, "WHATSAPP_TEMPLATE_LANGUAGE", &whatsapp_template_language, "Código de idioma de la plantilla (ej: es_MX, en_US)", "whatsapp").await;
+        config_map.insert("WHATSAPP_TEMPLATE_LANGUAGE".to_string(), json!(&whatsapp_template_language));
+    }
 
     let available_models = get_available_claude_models();
 

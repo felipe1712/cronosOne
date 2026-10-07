@@ -54,20 +54,15 @@ export default function CanalWhatsAppPage() {
       setLoading(true);
       setError(null);
 
-      // Respaldo en localStorage
-      const localKey = typeof window !== "undefined" ? localStorage.getItem("exposureiq_kapso_api_key") || "" : "";
-      const localPhoneId = typeof window !== "undefined" ? localStorage.getItem("exposureiq_kapso_phone_id") || "" : "";
-      const localDirectorPhone = typeof window !== "undefined" ? localStorage.getItem("exposureiq_director_phone") || "" : "";
-
       const [cfg, dests, historial] = await Promise.all([
         ApiService.getConfiguraciones().catch(() => null),
         ApiService.getDestinatarios().catch(() => []),
         ApiService.getHistorialMensajes().catch(() => []),
       ]);
 
-      const resolvedKey = (cfg?.kapso_api_key && cfg.kapso_api_key.trim()) ? cfg.kapso_api_key.trim() : localKey;
-      const resolvedPhoneId = (cfg?.kapso_phone_number_id && cfg.kapso_phone_number_id.trim()) ? cfg.kapso_phone_number_id.trim() : localPhoneId;
-      const rawCandidatePhone = (cfg?.director_whatsapp_phone && cfg.director_whatsapp_phone.trim()) ? cfg.director_whatsapp_phone.trim() : localDirectorPhone;
+      const resolvedKey = cfg?.kapso_api_key?.trim() || "";
+      const resolvedPhoneId = cfg?.kapso_phone_number_id?.trim() || "";
+      const rawCandidatePhone = cfg?.director_whatsapp_phone?.trim() || "";
       const resolvedDirectorPhone = (rawCandidatePhone && rawCandidatePhone !== "5215512345678") ? rawCandidatePhone : "";
 
       setActiveKey(resolvedKey);

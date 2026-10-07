@@ -157,18 +157,6 @@ export default function ConfiguracionPage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      const localPrompt = localStorage.getItem("exposureiq_system_prompt");
-      if (localPrompt) {
-        setSystemPrompt(localPrompt);
-        setSavedPrompt(localStorage.getItem("exposureiq_system_prompt_saved") || localPrompt);
-      }
-      const localModel = localStorage.getItem("exposureiq_claude_model");
-      if (localModel) {
-        setActiveModel(localModel);
-        setSelectedModel(localModel);
-      }
-    }
     loadConfig();
   }, []);
 
@@ -188,18 +176,11 @@ export default function ConfiguracionPage() {
         }),
       ]);
       if (data) {
-        // Modelo Claude: Base de datos primero como fuente de verdad
-        const localModel = typeof window !== "undefined" ? localStorage.getItem("exposureiq_claude_model") || "" : "";
+        // Modelo Claude: Base de datos PostgreSQL como única fuente de verdad
         if (data.claude_model && data.claude_model.trim()) {
           const apiModel = data.claude_model.trim();
           setActiveModel(apiModel);
           setSelectedModel(apiModel);
-          if (typeof window !== "undefined") {
-            localStorage.setItem("exposureiq_claude_model", apiModel);
-          }
-        } else if (localModel) {
-          setActiveModel(localModel);
-          setSelectedModel(localModel);
         }
         if (data.available_models) {
           setAvailableModels(data.available_models);
@@ -208,50 +189,32 @@ export default function ConfiguracionPage() {
           setDefaultSystemPrompt(data.default_system_prompt);
         }
 
-        // Instrucciones IA (System Prompt): Base de datos primero como fuente de verdad
-        const localPrompt = typeof window !== "undefined" ? localStorage.getItem("exposureiq_system_prompt") || "" : "";
-        const localSaved = typeof window !== "undefined" ? localStorage.getItem("exposureiq_system_prompt_saved") || "" : "";
-
+        // Instrucciones IA (System Prompt): Base de datos PostgreSQL como única fuente de verdad
         if (data.system_prompt && data.system_prompt.trim()) {
           setSystemPrompt(data.system_prompt);
           setSavedPrompt(data.system_prompt);
-          if (typeof window !== "undefined") {
-            localStorage.setItem("exposureiq_system_prompt", data.system_prompt);
-            localStorage.setItem("exposureiq_system_prompt_saved", data.system_prompt);
-          }
-        } else if (localPrompt) {
-          setSystemPrompt(localPrompt);
-          setSavedPrompt(localSaved || localPrompt);
         } else if (data.default_system_prompt) {
           setSystemPrompt(data.default_system_prompt);
           setSavedPrompt(data.default_system_prompt);
         }
+
         if (data.whatsapp_provider) {
           setWhatsappProvider(data.whatsapp_provider);
         }
 
-        // Kapso API Key: Base de datos primero, con respaldo en localStorage
-        const localKey = typeof window !== "undefined" ? localStorage.getItem("exposureiq_kapso_api_key") || "" : "";
-        const activeKey = (data.kapso_api_key && data.kapso_api_key.trim()) ? data.kapso_api_key : localKey;
-        if (activeKey) {
-          setKapsoApiKey(activeKey);
-          if (typeof window !== "undefined") localStorage.setItem("exposureiq_kapso_api_key", activeKey);
+        // Kapso API Key: Desde PostgreSQL
+        if (data.kapso_api_key !== undefined) {
+          setKapsoApiKey(data.kapso_api_key || "");
         }
 
-        // Kapso Phone Number ID: Base de datos primero, con respaldo en localStorage
-        const localPhoneId = typeof window !== "undefined" ? localStorage.getItem("exposureiq_kapso_phone_id") || "" : "";
-        const activePhoneId = (data.kapso_phone_number_id && data.kapso_phone_number_id.trim()) ? data.kapso_phone_number_id : localPhoneId;
-        if (activePhoneId) {
-          setKapsoPhoneNumberId(activePhoneId);
-          if (typeof window !== "undefined") localStorage.setItem("exposureiq_kapso_phone_id", activePhoneId);
+        // Kapso Phone Number ID: Desde PostgreSQL
+        if (data.kapso_phone_number_id !== undefined) {
+          setKapsoPhoneNumberId(data.kapso_phone_number_id || "");
         }
 
-        // Teléfono del Director: Base de datos primero, con respaldo en localStorage (filtrando siempre el dummy)
-        const localDirectorPhone = typeof window !== "undefined" ? localStorage.getItem("exposureiq_director_phone") || "" : "";
-        const candidatePhone = (data.director_whatsapp_phone && data.director_whatsapp_phone.trim()) ? data.director_whatsapp_phone.trim() : localDirectorPhone;
-        if (candidatePhone && candidatePhone !== "5215512345678") {
-          setDirectorWhatsappPhone(candidatePhone);
-          if (typeof window !== "undefined") localStorage.setItem("exposureiq_director_phone", candidatePhone);
+        // Teléfono del Director: Desde PostgreSQL (filtrando dummy)
+        if (data.director_whatsapp_phone && data.director_whatsapp_phone.trim() !== "5215512345678") {
+          setDirectorWhatsappPhone(data.director_whatsapp_phone.trim());
         } else {
           setDirectorWhatsappPhone("");
         }
@@ -497,21 +460,19 @@ export default function ConfiguracionPage() {
     }
   };
 
-  const handleSaveModel = async () => {
+  const handleSaveModel = async (modelToSave?: string) => {
+    const targetModel = (modelToSave || selectedModel).trim();
     try {
       setSavingModel(true);
       setErrorMsg(null);
       setSuccessMsg(null);
-      const cleanModel = selectedModel.trim();
-      if (typeof window !== "undefined") {
-        localStorage.setItem("exposureiq_claude_model", cleanModel);
-      }
-      await ApiService.updateConfiguracion({ claude_model: cleanModel });
-      setActiveModel(cleanModel);
-      setSuccessMsg(`Modelo '${cleanModel}' guardado y activado exitosamente para todas las síntesis.`);
+      await ApiService.updateConfiguracion({ claude_model: targetModel });
+      setActiveModel(targetModel);
+      setSelectedModel(targetModel);
+      setSuccessMsg(`Modelo '${targetModel}' guardado y activado directamente en PostgreSQL.`);
     } catch (err: any) {
       console.error("Error guardando modelo:", err);
-      setErrorMsg(err.message || "Error al guardar el modelo.");
+      setErrorMsg(err.message || "Error al guardar el modelo en PostgreSQL.");
     } finally {
       setSavingModel(false);
     }
@@ -523,28 +484,31 @@ export default function ConfiguracionPage() {
       setErrorMsg(null);
       setSuccessMsg(null);
       const cleanPrompt = systemPrompt.trim();
-      if (typeof window !== "undefined") {
-        localStorage.setItem("exposureiq_system_prompt", cleanPrompt);
-        localStorage.setItem("exposureiq_system_prompt_saved", cleanPrompt);
-      }
       await ApiService.updateConfiguracion({ system_prompt: cleanPrompt });
       setSavedPrompt(cleanPrompt);
-      setSuccessMsg("Instrucciones IA guardadas exitosamente. Claude las aplicará en todas las nuevas síntesis.");
+      setSuccessMsg("Instrucciones IA guardadas directamente en PostgreSQL (exposureiq_db). Claude las aplicará en todas las nuevas síntesis.");
     } catch (err: any) {
       console.error("Error guardando prompt:", err);
-      setErrorMsg(err.message || "Error al guardar las instrucciones.");
+      setErrorMsg(err.message || "Error al guardar las instrucciones en PostgreSQL.");
     } finally {
       setSavingPrompt(false);
     }
   };
 
-  const handleResetPromptToDefault = () => {
+  const handleResetPromptToDefault = async () => {
     if (defaultSystemPrompt) {
       setSystemPrompt(defaultSystemPrompt);
-      if (typeof window !== "undefined") {
-        localStorage.setItem("exposureiq_system_prompt", defaultSystemPrompt);
+      try {
+        setSavingPrompt(true);
+        setErrorMsg(null);
+        await ApiService.updateConfiguracion({ system_prompt: defaultSystemPrompt });
+        setSavedPrompt(defaultSystemPrompt);
+        setSuccessMsg("Se restauró el texto maestro por defecto y se guardó directamente en PostgreSQL.");
+      } catch (err: any) {
+        setErrorMsg("Error restaurando instrucciones en PostgreSQL: " + (err.message || ""));
+      } finally {
+        setSavingPrompt(false);
       }
-      setSuccessMsg("Se restauró el texto maestro por defecto. Recuerda hacer clic en 'Guardar Instrucciones' para confirmarlo.");
     }
   };
 
@@ -556,13 +520,6 @@ export default function ConfiguracionPage() {
       const cleanPhoneId = kapsoPhoneNumberId.trim();
       const cleanPhone = directorWhatsappPhone.trim();
 
-      // Guardar de inmediato en localStorage como respaldo local garantizado
-      if (typeof window !== "undefined") {
-        if (cleanKey) localStorage.setItem("exposureiq_kapso_api_key", cleanKey);
-        if (cleanPhoneId) localStorage.setItem("exposureiq_kapso_phone_id", cleanPhoneId);
-        if (cleanPhone && cleanPhone !== "5215512345678") localStorage.setItem("exposureiq_director_phone", cleanPhone);
-      }
-
       await ApiService.updateConfiguracion({
         whatsapp_provider: whatsappProvider,
         kapso_api_key: cleanKey,
@@ -571,22 +528,15 @@ export default function ConfiguracionPage() {
         whatsapp_template_name: whatsappTemplateName.trim(),
         whatsapp_template_language: whatsappTemplateLanguage.trim(),
       });
-      setSuccessMsg("Configuración de WhatsApp guardada exitosamente en el sistema.");
+      setSuccessMsg("Configuración de WhatsApp guardada directamente en PostgreSQL (exposureiq_db).");
 
-      // Recargar para confirmar persistencia en UI
+      // Recargar desde BD para confirmar persistencia real en PostgreSQL
       const data = await ApiService.getConfiguraciones();
       if (data) {
-        if (data.kapso_api_key && data.kapso_api_key.trim()) {
-          setKapsoApiKey(data.kapso_api_key);
-          if (typeof window !== "undefined") localStorage.setItem("exposureiq_kapso_api_key", data.kapso_api_key);
-        }
-        if (data.kapso_phone_number_id && data.kapso_phone_number_id.trim()) {
-          setKapsoPhoneNumberId(data.kapso_phone_number_id);
-          if (typeof window !== "undefined") localStorage.setItem("exposureiq_kapso_phone_id", data.kapso_phone_number_id);
-        }
-        if (data.director_whatsapp_phone && data.director_whatsapp_phone.trim() && data.director_whatsapp_phone !== "5215512345678") {
+        if (data.kapso_api_key !== undefined) setKapsoApiKey(data.kapso_api_key || "");
+        if (data.kapso_phone_number_id !== undefined) setKapsoPhoneNumberId(data.kapso_phone_number_id || "");
+        if (data.director_whatsapp_phone && data.director_whatsapp_phone !== "5215512345678") {
           setDirectorWhatsappPhone(data.director_whatsapp_phone);
-          if (typeof window !== "undefined") localStorage.setItem("exposureiq_director_phone", data.director_whatsapp_phone);
         }
         if (data.whatsapp_template_name) setWhatsappTemplateName(data.whatsapp_template_name);
         if (data.whatsapp_template_language) setWhatsappTemplateLanguage(data.whatsapp_template_language);
@@ -594,7 +544,7 @@ export default function ConfiguracionPage() {
       }
     } catch (err: any) {
       console.error("Error guardando configuración de WhatsApp:", err);
-      setErrorMsg(err.message || "Error al guardar configuración de WhatsApp.");
+      setErrorMsg(err.message || "Error al guardar configuración de WhatsApp en PostgreSQL.");
     } finally {
       setSavingWhatsapp(false);
     }
@@ -795,8 +745,10 @@ export default function ConfiguracionPage() {
                         value={selectedModel}
                         label="Modelo Activo para el Pipeline"
                         onChange={(e) => {
-                          setSelectedModel(e.target.value);
+                          const m = e.target.value;
+                          setSelectedModel(m);
                           setTestResult(null);
+                          handleSaveModel(m);
                         }}
                       >
                         {availableModels.map((m) => (
@@ -827,8 +779,10 @@ export default function ConfiguracionPage() {
                     <RadioGroup
                       value={selectedModel}
                       onChange={(e) => {
-                        setSelectedModel(e.target.value);
+                        const m = e.target.value;
+                        setSelectedModel(m);
                         setTestResult(null);
+                        handleSaveModel(m);
                       }}
                     >
                       <Grid container spacing={2}>
@@ -842,6 +796,7 @@ export default function ConfiguracionPage() {
                                 onClick={() => {
                                   setSelectedModel(m.id);
                                   setTestResult(null);
+                                  handleSaveModel(m.id);
                                 }}
                                 sx={{
                                   p: 2,
@@ -1053,11 +1008,10 @@ export default function ConfiguracionPage() {
                       minRows={18}
                       maxRows={30}
                       value={systemPrompt}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setSystemPrompt(val);
-                        if (typeof window !== "undefined") {
-                          localStorage.setItem("exposureiq_system_prompt", val);
+                      onChange={(e) => setSystemPrompt(e.target.value)}
+                      onBlur={() => {
+                        if (systemPrompt.trim() !== savedPrompt && systemPrompt.trim().length > 0) {
+                          handleSavePrompt();
                         }
                       }}
                       placeholder="Escribe aquí las instrucciones de análisis para la IA..."
@@ -1154,13 +1108,8 @@ export default function ConfiguracionPage() {
                           fullWidth
                           label="Teléfono WhatsApp del Director"
                           value={directorWhatsappPhone}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setDirectorWhatsappPhone(val);
-                            if (typeof window !== "undefined" && val !== "5215512345678") {
-                              localStorage.setItem("exposureiq_director_phone", val);
-                            }
-                          }}
+                          onChange={(e) => setDirectorWhatsappPhone(e.target.value)}
+                          onBlur={() => handleSaveWhatsapp()}
                           placeholder="52XXXXXXXXXX"
                           helperText="Formato internacional E.164 sin signos ni espacios (ej: 5255...)"
                         />
@@ -1173,13 +1122,8 @@ export default function ConfiguracionPage() {
                           label="Kapso API Key (X-API-Key)"
                           type={showApiKey ? "text" : "password"}
                           value={kapsoApiKey}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setKapsoApiKey(val);
-                            if (typeof window !== "undefined") {
-                              localStorage.setItem("exposureiq_kapso_api_key", val);
-                            }
-                          }}
+                          onChange={(e) => setKapsoApiKey(e.target.value)}
+                          onBlur={() => handleSaveWhatsapp()}
                           placeholder="kapso_live_..."
                           helperText="Obtenla en dashboard.kapso.ai → Integrations → API keys"
                           InputProps={{
@@ -1200,13 +1144,8 @@ export default function ConfiguracionPage() {
                           fullWidth
                           label="Kapso / Meta Phone Number ID"
                           value={kapsoPhoneNumberId}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setKapsoPhoneNumberId(val);
-                            if (typeof window !== "undefined") {
-                              localStorage.setItem("exposureiq_kapso_phone_id", val);
-                            }
-                          }}
+                          onChange={(e) => setKapsoPhoneNumberId(e.target.value)}
+                          onBlur={() => handleSaveWhatsapp()}
                           placeholder="647015955153740"
                           helperText="ID numérico asignado en dashboard.kapso.ai → WhatsApp → Phone numbers"
                         />
@@ -1232,6 +1171,7 @@ export default function ConfiguracionPage() {
                                 label="Nombre Exacto de la Plantilla WABA"
                                 value={whatsappTemplateName}
                                 onChange={(e) => setWhatsappTemplateName(e.target.value)}
+                                onBlur={() => handleSaveWhatsapp()}
                                 placeholder="hello_world"
                                 helperText="Ej: hello_world (plantilla estándar de Meta) o el nombre aprobado en tu panel WABA"
                               />
@@ -1243,6 +1183,7 @@ export default function ConfiguracionPage() {
                                 label="Código de Idioma"
                                 value={whatsappTemplateLanguage}
                                 onChange={(e) => setWhatsappTemplateLanguage(e.target.value)}
+                                onBlur={() => handleSaveWhatsapp()}
                                 placeholder="es_MX"
                                 helperText="Ej. es_MX o en_US"
                               />
