@@ -82,11 +82,23 @@ const SECCIONES_SENADO_DEFAULT: SeccionSenado[] = [
   { id: "columnas", nombre: "Columnas", archivo: "COLUMNAS.pdf", orden: 10 },
 ];
 
+function getTodayMexicoDate(): string {
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Mexico_City",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+  } catch {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }
+}
+
 export default function BoletinesPage() {
-  // Fecha activa de trabajo (Workspace)
-  const [fechaTrabajo, setFechaTrabajo] = useState<string>(
-    new Date().toISOString().split("T")[0]
-  );
+  // Fecha activa de trabajo (Workspace en CDMX / UTC-6)
+  const [fechaTrabajo, setFechaTrabajo] = useState<string>(getTodayMexicoDate());
 
   // Historial de Fechas de Síntesis
   const [fechasHistorial, setFechasHistorial] = useState<SintesisDiariaResumen[]>([]);
@@ -255,9 +267,11 @@ export default function BoletinesPage() {
   const handleStepFecha = (dias: number) => {
     try {
       const [y, m, d] = fechaTrabajo.split("-").map(Number);
-      const cur = new Date(y, m - 1, d);
-      cur.setDate(cur.getDate() + dias);
-      const nueva = cur.toISOString().split("T")[0];
+      const cur = new Date(y, m - 1, d + dias, 12, 0, 0);
+      const yStr = cur.getFullYear();
+      const mStr = String(cur.getMonth() + 1).padStart(2, "0");
+      const dStr = String(cur.getDate()).padStart(2, "0");
+      const nueva = `${yStr}-${mStr}-${dStr}`;
       handleCambiarFecha(nueva);
     } catch {
       // Fallback
@@ -865,7 +879,7 @@ export default function BoletinesPage() {
                 <Button
                   size="small"
                   variant="outlined"
-                  onClick={() => handleCambiarFecha(new Date().toISOString().split("T")[0])}
+                  onClick={() => handleCambiarFecha(getTodayMexicoDate())}
                   sx={{ textTransform: "none", ml: 0.5 }}
                 >
                   Hoy

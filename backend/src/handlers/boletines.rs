@@ -162,7 +162,8 @@ pub async fn upload_boletin(
         ));
     }
 
-    let fecha = fecha_boletin.unwrap_or_else(|| Utc::now().date_naive());
+    // Por defecto usar la fecha local de CDMX (UTC-6) si no se especifica
+    let fecha = fecha_boletin.unwrap_or_else(|| (Utc::now() - chrono::Duration::hours(6)).date_naive());
     let boletin_id = Uuid::new_v4();
 
     // Crear directorio si no existe
@@ -914,7 +915,8 @@ pub async fn upload_multiple_boletines(
         ));
     }
 
-    let fecha = fecha_boletin.unwrap_or_else(|| Utc::now().date_naive());
+    // Por defecto usar la fecha local de CDMX (UTC-6) si no se especifica
+    let fecha = fecha_boletin.unwrap_or_else(|| (Utc::now() - chrono::Duration::hours(6)).date_naive());
     let upload_dir = PathBuf::from(&config.upload_dir);
     if let Err(e) = fs::create_dir_all(&upload_dir) {
         error!("Error creando directorio de subidas: {}", e);

@@ -178,23 +178,24 @@ export default function ConfiguracionPage() {
       setErrorMsg(null);
       const [data, dests, grps] = await Promise.all([
         ApiService.getConfiguraciones(),
-        ApiService.getDestinatarios().catch(() => []),
-        ApiService.getGrupos().catch(() => []),
+        ApiService.getDestinatarios().catch((err) => {
+          console.warn("Fallo cargando destinatarios:", err);
+          return null;
+        }),
+        ApiService.getGrupos().catch((err) => {
+          console.warn("Fallo cargando grupos:", err);
+          return null;
+        }),
       ]);
       if (data) {
-        // Modelo Claude: API primero con sincronización y respaldo en localStorage
+        // Modelo Claude: Base de datos primero como fuente de verdad
         const localModel = typeof window !== "undefined" ? localStorage.getItem("exposureiq_claude_model") || "" : "";
         if (data.claude_model && data.claude_model.trim()) {
           const apiModel = data.claude_model.trim();
-          if (apiModel !== "claude-sonnet-4-5-20250929" || !localModel) {
-            setActiveModel(apiModel);
-            setSelectedModel(apiModel);
-            if (typeof window !== "undefined") {
-              localStorage.setItem("exposureiq_claude_model", apiModel);
-            }
-          } else {
-            setActiveModel(localModel);
-            setSelectedModel(localModel);
+          setActiveModel(apiModel);
+          setSelectedModel(apiModel);
+          if (typeof window !== "undefined") {
+            localStorage.setItem("exposureiq_claude_model", apiModel);
           }
         } else if (localModel) {
           setActiveModel(localModel);
@@ -207,22 +208,16 @@ export default function ConfiguracionPage() {
           setDefaultSystemPrompt(data.default_system_prompt);
         }
 
-        // Instrucciones IA (System Prompt): API primero, con respaldo en localStorage
+        // Instrucciones IA (System Prompt): Base de datos primero como fuente de verdad
         const localPrompt = typeof window !== "undefined" ? localStorage.getItem("exposureiq_system_prompt") || "" : "";
         const localSaved = typeof window !== "undefined" ? localStorage.getItem("exposureiq_system_prompt_saved") || "" : "";
 
         if (data.system_prompt && data.system_prompt.trim()) {
-          const isDbDifferentFromDefault = data.default_system_prompt && data.system_prompt.trim() !== data.default_system_prompt.trim();
-          if (isDbDifferentFromDefault || !localPrompt) {
-            setSystemPrompt(data.system_prompt);
-            setSavedPrompt(data.system_prompt);
-            if (typeof window !== "undefined") {
-              localStorage.setItem("exposureiq_system_prompt", data.system_prompt);
-              localStorage.setItem("exposureiq_system_prompt_saved", data.system_prompt);
-            }
-          } else {
-            setSystemPrompt(localPrompt);
-            setSavedPrompt(localSaved || data.system_prompt);
+          setSystemPrompt(data.system_prompt);
+          setSavedPrompt(data.system_prompt);
+          if (typeof window !== "undefined") {
+            localStorage.setItem("exposureiq_system_prompt", data.system_prompt);
+            localStorage.setItem("exposureiq_system_prompt_saved", data.system_prompt);
           }
         } else if (localPrompt) {
           setSystemPrompt(localPrompt);
@@ -235,7 +230,7 @@ export default function ConfiguracionPage() {
           setWhatsappProvider(data.whatsapp_provider);
         }
 
-        // Kapso API Key: API primero, con respaldo en localStorage
+        // Kapso API Key: Base de datos primero, con respaldo en localStorage
         const localKey = typeof window !== "undefined" ? localStorage.getItem("exposureiq_kapso_api_key") || "" : "";
         const activeKey = (data.kapso_api_key && data.kapso_api_key.trim()) ? data.kapso_api_key : localKey;
         if (activeKey) {
@@ -243,7 +238,7 @@ export default function ConfiguracionPage() {
           if (typeof window !== "undefined") localStorage.setItem("exposureiq_kapso_api_key", activeKey);
         }
 
-        // Kapso Phone Number ID: API primero, con respaldo en localStorage
+        // Kapso Phone Number ID: Base de datos primero, con respaldo en localStorage
         const localPhoneId = typeof window !== "undefined" ? localStorage.getItem("exposureiq_kapso_phone_id") || "" : "";
         const activePhoneId = (data.kapso_phone_number_id && data.kapso_phone_number_id.trim()) ? data.kapso_phone_number_id : localPhoneId;
         if (activePhoneId) {
@@ -251,7 +246,7 @@ export default function ConfiguracionPage() {
           if (typeof window !== "undefined") localStorage.setItem("exposureiq_kapso_phone_id", activePhoneId);
         }
 
-        // Teléfono del Director: API primero, con respaldo en localStorage (filtrando siempre el dummy)
+        // Teléfono del Director: Base de datos primero, con respaldo en localStorage (filtrando siempre el dummy)
         const localDirectorPhone = typeof window !== "undefined" ? localStorage.getItem("exposureiq_director_phone") || "" : "";
         const candidatePhone = (data.director_whatsapp_phone && data.director_whatsapp_phone.trim()) ? data.director_whatsapp_phone.trim() : localDirectorPhone;
         if (candidatePhone && candidatePhone !== "5215512345678") {
@@ -268,10 +263,10 @@ export default function ConfiguracionPage() {
           setWhatsappTemplateLanguage(data.whatsapp_template_language);
         }
       }
-      if (dests) {
+      if (dests !== null) {
         setDestinatarios(dests);
       }
-      if (grps) {
+      if (grps !== null) {
         setGrupos(grps);
       }
     } catch (err: any) {
