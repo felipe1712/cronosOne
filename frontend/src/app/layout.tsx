@@ -35,6 +35,9 @@ export default function RootLayout(props: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <head>
+        <meta httpEquiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+        <meta httpEquiv="Pragma" content="no-cache" />
+        <meta httpEquiv="Expires" content="0" />
         <link
           rel="stylesheet"
           href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0"
@@ -42,20 +45,44 @@ export default function RootLayout(props: { children: React.ReactNode }) {
         <script
           dangerouslySetInnerHTML={{
             __html: `
-              window.addEventListener('error', function(e) {
-                if (e && ((e.message && e.message.indexOf('ChunkLoadError') !== -1) || (e.error && e.error.name === 'ChunkLoadError'))) {
-                  var key = 'next_chunk_error_reload';
+              (function() {
+                function handleChunkError(e) {
+                  var isChunk = false;
+                  if (e) {
+                    var msg = e.message || (e.reason && (e.reason.message || e.reason.toString())) || (e.error && e.error.message) || '';
+                    if (msg.indexOf('ChunkLoadError') !== -1 || msg.indexOf('Failed to load chunk') !== -1) {
+                      isChunk = true;
+                    }
+                  }
+                  if (!isChunk) return;
+
+                  var key = 'next_chunk_error_last_reload';
                   var last = sessionStorage.getItem(key);
                   var now = Date.now();
-                  if (last && (now - parseInt(last, 10)) < 15000) {
-                    console.warn('[ExposureIQ] ChunkLoadError recurrente evitado para prevenir loop.');
+                  if (last && (now - parseInt(last, 10)) < 10000) {
+                    console.warn('[ExposureIQ] ChunkLoadError recurrente suprimido para evitar bucle de recarga.');
                     return;
                   }
                   sessionStorage.setItem(key, now.toString());
-                  var url = window.location.pathname + (window.location.search ? window.location.search + '&' : '?') + '_r=' + now;
-                  window.location.replace(url);
+
+                  if ('caches' in window) {
+                    try {
+                      caches.keys().then(function(names) {
+                        for (var i = 0; i < names.length; i++) caches.delete(names[i]);
+                      });
+                    } catch(err) {}
+                  }
+
+                  var target = window.location.origin + window.location.pathname;
+                  var search = window.location.search || '';
+                  search = search.replace(/[?&]_ts=[^&]*/g, '');
+                  var sep = search ? (search.indexOf('?') === -1 ? '?' : '&') : '?';
+                  window.location.replace(target + search + sep + '_ts=' + now);
                 }
-              });
+
+                window.addEventListener('error', handleChunkError);
+                window.addEventListener('unhandledrejection', handleChunkError);
+              })();
             `,
           }}
         />

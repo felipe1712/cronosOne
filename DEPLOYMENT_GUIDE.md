@@ -253,7 +253,15 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        add_header Cache-Control "no-cache, no-store, must-revalidate";
+
+        # Desactivar 304 y forzar entrega de HTML siempre actualizado (anti ChunkLoadError)
+        proxy_set_header If-Modified-Since "";
+        proxy_set_header If-None-Match "";
+        proxy_hide_header ETag;
+        etag off;
+        if_modified_since off;
+        add_header Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0" always;
+        add_header Pragma "no-cache" always;
     }
 }
 ```
