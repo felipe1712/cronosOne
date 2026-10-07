@@ -461,7 +461,7 @@ export default function ConfiguracionPage() {
   };
 
   const handleSaveModel = async (modelToSave?: string) => {
-    const targetModel = (modelToSave || selectedModel).trim();
+    const targetModel = (typeof modelToSave === "string" ? modelToSave : selectedModel).trim();
     try {
       setSavingModel(true);
       setErrorMsg(null);
@@ -899,7 +899,7 @@ export default function ConfiguracionPage() {
                         variant="contained"
                         color="primary"
                         startIcon={<SaveIcon />}
-                        onClick={handleSaveModel}
+                        onClick={() => handleSaveModel()}
                         disabled={savingModel || testing || selectedModel === activeModel}
                         sx={{ fontWeight: 600, px: 3, textTransform: "none", borderRadius: "8px" }}
                       >
@@ -1034,7 +1034,7 @@ export default function ConfiguracionPage() {
                           variant="contained"
                           color="primary"
                           startIcon={<SaveIcon />}
-                          onClick={handleSavePrompt}
+                          onClick={() => handleSavePrompt()}
                           disabled={savingPrompt || systemPrompt === savedPrompt || !systemPrompt.trim()}
                           sx={{ fontWeight: 600, px: 3, textTransform: "none", borderRadius: "8px" }}
                         >
@@ -1045,7 +1045,7 @@ export default function ConfiguracionPage() {
                           variant="outlined"
                           color="inherit"
                           startIcon={<RestartAltIcon />}
-                          onClick={handleResetPromptToDefault}
+                          onClick={() => handleResetPromptToDefault()}
                           disabled={savingPrompt || systemPrompt === defaultSystemPrompt}
                           sx={{ textTransform: "none", borderRadius: "8px" }}
                         >
@@ -1239,7 +1239,7 @@ export default function ConfiguracionPage() {
                         variant="contained"
                         color="primary"
                         startIcon={<SaveIcon />}
-                        onClick={handleSaveWhatsapp}
+                        onClick={() => handleSaveWhatsapp()}
                         disabled={savingWhatsapp || testingWhatsapp || testingTemplate}
                         sx={{ fontWeight: 600, px: 3, textTransform: "none", borderRadius: "8px" }}
                       >
