@@ -39,6 +39,26 @@ export default function RootLayout(props: { children: React.ReactNode }) {
           rel="stylesheet"
           href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0"
         />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              window.addEventListener('error', function(e) {
+                if (e && ((e.message && e.message.indexOf('ChunkLoadError') !== -1) || (e.error && e.error.name === 'ChunkLoadError'))) {
+                  var key = 'next_chunk_error_reload';
+                  var last = sessionStorage.getItem(key);
+                  var now = Date.now();
+                  if (last && (now - parseInt(last, 10)) < 15000) {
+                    console.warn('[ExposureIQ] ChunkLoadError recurrente evitado para prevenir loop.');
+                    return;
+                  }
+                  sessionStorage.setItem(key, now.toString());
+                  var url = window.location.pathname + (window.location.search ? window.location.search + '&' : '?') + '_r=' + now;
+                  window.location.replace(url);
+                }
+              });
+            `,
+          }}
+        />
       </head>
       <body>
         <AppRouterCacheProvider options={{ enableCssLayer: true }}>

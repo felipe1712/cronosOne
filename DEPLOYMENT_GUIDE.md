@@ -235,7 +235,15 @@ server {
         proxy_connect_timeout 300s;
     }
 
-    # Enrutar todo lo demás al Frontend Next.js
+    # Archivos estáticos con hash inmutable de Next.js
+    location /_next/static/ {
+        proxy_pass http://127.0.0.1:3010/_next/static/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+
+    # Enrutar todo lo demás al Frontend Next.js (evitando caché de HTML antiguo para prevenir ChunkLoadError)
     location / {
         proxy_pass http://127.0.0.1:3010;
         proxy_http_version 1.1;
@@ -245,6 +253,7 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
     }
 }
 ```
