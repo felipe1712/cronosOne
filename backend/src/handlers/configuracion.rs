@@ -60,6 +60,7 @@ Reglas estrictas de formato para WhatsApp:
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UpdateConfiguracionPayload {
     pub claude_model: Option<String>,
+    pub claude_max_tokens: Option<i32>,
     pub system_prompt: Option<String>,
     pub whatsapp_provider: Option<String>,
     pub kapso_api_key: Option<String>,
@@ -260,6 +261,7 @@ pub async fn get_configuraciones(
     .await;
 
     let mut current_model = "claude-sonnet-4-5-20250929".to_string();
+    let mut current_max_tokens: i32 = 1000;
     let mut current_prompt = DEFAULT_SYSTEM_PROMPT.to_string();
     let mut whatsapp_provider = "kapso".to_string();
     let mut kapso_api_key = String::new();
@@ -279,6 +281,13 @@ pub async fn get_configuraciones(
                 "CLAUDE_MODEL" => {
                     if !v.trim().is_empty() {
                         current_model = v.trim().to_string();
+                    }
+                }
+                "CLAUDE_MAX_TOKENS" => {
+                    if let Ok(num) = v.trim().parse::<i32>() {
+                        if num >= 200 && num <= 8000 {
+                            current_max_tokens = num;
+                        }
                     }
                 }
                 "CLAUDE_SYSTEM_PROMPT" => {
@@ -302,6 +311,11 @@ pub async fn get_configuraciones(
     if !config_map.contains_key("CLAUDE_MODEL") || current_model.trim().is_empty() {
         upsert_config(&pool, "CLAUDE_MODEL", &current_model, "Modelo de Anthropic Claude seleccionado para la síntesis de boletines", "ia").await;
         config_map.insert("CLAUDE_MODEL".to_string(), json!(&current_model));
+    }
+
+    if !config_map.contains_key("CLAUDE_MAX_TOKENS") {
+        upsert_config(&pool, "CLAUDE_MAX_TOKENS", &current_max_tokens.to_string(), "Límite máximo de tokens de salida por síntesis ejecutiva", "ia").await;
+        config_map.insert("CLAUDE_MAX_TOKENS".to_string(), json!(&current_max_tokens.to_string()));
     }
 
     if !config_map.contains_key("CLAUDE_SYSTEM_PROMPT") || current_prompt.trim().is_empty() {
@@ -397,6 +411,7 @@ pub async fn get_configuraciones(
         StatusCode::OK,
         Json(json!({
             "claude_model": current_model,
+            "claude_max_tokens": current_max_tokens,
             "system_prompt": current_prompt,
             "default_system_prompt": DEFAULT_SYSTEM_PROMPT,
             "available_models": available_models,
@@ -436,6 +451,13 @@ pub async fn update_configuracion(
         if !m.is_empty() {
             upsert_config(&pool, "CLAUDE_MODEL", m, "Modelo de Anthropic Claude seleccionado para la síntesis de boletines", "ia").await;
             tracing::info!("CLAUDE_MODEL actualizado correctamente en BD con '{}'", m);
+        }
+    }
+
+    if let Some(tokens) = payload.claude_max_tokens {
+        if tokens >= 200 && tokens <= 8000 {
+            upsert_config(&pool, "CLAUDE_MAX_TOKENS", &tokens.to_string(), "Límite máximo de tokens de salida por síntesis ejecutiva", "ia").await;
+            tracing::info!("CLAUDE_MAX_TOKENS actualizado correctamente en BD con '{}'", tokens);
         }
     }
 

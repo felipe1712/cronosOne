@@ -37,6 +37,7 @@ import {
   TableRow,
   Switch,
   FormControlLabel,
+  Slider,
 } from "@mui/material";
 import SettingsIcon from "@mui/icons-material/Settings";
 import SmartToyIcon from "@mui/icons-material/SmartToy";
@@ -82,6 +83,8 @@ export default function ConfiguracionPage() {
   const [activeModel, setActiveModel] = useState<string>("claude-sonnet-4-5-20250929");
   const [selectedModel, setSelectedModel] = useState<string>("claude-sonnet-4-5-20250929");
   const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
+  const [claudeMaxTokens, setClaudeMaxTokens] = useState<number>(1000);
+  const [savingTokens, setSavingTokens] = useState<boolean>(false);
 
   // Estados para Prompt / Instrucciones IA
   const [systemPrompt, setSystemPrompt] = useState<string>("");
@@ -184,6 +187,9 @@ export default function ConfiguracionPage() {
         }
         if (data.available_models) {
           setAvailableModels(data.available_models);
+        }
+        if (data.claude_max_tokens) {
+          setClaudeMaxTokens(Number(data.claude_max_tokens));
         }
         if (data.default_system_prompt) {
           setDefaultSystemPrompt(data.default_system_prompt);
@@ -466,15 +472,34 @@ export default function ConfiguracionPage() {
       setSavingModel(true);
       setErrorMsg(null);
       setSuccessMsg(null);
-      await ApiService.updateConfiguracion({ claude_model: targetModel });
+      await ApiService.updateConfiguracion({
+        claude_model: targetModel,
+        claude_max_tokens: claudeMaxTokens,
+      });
       setActiveModel(targetModel);
       setSelectedModel(targetModel);
-      setSuccessMsg(`Modelo '${targetModel}' guardado y activado directamente en PostgreSQL.`);
+      setSuccessMsg(`Modelo '${targetModel}' y límite de ${claudeMaxTokens.toLocaleString()} tokens guardados y activados directamente en PostgreSQL.`);
     } catch (err: any) {
       console.error("Error guardando modelo:", err);
       setErrorMsg(err.message || "Error al guardar el modelo en PostgreSQL.");
     } finally {
       setSavingModel(false);
+    }
+  };
+
+  const handleSaveMaxTokens = async (tokens: number) => {
+    try {
+      setSavingTokens(true);
+      setErrorMsg(null);
+      setSuccessMsg(null);
+      await ApiService.updateConfiguracion({ claude_max_tokens: tokens });
+      setClaudeMaxTokens(tokens);
+      setSuccessMsg(`Límite de tokens por síntesis fijado en ${tokens.toLocaleString()} y guardado directamente en PostgreSQL.`);
+    } catch (err: any) {
+      console.error("Error guardando límite de tokens:", err);
+      setErrorMsg("Error al guardar el límite de tokens en PostgreSQL: " + (err.message || ""));
+    } finally {
+      setSavingTokens(false);
     }
   };
 
@@ -871,6 +896,87 @@ export default function ConfiguracionPage() {
 
                     <Divider sx={{ my: 3 }} />
 
+                    {/* Selector y Slider de Límite de Tokens por Síntesis */}
+                    <Box sx={{ mb: 3 }}>
+                      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 1, mb: 1.5 }}>
+                        <Box>
+                          <Typography variant="subtitle1" sx={{ fontWeight: 700, color: "#1e293b", display: "flex", alignItems: "center", gap: 1 }}>
+                            <SpeedIcon sx={{ color: "#605DFF", fontSize: 20 }} /> Límite Máximo de Tokens por Síntesis
+                          </Typography>
+                          <Typography variant="caption" sx={{ color: "#64748b", display: "block" }}>
+                            Determina la extensión y profundidad del resumen ejecutivo generado por Claude (~0.75 palabras por token).
+                          </Typography>
+                        </Box>
+                        <Chip
+                          label={`${claudeMaxTokens.toLocaleString()} tokens (~${Math.round(claudeMaxTokens * 0.75)} palabras máx)`}
+                          color="primary"
+                          sx={{ fontWeight: 700, px: 1, height: 28 }}
+                        />
+                      </Box>
+
+                      <Box sx={{ px: { xs: 2, sm: 3 }, pt: 2.5, pb: 2, backgroundColor: "#f8fafc", borderRadius: "10px", border: "1px solid #e2e8f0" }}>
+                        <Slider
+                          value={claudeMaxTokens}
+                          min={300}
+                          max={4000}
+                          step={100}
+                          marks={[
+                            { value: 500, label: "500 (Breve)" },
+                            { value: 1000, label: "1,000 (Estándar)" },
+                            { value: 1500, label: "1,500" },
+                            { value: 2000, label: "2,000 (Extenso)" },
+                            { value: 3000, label: "3,000" },
+                            { value: 4000, label: "4,000 (Máx)" },
+                          ]}
+                          valueLabelDisplay="auto"
+                          onChange={(_, val) => setClaudeMaxTokens(val as number)}
+                          onChangeCommitted={(_, val) => handleSaveMaxTokens(val as number)}
+                          disabled={savingTokens}
+                          sx={{
+                            color: "#605DFF",
+                            mb: 1.5,
+                            "& .MuiSlider-markLabel": { fontSize: "0.72rem", color: "#64748b" },
+                            "& .MuiSlider-thumb": { width: 18, height: 18 },
+                          }}
+                        />
+
+                        <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mt: 1, flexWrap: "wrap", gap: 1 }}>
+                          <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
+                            <Typography variant="caption" sx={{ color: "#64748b", fontWeight: 600 }}>
+                              Valores predefinidos:
+                            </Typography>
+                            {[500, 1000, 1500, 2000, 3000, 4000].map((preset) => (
+                              <Chip
+                                key={preset}
+                                label={`${preset} tokens`}
+                                size="small"
+                                clickable
+                                variant={claudeMaxTokens === preset ? "filled" : "outlined"}
+                                color={claudeMaxTokens === preset ? "primary" : "default"}
+                                onClick={() => {
+                                  setClaudeMaxTokens(preset);
+                                  handleSaveMaxTokens(preset);
+                                }}
+                                disabled={savingTokens}
+                                sx={{ fontSize: "0.7rem", height: 24, fontWeight: claudeMaxTokens === preset ? 700 : 500 }}
+                              />
+                            ))}
+                          </Box>
+
+                          {savingTokens && (
+                            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+                              <CircularProgress size={14} sx={{ color: "#605DFF" }} />
+                              <Typography variant="caption" sx={{ color: "#605DFF", fontWeight: 600 }}>
+                                Guardando en PostgreSQL...
+                              </Typography>
+                            </Box>
+                          )}
+                        </Box>
+                      </Box>
+                    </Box>
+
+                    <Divider sx={{ my: 3 }} />
+
                     {/* Resultado de la prueba */}
                     {testResult && (
                       <Alert
@@ -942,7 +1048,7 @@ export default function ConfiguracionPage() {
                         <Typography variant="body2" sx={{ color: "#64748b" }}>
                           Tokens por Síntesis:
                         </Typography>
-                        <Chip label="1,000 max" size="small" variant="outlined" sx={{ fontWeight: 600 }} />
+                        <Chip label={`${claudeMaxTokens.toLocaleString()} max`} size="small" variant="outlined" color="primary" sx={{ fontWeight: 600 }} />
                       </Box>
 
                       <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>

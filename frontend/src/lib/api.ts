@@ -67,6 +67,7 @@ export async function apiFetch<T>(endpoint: string, options: RequestInit = {}): 
 
 export interface UpdateConfiguracionPayload {
   claude_model?: string;
+  claude_max_tokens?: number;
   system_prompt?: string;
   whatsapp_provider?: string;
   kapso_api_key?: string;

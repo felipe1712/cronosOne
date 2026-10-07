@@ -89,6 +89,23 @@ def get_configured_system_prompt() -> str:
         print(f"[Config] Error leyendo CLAUDE_SYSTEM_PROMPT de BD ({e}), usando default.")
     return DEFAULT_SYSTEM_PROMPT
 
+def get_configured_max_tokens(default: int = 1000) -> int:
+    """Obtiene el límite máximo de tokens configurado dinámicamente desde PostgreSQL."""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT valor FROM configuraciones_sistema WHERE clave = 'CLAUDE_MAX_TOKENS'")
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if row and row.get("valor") and str(row["valor"]).strip():
+            val = int(str(row["valor"]).strip())
+            if 200 <= val <= 8000:
+                return val
+    except Exception as e:
+        print(f"[Config] Error leyendo CLAUDE_MAX_TOKENS de BD ({e}), usando default={default}.")
+    return default
+
 async def generate_executive_brief(sections: List[Dict[str, Any]], fecha_str: str) -> Tuple[str, List[str]]:
     """
     Toma las secciones del boletín, construye el resumen consolidado y llama a Claude API.
@@ -151,14 +168,15 @@ async def generate_executive_brief(sections: List[Dict[str, Any]], fecha_str: st
                 models_to_try.append(m)
 
         active_system_prompt = get_configured_system_prompt()
+        active_max_tokens = get_configured_max_tokens(default=1000)
         last_error = None
         for model_name in models_to_try:
             try:
-                print(f"[LLM] Solicitando síntesis con modelo: {model_name}...")
+                print(f"[LLM] Solicitando síntesis con modelo: {model_name} (límite: {active_max_tokens} tokens)...")
                 try:
                     response = client.messages.create(
                         model=model_name,
-                        max_tokens=1000,
+                        max_tokens=active_max_tokens,
                         system=active_system_prompt,
                         messages=[
                             {"role": "user", "content": context_prompt}
@@ -168,7 +186,7 @@ async def generate_executive_brief(sections: List[Dict[str, Any]], fecha_str: st
                     print(f"[LLM] Reintentando llamada compatible sin parámetro system ({te})...")
                     response = client.messages.create(
                         model=model_name,
-                        max_tokens=1000,
+                        max_tokens=active_max_tokens,
                         messages=[
                             {"role": "user", "content": f"{active_system_prompt}\n\n---\n\n{context_prompt}"}
                         ]
@@ -304,6 +322,7 @@ async def generate_consolidated_daily_brief(documents: List[Dict[str, Any]], fec
                 dedup_models.append(m)
 
         active_system_prompt = get_configured_system_prompt()
+        active_max_tokens = get_configured_max_tokens(default=1500)
         last_error = None
 
         # Truncar context_prompt de forma segura si excede 100,000 caracteres (~25k tokens)
@@ -312,11 +331,11 @@ async def generate_consolidated_daily_brief(documents: List[Dict[str, Any]], fec
 
         for model_name in dedup_models:
             try:
-                print(f"[LLM] Generando síntesis consolidada con: {model_name}...")
+                print(f"[LLM] Generando síntesis consolidada con: {model_name} (límite: {active_max_tokens} tokens)...")
                 try:
                     response = client.messages.create(
                         model=model_name,
-                        max_tokens=1500,
+                        max_tokens=active_max_tokens,
                         system=active_system_prompt,
                         messages=[{"role": "user", "content": safe_prompt}]
                     )
@@ -324,7 +343,7 @@ async def generate_consolidated_daily_brief(documents: List[Dict[str, Any]], fec
                     # Compatibilidad en caso de SDK sin parámetro system directo
                     response = client.messages.create(
                         model=model_name,
-                        max_tokens=1500,
+                        max_tokens=active_max_tokens,
                         messages=[{"role": "user", "content": f"{active_system_prompt}\n\n---\n\n{safe_prompt}"}]
                     )
 
