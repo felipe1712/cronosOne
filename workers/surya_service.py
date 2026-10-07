@@ -214,17 +214,16 @@ def run_surya_cli(file_path: str) -> List[Dict[str, Any]]:
     if not surya_bin:
         return []
 
-    try:
         with tempfile.TemporaryDirectory() as out_dir:
-            # En versiones actuales de surya_ocr no se usa --langs (modelo multilingüe unificado)
-            cmd = [surya_bin, file_path, "--results_dir", out_dir]
+            # En versiones actuales de surya_ocr la opción oficial es --output_dir
+            cmd = [surya_bin, file_path, "--output_dir", out_dir]
             print(f"[Surya CLI] Ejecutando: {' '.join(cmd)}")
             res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=600)
 
-            # Si falla porque una versión requería --langs, reintentar con --langs
-            if res.returncode != 0 and "--langs" in res.stderr:
-                cmd = [surya_bin, file_path, "--langs", "es", "--results_dir", out_dir]
-                print(f"[Surya CLI] Reintentando con --langs: {' '.join(cmd)}")
+            # Si falla porque una versión requería --results_dir, reintentar con --results_dir
+            if res.returncode != 0 and "--output_dir" in res.stderr:
+                cmd = [surya_bin, file_path, "--results_dir", out_dir]
+                print(f"[Surya CLI] Reintentando con --results_dir: {' '.join(cmd)}")
                 res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=600)
 
             results_file = None
