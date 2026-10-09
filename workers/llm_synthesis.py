@@ -43,10 +43,32 @@ def record_api_log(
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        cur.execute("""
+            CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+            CREATE TABLE IF NOT EXISTS api_logs (
+                id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                servicio                VARCHAR(50) NOT NULL,
+                accion                  VARCHAR(100) NOT NULL,
+                modelo_o_proveedor      VARCHAR(100),
+                estado                  VARCHAR(50) NOT NULL,
+                codigo_http             INT,
+                latencia_ms             INT,
+                tokens_input            INT DEFAULT 0,
+                tokens_output           INT DEFAULT 0,
+                tokens_total            INT DEFAULT 0,
+                max_tokens_configurado  INT,
+                destinatario            VARCHAR(100),
+                peticion_payload        TEXT,
+                respuesta_payload       TEXT,
+                error_mensaje           TEXT,
+                creado_en               TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
+        """)
         p_safe = peticion_payload[:250000] if peticion_payload else ""
         r_safe = respuesta_payload[:250000] if respuesta_payload else ""
         err_safe = str(error_mensaje)[:4000] if error_mensaje else None
         t_total = tokens_total if tokens_total > 0 else (tokens_input + tokens_output)
+        norm_estado = "ok" if estado in ("ok", "exitoso") else "error"
 
         cur.execute(
             """
@@ -59,7 +81,7 @@ def record_api_log(
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
             """,
             (
-                servicio, accion, modelo_o_proveedor, estado, codigo_http,
+                servicio, accion, modelo_o_proveedor, norm_estado, codigo_http,
                 latencia_ms, tokens_input, tokens_output, t_total,
                 max_tokens_configurado, destinatario, p_safe, r_safe, err_safe
             )
@@ -67,8 +89,9 @@ def record_api_log(
         conn.commit()
         cur.close()
         conn.close()
+        print(f"[ApiLogs] ✅ Log registrado: {servicio} / {accion} (estado: {norm_estado})")
     except Exception as log_err:
-        print(f"[ApiLogs] Advertencia registrando log en PostgreSQL: {log_err}")
+        print(f"[ApiLogs] ❌ Advertencia registrando log en PostgreSQL: {log_err}")
 
 def extract_text_and_meta(response) -> Tuple[str, int, int, str]:
     """

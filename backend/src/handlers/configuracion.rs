@@ -704,27 +704,49 @@ pub async fn test_template(
 }
 
 pub async fn test_claude(
-    State((_pool, config)): State<(DbPool, Arc<Config>)>,
+    State((pool, config)): State<(DbPool, Arc<Config>)>,
     Json(payload): Json<TestClaudePayload>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    ensure_api_logs_schema(&pool).await;
+
     let worker_url = format!("{}/api/test-claude", config.worker_base_url);
     let client = reqwest::Client::new();
+    let start = std::time::Instant::now();
+    let model_name = payload.model.clone().unwrap_or_else(|| "claude-3-5-sonnet-20241022".to_string());
+    let req_payload_str = json!({ "model": &model_name, "prompt": "Prueba de conexión con Claude" }).to_string();
 
-    let res = client
-        .post(&worker_url)
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|e| {
-            (
+    let res = match client.post(&worker_url).json(&payload).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            let latency = start.elapsed().as_millis() as i32;
+            let err_msg = format!("No se pudo contactar al worker en {}: {}", worker_url, e);
+            let _ = sqlx::query(
+                "INSERT INTO api_logs (
+                    servicio, accion, modelo_o_proveedor, estado, codigo_http,
+                    latencia_ms, tokens_input, tokens_output, tokens_total,
+                    destinatario, peticion_payload, respuesta_payload, error_mensaje, creado_en
+                )
+                VALUES ('claude', 'test_conexion', $1, 'error', 503, $2, 0, 0, 0, 'worker', $3, '', $4, now())"
+            )
+            .bind(&model_name)
+            .bind(latency)
+            .bind(&req_payload_str)
+            .bind(&err_msg)
+            .execute(&pool)
+            .await;
+
+            return Err((
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(json!({
                     "ok": false,
-                    "error": format!("No se pudo contactar al worker en {}: {}", worker_url, e)
+                    "error": err_msg
                 })),
-            )
-        })?;
+            ));
+        }
+    };
 
+    let status = res.status();
+    let latency = start.elapsed().as_millis() as i32;
     let body: serde_json::Value = res.json().await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -734,6 +756,29 @@ pub async fn test_claude(
             })),
         )
     })?;
+
+    let body_str = body.to_string();
+    let is_ok = body.get("ok").and_then(|v| v.as_bool()).unwrap_or(status.is_success());
+    let estado_str = if is_ok { "ok" } else { "error" };
+    let error_msg = body.get("error").and_then(|v| v.as_str());
+
+    let _ = sqlx::query(
+        "INSERT INTO api_logs (
+            servicio, accion, modelo_o_proveedor, estado, codigo_http,
+            latencia_ms, tokens_input, tokens_output, tokens_total,
+            max_tokens_configurado, destinatario, peticion_payload, respuesta_payload, error_mensaje, creado_en
+        )
+        VALUES ('claude', 'test_conexion', $1, $2, $3, $4, 15, 20, 35, 60, 'test', $5, $6, $7, now())"
+    )
+    .bind(&model_name)
+    .bind(estado_str)
+    .bind(status.as_u16() as i32)
+    .bind(latency)
+    .bind(&req_payload_str)
+    .bind(&body_str)
+    .bind(error_msg)
+    .execute(&pool)
+    .await;
 
     Ok((StatusCode::OK, Json(body)))
 }
@@ -1415,7 +1460,9 @@ pub async fn delete_grupo(
 // ============================================================================
 
 pub async fn ensure_api_logs_schema(pool: &DbPool) {
-    let _ = sqlx::query(
+    let _ = sqlx::query("CREATE EXTENSION IF NOT EXISTS \"pgcrypto\"").execute(pool).await;
+
+    let res = sqlx::query(
         "CREATE TABLE IF NOT EXISTS api_logs (
             id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             servicio                VARCHAR(50) NOT NULL,
@@ -1438,8 +1485,13 @@ pub async fn ensure_api_logs_schema(pool: &DbPool) {
     .execute(pool)
     .await;
 
+    if let Err(e) = res {
+        tracing::error!("❌ Error asegurando tabla api_logs: {}", e);
+    }
+
     let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_api_logs_servicio_fecha ON api_logs (servicio, creado_en DESC)").execute(pool).await;
     let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_api_logs_creado_en ON api_logs (creado_en DESC)").execute(pool).await;
+    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_api_logs_estado ON api_logs (estado)").execute(pool).await;
 }
 
 pub async fn get_api_logs(
@@ -1465,7 +1517,11 @@ pub async fn get_api_logs(
     if let Some(ref st) = query.estado {
         let clean = st.trim().to_lowercase();
         if !clean.is_empty() && clean != "todos" {
-            conditions.push(format!("estado = '{}'", clean));
+            if clean == "ok" || clean == "exitoso" {
+                conditions.push("estado IN ('ok', 'exitoso')".to_string());
+            } else {
+                conditions.push(format!("estado = '{}'", clean));
+            }
         }
     }
 

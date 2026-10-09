@@ -157,7 +157,7 @@ export default function ConfiguracionPage() {
   const [apiLogs, setApiLogs] = useState<ApiLogItem[]>([]);
   const [apiLogStats, setApiLogStats] = useState<ApiLogStats | null>(null);
   const [loadingApiLogs, setLoadingApiLogs] = useState<boolean>(false);
-  const [apiLogsServiceTab, setApiLogsServiceTab] = useState<"claude" | "whatsapp" | "todos">("claude");
+  const [apiLogsServiceTab, setApiLogsServiceTab] = useState<"todos" | "claude" | "whatsapp">("todos");
   const [apiLogsStatusFilter, setApiLogsStatusFilter] = useState<"todos" | "ok" | "error">("todos");
   const [apiLogsSearch, setApiLogsSearch] = useState<string>("");
   const [selectedLogForModal, setSelectedLogForModal] = useState<ApiLogItem | null>(null);
@@ -2037,6 +2037,12 @@ export default function ConfiguracionPage() {
                       }}
                     >
                       <Tab
+                        value="todos"
+                        icon={<HistoryIcon sx={{ color: "#6366f1" }} />}
+                        iconPosition="start"
+                        label="Todos los Registros"
+                      />
+                      <Tab
                         value="claude"
                         icon={<SmartToyIcon sx={{ color: "#d97706" }} />}
                         iconPosition="start"
@@ -2047,12 +2053,6 @@ export default function ConfiguracionPage() {
                         icon={<WhatsAppIcon sx={{ color: "#25D366" }} />}
                         iconPosition="start"
                         label="Apartado WhatsApp (Kapso)"
-                      />
-                      <Tab
-                        value="todos"
-                        icon={<HistoryIcon sx={{ color: "#6366f1" }} />}
-                        iconPosition="start"
-                        label="Todos los Registros"
                       />
                     </Tabs>
 

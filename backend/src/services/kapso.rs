@@ -339,9 +339,13 @@ pub async fn log_whatsapp_api(
     respuesta_payload: &str,
     error_mensaje: Option<&str>,
 ) {
+    crate::handlers::configuracion::ensure_api_logs_schema(pool).await;
+
     let p_safe = if peticion_payload.len() > 100000 { &peticion_payload[..100000] } else { peticion_payload };
     let r_safe = if respuesta_payload.len() > 100000 { &respuesta_payload[..100000] } else { respuesta_payload };
-    let _ = sqlx::query(
+    let norm_estado = if estado == "exitoso" { "ok" } else { estado };
+
+    let res = sqlx::query(
         "INSERT INTO api_logs (
             servicio, accion, modelo_o_proveedor, estado, codigo_http,
             latencia_ms, tokens_input, tokens_output, tokens_total,
@@ -350,7 +354,7 @@ pub async fn log_whatsapp_api(
         VALUES ('whatsapp', $1, 'kapso', $2, $3, $4, 0, 0, 0, $5, $6, $7, $8, now())"
     )
     .bind(accion)
-    .bind(estado)
+    .bind(norm_estado)
     .bind(codigo_http)
     .bind(latencia_ms)
     .bind(destinatario)
@@ -359,6 +363,12 @@ pub async fn log_whatsapp_api(
     .bind(error_mensaje)
     .execute(pool)
     .await;
+
+    if let Err(e) = res {
+        tracing::error!("❌ [api_logs] Error al registrar log de WhatsApp en BD: {}", e);
+    } else {
+        tracing::info!("✅ [api_logs] Log de WhatsApp registrado exitosamente (accion={}, dest={})", accion, destinatario);
+    }
 }
 
 pub async fn get_whatsapp_config(pool: &PgPool) -> KapsoConfig {
