@@ -53,23 +53,15 @@ impl KapsoClient {
         phone.chars().filter(|c| c.is_ascii_digit()).collect()
     }
 
-    pub async fn send_text(&self, to: &str, text: &str) -> Result<String, String> {
+    pub async fn send_text_with_log(
+        &self,
+        pool: Option<&PgPool>,
+        to: &str,
+        text: &str,
+        accion: &str,
+    ) -> Result<String, String> {
+        let start = std::time::Instant::now();
         let clean_phone = Self::sanitize_phone(to);
-        if clean_phone.is_empty() {
-            return Err("Número de teléfono de destino vacío o inválido".to_string());
-        }
-        if self.api_key.trim().is_empty() {
-            return Err("KAPSO_API_KEY no configurada en el sistema".to_string());
-        }
-        if self.phone_number_id.trim().is_empty() {
-            return Err("KAPSO_PHONE_NUMBER_ID no configurado en el sistema".to_string());
-        }
-
-        let url = format!(
-            "https://api.kapso.ai/meta/whatsapp/v24.0/{}/messages",
-            self.phone_number_id.trim()
-        );
-
         let payload = json!({
             "messaging_product": "whatsapp",
             "to": clean_phone,
@@ -78,10 +70,38 @@ impl KapsoClient {
                 "body": text
             }
         });
+        let payload_str = payload.to_string();
+
+        if clean_phone.is_empty() {
+            let err = "Número de teléfono de destino vacío o inválido".to_string();
+            if let Some(p) = pool {
+                log_whatsapp_api(p, accion, to, "error", Some(400), Some(0), &payload_str, "", Some(&err)).await;
+            }
+            return Err(err);
+        }
+        if self.api_key.trim().is_empty() {
+            let err = "KAPSO_API_KEY no configurada en el sistema".to_string();
+            if let Some(p) = pool {
+                log_whatsapp_api(p, accion, to, "error", Some(500), Some(0), &payload_str, "", Some(&err)).await;
+            }
+            return Err(err);
+        }
+        if self.phone_number_id.trim().is_empty() {
+            let err = "KAPSO_PHONE_NUMBER_ID no configurado en el sistema".to_string();
+            if let Some(p) = pool {
+                log_whatsapp_api(p, accion, to, "error", Some(500), Some(0), &payload_str, "", Some(&err)).await;
+            }
+            return Err(err);
+        }
+
+        let url = format!(
+            "https://api.kapso.ai/meta/whatsapp/v24.0/{}/messages",
+            self.phone_number_id.trim()
+        );
 
         info!("Enviando mensaje WhatsApp oficial vía Kapso a: {}", clean_phone);
 
-        let response = self
+        let response = match self
             .client
             .post(&url)
             .header("X-API-Key", self.api_key.trim())
@@ -89,17 +109,38 @@ impl KapsoClient {
             .json(&payload)
             .send()
             .await
-            .map_err(|e| format!("Error de conexión HTTP con Kapso: {}", e))?;
+        {
+            Ok(resp) => resp,
+            Err(e) => {
+                let latency = start.elapsed().as_millis() as i32;
+                let err_str = format!("Error de conexión HTTP con Kapso: {}", e);
+                if let Some(p) = pool {
+                    log_whatsapp_api(p, accion, to, "error", Some(502), Some(latency), &payload_str, "", Some(&err_str)).await;
+                }
+                return Err(err_str);
+            }
+        };
 
         let status = response.status();
-        let body: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| format!("Error decodificando respuesta de Kapso: {}", e))?;
+        let latency = start.elapsed().as_millis() as i32;
+        let body: serde_json::Value = match response.json().await {
+            Ok(b) => b,
+            Err(e) => {
+                let err_str = format!("Error decodificando respuesta de Kapso: {}", e);
+                if let Some(p) = pool {
+                    log_whatsapp_api(p, accion, to, "error", Some(status.as_u16() as i32), Some(latency), &payload_str, "", Some(&err_str)).await;
+                }
+                return Err(err_str);
+            }
+        };
+        let body_str = body.to_string();
 
         if !status.is_success() {
             let err_detail = extract_error_detail(status, &body);
             error!("Error en Kapso API (HTTP {}): {:?}", status, body);
+            if let Some(p) = pool {
+                log_whatsapp_api(p, accion, to, "error", Some(status.as_u16() as i32), Some(latency), &payload_str, &body_str, Some(&err_detail)).await;
+            }
             return Err(err_detail);
         }
 
@@ -113,43 +154,34 @@ impl KapsoClient {
             .to_string();
 
         info!("✅ Mensaje entregado a Kapso con éxito. Message ID: {}", msg_id);
+        if let Some(p) = pool {
+            log_whatsapp_api(p, accion, to, "ok", Some(status.as_u16() as i32), Some(latency), &payload_str, &body_str, None).await;
+        }
         Ok(msg_id)
     }
 
-    /// Envía una plantilla oficial aprobada en Meta Cloud API / Kapso
-    pub async fn send_template(
+    pub async fn send_text(&self, to: &str, text: &str) -> Result<String, String> {
+        self.send_text_with_log(None, to, text, "mensaje_texto").await
+    }
+
+    /// Envía una plantilla oficial aprobada en Meta Cloud API / Kapso registrando log opcional en BD
+    pub async fn send_template_with_log(
         &self,
+        pool: Option<&PgPool>,
         to: &str,
         template_name: &str,
         language_code: &str,
         variables: Option<&[String]>,
+        accion: &str,
     ) -> Result<String, String> {
+        let start = std::time::Instant::now();
         let clean_phone = Self::sanitize_phone(to);
-        if clean_phone.is_empty() {
-            return Err("Número de teléfono de destino vacío o inválido".to_string());
-        }
-        if self.api_key.trim().is_empty() {
-            return Err("KAPSO_API_KEY no configurada en el sistema".to_string());
-        }
-        if self.phone_number_id.trim().is_empty() {
-            return Err("KAPSO_PHONE_NUMBER_ID no configurado en el sistema".to_string());
-        }
-
         let t_name = template_name.trim();
-        if t_name.is_empty() {
-            return Err("El nombre de la plantilla de WhatsApp es obligatorio".to_string());
-        }
-
         let lang = if language_code.trim().is_empty() {
             "es_MX"
         } else {
             language_code.trim()
         };
-
-        let url = format!(
-            "https://api.kapso.ai/meta/whatsapp/v24.0/{}/messages",
-            self.phone_number_id.trim()
-        );
 
         let mut template_obj = json!({
             "name": t_name,
@@ -185,13 +217,48 @@ impl KapsoClient {
             "type": "template",
             "template": template_obj
         });
+        let payload_str = payload.to_string();
+
+        if clean_phone.is_empty() {
+            let err = "Número de teléfono de destino vacío o inválido".to_string();
+            if let Some(p) = pool {
+                log_whatsapp_api(p, accion, to, "error", Some(400), Some(0), &payload_str, "", Some(&err)).await;
+            }
+            return Err(err);
+        }
+        if self.api_key.trim().is_empty() {
+            let err = "KAPSO_API_KEY no configurada en el sistema".to_string();
+            if let Some(p) = pool {
+                log_whatsapp_api(p, accion, to, "error", Some(500), Some(0), &payload_str, "", Some(&err)).await;
+            }
+            return Err(err);
+        }
+        if self.phone_number_id.trim().is_empty() {
+            let err = "KAPSO_PHONE_NUMBER_ID no configurado en el sistema".to_string();
+            if let Some(p) = pool {
+                log_whatsapp_api(p, accion, to, "error", Some(500), Some(0), &payload_str, "", Some(&err)).await;
+            }
+            return Err(err);
+        }
+        if t_name.is_empty() {
+            let err = "El nombre de la plantilla de WhatsApp es obligatorio".to_string();
+            if let Some(p) = pool {
+                log_whatsapp_api(p, accion, to, "error", Some(400), Some(0), &payload_str, "", Some(&err)).await;
+            }
+            return Err(err);
+        }
+
+        let url = format!(
+            "https://api.kapso.ai/meta/whatsapp/v24.0/{}/messages",
+            self.phone_number_id.trim()
+        );
 
         info!(
             "Enviando plantilla WhatsApp '{}' ({}) vía Kapso a: {}",
             t_name, lang, clean_phone
         );
 
-        let response = self
+        let response = match self
             .client
             .post(&url)
             .header("X-API-Key", self.api_key.trim())
@@ -199,17 +266,38 @@ impl KapsoClient {
             .json(&payload)
             .send()
             .await
-            .map_err(|e| format!("Error de conexión HTTP con Kapso: {}", e))?;
+        {
+            Ok(resp) => resp,
+            Err(e) => {
+                let latency = start.elapsed().as_millis() as i32;
+                let err_str = format!("Error de conexión HTTP con Kapso: {}", e);
+                if let Some(p) = pool {
+                    log_whatsapp_api(p, accion, to, "error", Some(502), Some(latency), &payload_str, "", Some(&err_str)).await;
+                }
+                return Err(err_str);
+            }
+        };
 
         let status = response.status();
-        let body: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| format!("Error decodificando respuesta de Kapso: {}", e))?;
+        let latency = start.elapsed().as_millis() as i32;
+        let body: serde_json::Value = match response.json().await {
+            Ok(b) => b,
+            Err(e) => {
+                let err_str = format!("Error decodificando respuesta de Kapso: {}", e);
+                if let Some(p) = pool {
+                    log_whatsapp_api(p, accion, to, "error", Some(status.as_u16() as i32), Some(latency), &payload_str, "", Some(&err_str)).await;
+                }
+                return Err(err_str);
+            }
+        };
+        let body_str = body.to_string();
 
         if !status.is_success() {
             let err_detail = extract_error_detail(status, &body);
             error!("Error en Kapso Template API (HTTP {}): {:?}", status, body);
+            if let Some(p) = pool {
+                log_whatsapp_api(p, accion, to, "error", Some(status.as_u16() as i32), Some(latency), &payload_str, &body_str, Some(&err_detail)).await;
+            }
             return Err(err_detail);
         }
 
@@ -223,8 +311,54 @@ impl KapsoClient {
             .to_string();
 
         info!("✅ Plantilla WhatsApp entregada a Kapso con éxito. Message ID: {}", msg_id);
+        if let Some(p) = pool {
+            log_whatsapp_api(p, accion, to, "ok", Some(status.as_u16() as i32), Some(latency), &payload_str, &body_str, None).await;
+        }
         Ok(msg_id)
     }
+
+    pub async fn send_template(
+        &self,
+        to: &str,
+        template_name: &str,
+        language_code: &str,
+        variables: Option<&[String]>,
+    ) -> Result<String, String> {
+        self.send_template_with_log(None, to, template_name, language_code, variables, "plantilla_whatsapp").await
+    }
+}
+
+pub async fn log_whatsapp_api(
+    pool: &PgPool,
+    accion: &str,
+    destinatario: &str,
+    estado: &str,
+    codigo_http: Option<i32>,
+    latencia_ms: Option<i32>,
+    peticion_payload: &str,
+    respuesta_payload: &str,
+    error_mensaje: Option<&str>,
+) {
+    let p_safe = if peticion_payload.len() > 100000 { &peticion_payload[..100000] } else { peticion_payload };
+    let r_safe = if respuesta_payload.len() > 100000 { &respuesta_payload[..100000] } else { respuesta_payload };
+    let _ = sqlx::query(
+        "INSERT INTO api_logs (
+            servicio, accion, modelo_o_proveedor, estado, codigo_http,
+            latencia_ms, tokens_input, tokens_output, tokens_total,
+            destinatario, peticion_payload, respuesta_payload, error_mensaje, creado_en
+        )
+        VALUES ('whatsapp', $1, 'kapso', $2, $3, $4, 0, 0, 0, $5, $6, $7, $8, now())"
+    )
+    .bind(accion)
+    .bind(estado)
+    .bind(codigo_http)
+    .bind(latencia_ms)
+    .bind(destinatario)
+    .bind(p_safe)
+    .bind(r_safe)
+    .bind(error_mensaje)
+    .execute(pool)
+    .await;
 }
 
 pub async fn get_whatsapp_config(pool: &PgPool) -> KapsoConfig {

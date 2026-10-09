@@ -67,6 +67,8 @@ pub fn create_router(pool: DbPool, config: Arc<Config>) -> Router {
         .route("/api/configuracion/test-claude", post(configuracion::test_claude))
         .route("/api/configuracion/test-whatsapp", post(configuracion::test_whatsapp))
         .route("/api/configuracion/test-template", post(configuracion::test_template))
+        // Auditoría e Intercambio de Peticiones APIs (Claude y WhatsApp)
+        .route("/api/configuracion/logs-api", get(configuracion::get_api_logs).post(configuracion::create_api_log).delete(configuracion::clear_api_logs))
         // Lista de Distribución WhatsApp (Destinatarios)
         .route("/api/configuracion/destinatarios", get(configuracion::list_destinatarios))
         .route("/api/configuracion/destinatarios", post(configuracion::create_destinatario))

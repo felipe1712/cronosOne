@@ -443,7 +443,7 @@ pub async fn aprobar_boletin(
                 continue;
             }
 
-            match client.send_text(phone, &texto_clone).await {
+            match client.send_text_with_log(Some(&pool_clone), phone, &texto_clone, "envio_boletin_whatsapp").await {
                 Ok(msg_id) => {
                     let _ = sqlx::query(
                         "UPDATE mensajes_pendientes 
@@ -597,6 +597,32 @@ pub async fn ensure_sintesis_diarias_schema(pool: &DbPool) {
     let _ = sqlx::query("ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS aprobado_por UUID")
         .execute(pool)
         .await;
+
+    let _ = sqlx::query(
+        "CREATE TABLE IF NOT EXISTS api_logs (
+            id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            servicio                VARCHAR(50) NOT NULL,
+            accion                  VARCHAR(100) NOT NULL,
+            modelo_o_proveedor      VARCHAR(100),
+            estado                  VARCHAR(50) NOT NULL,
+            codigo_http             INT,
+            latencia_ms             INT,
+            tokens_input            INT DEFAULT 0,
+            tokens_output           INT DEFAULT 0,
+            tokens_total            INT DEFAULT 0,
+            max_tokens_configurado  INT,
+            destinatario            VARCHAR(100),
+            peticion_payload        TEXT,
+            respuesta_payload       TEXT,
+            error_mensaje           TEXT,
+            creado_en               TIMESTAMPTZ NOT NULL DEFAULT now()
+        )"
+    )
+    .execute(pool)
+    .await;
+
+    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_api_logs_servicio_fecha ON api_logs (servicio, creado_en DESC)").execute(pool).await;
+    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_api_logs_creado_en ON api_logs (creado_en DESC)").execute(pool).await;
 }
 
 pub async fn list_fechas_sintesis(
@@ -736,9 +762,45 @@ pub async fn get_workspace_fecha(
     .await {
         Ok(s) => s,
         Err(e) => {
-            tracing::warn!("Aviso consultando síntesis diaria para {}: {}. Intentando asegurar esquema...", fecha, e);
+            tracing::warn!("Aviso consultando síntesis diaria completa para {}: {}. Intentando consulta básica...", fecha, e);
             ensure_sintesis_diarias_schema(&pool).await;
-            None
+
+            #[derive(sqlx::FromRow)]
+            struct BasicSintesis {
+                id: Uuid,
+                fecha: NaiveDate,
+                texto: String,
+                estado: String,
+                modelo_usado: Option<String>,
+                tokens_usados: Option<i32>,
+                creado_en: chrono::DateTime<Utc>,
+                actualizado_en: chrono::DateTime<Utc>,
+            }
+
+            if let Ok(Some(b)) = sqlx::query_as::<_, BasicSintesis>(
+                "SELECT id, fecha, texto, estado, modelo_usado, tokens_usados, creado_en, actualizado_en
+                 FROM sintesis_diarias
+                 WHERE fecha = $1",
+            )
+            .bind(fecha)
+            .fetch_optional(&pool)
+            .await {
+                Some(SintesisDiaria {
+                    id: b.id,
+                    fecha: b.fecha,
+                    texto: b.texto,
+                    temas: Some(vec![]),
+                    documentos_ids: Some(vec![]),
+                    estado: b.estado,
+                    modelo_usado: b.modelo_usado,
+                    tokens_usados: b.tokens_usados,
+                    aprobado_por: None,
+                    creado_en: b.creado_en,
+                    actualizado_en: b.actualizado_en,
+                })
+            } else {
+                None
+            }
         }
     };
 
@@ -1280,7 +1342,7 @@ pub async fn aprobar_sintesis_diaria(
                 if phone == "Sin destinatario configurado" || phone == "5215512345678" {
                     continue;
                 }
-                match client.send_text(phone, &texto_clone).await {
+                match client.send_text_with_log(Some(&pool_clone), phone, &texto_clone, "envio_sintesis_diaria_whatsapp").await {
                     Ok(msg_id) => {
                         let _ = sqlx::query(
                             "UPDATE mensajes_pendientes SET estado = 'confirmado', kapso_message_id = $1, meta_status = 'sent', confirmado_en = now() WHERE referencia_id = $2 AND destinatario = $3"

@@ -20,38 +20,178 @@ def get_configured_model() -> str:
         print(f"[Config] Error leyendo modelo de BD ({e}), usando default.")
     return settings.claude_model
 
+import time
+from typing import Optional
+
+def record_api_log(
+    servicio: str,
+    accion: str,
+    modelo_o_proveedor: str,
+    estado: str,
+    codigo_http: int = 200,
+    latencia_ms: int = 0,
+    tokens_input: int = 0,
+    tokens_output: int = 0,
+    tokens_total: int = 0,
+    max_tokens_configurado: Optional[int] = None,
+    destinatario: str = "",
+    peticion_payload: str = "",
+    respuesta_payload: str = "",
+    error_mensaje: Optional[str] = None
+):
+    """Registra de forma segura un intercambio de API en la tabla api_logs de PostgreSQL."""
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        p_safe = peticion_payload[:250000] if peticion_payload else ""
+        r_safe = respuesta_payload[:250000] if respuesta_payload else ""
+        err_safe = str(error_mensaje)[:4000] if error_mensaje else None
+        t_total = tokens_total if tokens_total > 0 else (tokens_input + tokens_output)
+
+        cur.execute(
+            """
+            INSERT INTO api_logs (
+                servicio, accion, modelo_o_proveedor, estado, codigo_http,
+                latencia_ms, tokens_input, tokens_output, tokens_total,
+                max_tokens_configurado, destinatario, peticion_payload,
+                respuesta_payload, error_mensaje, creado_en
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+            """,
+            (
+                servicio, accion, modelo_o_proveedor, estado, codigo_http,
+                latencia_ms, tokens_input, tokens_output, t_total,
+                max_tokens_configurado, destinatario, p_safe, r_safe, err_safe
+            )
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as log_err:
+        print(f"[ApiLogs] Advertencia registrando log en PostgreSQL: {log_err}")
+
+def extract_text_and_meta(response) -> Tuple[str, int, int, str]:
+    """
+    Extrae texto y metadatos de tokens y stop_reason de la respuesta de Claude
+    de forma ultra resiliente soportando TextBlock, dicts, strings y fallback de thinking.
+    Retorna (texto, input_tokens, output_tokens, stop_reason).
+    """
+    input_tokens = 0
+    output_tokens = 0
+    stop_reason = ""
+
+    if hasattr(response, "usage") and response.usage:
+        input_tokens = getattr(response.usage, "input_tokens", 0) or 0
+        output_tokens = getattr(response.usage, "output_tokens", 0) or 0
+    elif isinstance(response, dict) and "usage" in response:
+        u = response.get("usage")
+        if isinstance(u, dict):
+            input_tokens = u.get("input_tokens", 0) or 0
+            output_tokens = u.get("output_tokens", 0) or 0
+
+    if hasattr(response, "stop_reason"):
+        stop_reason = str(response.stop_reason or "")
+    elif isinstance(response, dict):
+        stop_reason = str(response.get("stop_reason", ""))
+
+    if isinstance(response, str):
+        return response.strip(), input_tokens, output_tokens, stop_reason
+    if hasattr(response, "text") and isinstance(response.text, str) and response.text.strip():
+        return response.text.strip(), input_tokens, output_tokens, stop_reason
+
+    content = getattr(response, "content", None)
+    if content is None and isinstance(response, dict):
+        content = response.get("content")
+
+    text_blocks = []
+    thinking_blocks = []
+
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, str):
+                text_blocks.append(block)
+            elif isinstance(block, dict):
+                b_type = block.get("type", "")
+                if b_type == "text" or "text" in block:
+                    text_blocks.append(str(block.get("text", "")))
+                elif b_type == "thinking" or "thinking" in block:
+                    thinking_blocks.append(str(block.get("thinking", "")))
+            else:
+                b_type = getattr(block, "type", "")
+                if b_type == "text" and hasattr(block, "text"):
+                    text_blocks.append(str(block.text))
+                elif hasattr(block, "text") and not hasattr(block, "thinking"):
+                    text_blocks.append(str(block.text))
+                elif hasattr(block, "thinking") or b_type == "thinking":
+                    th = getattr(block, "thinking", "")
+                    if th:
+                        thinking_blocks.append(str(th))
+                elif hasattr(block, "text"):
+                    text_blocks.append(str(block.text))
+
+    text_res = "\n".join([t for t in text_blocks if t.strip()]).strip()
+    if not text_res and thinking_blocks:
+        # Fallback si todo el token budget se consumió en bloque de pensamiento
+        text_res = "\n".join([t for t in thinking_blocks if t.strip()]).strip()
+
+    return text_res, input_tokens, output_tokens, stop_reason
+
 def extract_text_from_response(response) -> str:
     """Extrae texto concatenado ignorando bloques de pensamiento (ThinkingBlock)."""
-    text_blocks = []
-    for block in response.content:
-        if getattr(block, "type", "") == "text" and hasattr(block, "text"):
-            text_blocks.append(block.text)
-        elif hasattr(block, "text") and not hasattr(block, "thinking"):
-            text_blocks.append(block.text)
-    if not text_blocks and response.content:
-        for block in response.content:
-            if hasattr(block, "text"):
-                text_blocks.append(str(block.text))
-    return "\n".join(text_blocks).strip()
+    text, _, _, _ = extract_text_and_meta(response)
+    return text
 
 async def test_claude_model(model_name: str) -> str:
-    """Prueba rápida de conectividad con un modelo específico de Claude."""
+    """Prueba rápida de conectividad con un modelo específico de Claude registrando log."""
     if not settings.anthropic_api_key:
         raise ValueError("ANTHROPIC_API_KEY no configurada en workers/.env")
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    client = anthropic.Anthropic(api_key=settings.anthropic_api_key, timeout=30.0)
+    prompt_test = "Responde con 5 palabras confirmando conexión y modelo."
+    t0 = time.time()
     try:
-        response = client.messages.create(
-            model=model_name,
-            max_tokens=60,
-            messages=[{"role": "user", "content": "Responde con 5 palabras confirmando conexión y modelo."}]
+        try:
+            response = client.messages.create(
+                model=model_name,
+                max_tokens=60,
+                messages=[{"role": "user", "content": prompt_test}]
+            )
+        except TypeError:
+            response = client.messages.create(
+                model=model_name,
+                max_tokens=60,
+                messages=[{"role": "user", "content": prompt_test}]
+            )
+        latency = int((time.time() - t0) * 1000)
+        reply_text, in_tok, out_tok, _ = extract_text_and_meta(response)
+        record_api_log(
+            servicio="claude",
+            accion="test_conexion",
+            modelo_o_proveedor=model_name,
+            estado="exitoso",
+            codigo_http=200,
+            latencia_ms=latency,
+            tokens_input=in_tok,
+            tokens_output=out_tok,
+            tokens_total=in_tok + out_tok,
+            max_tokens_configurado=60,
+            peticion_payload=prompt_test,
+            respuesta_payload=reply_text
         )
-    except TypeError:
-        response = client.messages.create(
-            model=model_name,
-            max_tokens=60,
-            messages=[{"role": "user", "content": "Responde con 5 palabras confirmando conexión y modelo."}]
+        return reply_text
+    except Exception as e:
+        latency = int((time.time() - t0) * 1000)
+        record_api_log(
+            servicio="claude",
+            accion="test_conexion",
+            modelo_o_proveedor=model_name,
+            estado="error",
+            codigo_http=500,
+            latencia_ms=latency,
+            max_tokens_configurado=60,
+            peticion_payload=prompt_test,
+            error_mensaje=str(e)
         )
-    return extract_text_from_response(response)
+        raise
 
 DEFAULT_SYSTEM_PROMPT = """Eres el analista jefe de inteligencia estratégica de ExposureIQ, al servicio del Director de Operaciones de una de las aseguradoras más grandes de México.
 
@@ -146,31 +286,29 @@ async def generate_executive_brief(sections: List[Dict[str, Any]], fecha_str: st
         return fallback_brief, detected_topics
 
     try:
-        client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        client = anthropic.Anthropic(api_key=settings.anthropic_api_key, timeout=300.0)
 
         configured_model = get_configured_model()
-        models_to_try = [configured_model]
-        fallback_candidates = [
+        models_to_try = [
+            configured_model,
+            "claude-3-5-sonnet-20241022",
+            "claude-3-5-haiku-20241022",
+            "claude-3-haiku-20240307",
             "claude-sonnet-4-5-20250929",
-            "claude-haiku-4-5-20251001",
-            "claude-sonnet-4-6",
-            "claude-sonnet-5",
-            "claude-opus-4-5-20251101",
-            "claude-opus-4-6",
-            "claude-opus-4-7",
-            "claude-opus-4-8",
-            "claude-opus-5",
-            "claude-fable-5-1",
-            "claude-fable-5",
+            "claude-haiku-4-5-20251001"
         ]
-        for m in fallback_candidates:
-            if m not in models_to_try:
-                models_to_try.append(m)
+        dedup_models = []
+        seen = set()
+        for m in models_to_try:
+            if m and m not in seen:
+                seen.add(m)
+                dedup_models.append(m)
 
         active_system_prompt = get_configured_system_prompt()
         active_max_tokens = get_configured_max_tokens(default=1000)
         last_error = None
-        for model_name in models_to_try:
+        for model_name in dedup_models:
+            t0 = time.time()
             try:
                 print(f"[LLM] Solicitando síntesis con modelo: {model_name} (límite: {active_max_tokens} tokens)...")
                 try:
@@ -192,20 +330,47 @@ async def generate_executive_brief(sections: List[Dict[str, Any]], fecha_str: st
                         ]
                     )
 
-                brief_text = extract_text_from_response(response)
-                print(f"[LLM] ✅ Síntesis ejecutiva generada exitosamente con '{model_name}'.")
-                return brief_text, detected_topics
+                latency = int((time.time() - t0) * 1000)
+                brief_text, in_tok, out_tok, stop_reason = extract_text_and_meta(response)
+
+                if not brief_text.strip():
+                    raise ValueError(f"Claude devolvió texto vacío (stop_reason: '{stop_reason}', in_tok: {in_tok}, out_tok: {out_tok})")
+
+                record_api_log(
+                    servicio="claude",
+                    accion="sintesis_boletin",
+                    modelo_o_proveedor=model_name,
+                    estado="exitoso",
+                    codigo_http=200,
+                    latencia_ms=latency,
+                    tokens_input=in_tok,
+                    tokens_output=out_tok,
+                    tokens_total=in_tok + out_tok,
+                    max_tokens_configurado=active_max_tokens,
+                    peticion_payload=f"[System Prompt]\n{active_system_prompt}\n\n[Context]\n{context_prompt}",
+                    respuesta_payload=brief_text
+                )
+
+                print(f"[LLM] ✅ Síntesis ejecutiva generada exitosamente con '{model_name}' ({in_tok + out_tok} tokens, {latency}ms).")
+                return brief_text, detected_topics, (in_tok + out_tok)
 
             except Exception as e:
+                latency = int((time.time() - t0) * 1000)
                 err_str = str(e).lower()
-                if "404" in err_str or "not_found" in err_str:
-                    print(f"[LLM] Modelo '{model_name}' no disponible en tu cuenta (404 Not Found). Probando siguiente...")
-                    last_error = e
-                    continue
-                else:
-                    # Si es otro error (ej: saldo/créditos o cuota), guardar y salir
-                    last_error = e
-                    break
+                record_api_log(
+                    servicio="claude",
+                    accion="sintesis_boletin",
+                    modelo_o_proveedor=model_name,
+                    estado="error",
+                    codigo_http=500,
+                    latencia_ms=latency,
+                    max_tokens_configurado=active_max_tokens,
+                    peticion_payload=f"[System Prompt]\n{active_system_prompt}\n\n[Context]\n{context_prompt}",
+                    error_mensaje=str(e)
+                )
+                print(f"[LLM] Advertencia: Modelo '{model_name}' falló ({e}). Probando siguiente...")
+                last_error = e
+                continue
 
         if last_error:
             raise last_error
@@ -220,7 +385,7 @@ async def generate_executive_brief(sections: List[Dict[str, Any]], fecha_str: st
             f"📌 *Atención Operativa:* Revisar comités de siniestros y suscripción de flotillas.\n\n"
             f"_(Nota: Claude API retornó '{str(e)[:80]}...'. Se generó síntesis de respaldo editable)_"
         )
-        return fallback_brief, detected_topics
+        return fallback_brief, detected_topics, 0
 
 def extract_section_text(sec: dict) -> str:
     """Extrae de manera segura el texto completo de una sección, soportando dict, str o JSON string."""
@@ -305,14 +470,16 @@ async def generate_consolidated_daily_brief(documents: List[Dict[str, Any]], fec
         return fallback_brief, detected_topics
 
     try:
-        client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        client = anthropic.Anthropic(api_key=settings.anthropic_api_key, timeout=300.0)
         configured_model = get_configured_model()
         models_to_try = [
             configured_model,
-            "claude-sonnet-4-5-20250929",
-            "claude-haiku-4-5-20251001",
             "claude-3-5-sonnet-20241022",
-            "claude-3-haiku-20240307"
+            "claude-3-5-haiku-20241022",
+            "claude-3-haiku-20240307",
+            "claude-3-7-sonnet-20250219",
+            "claude-sonnet-4-5-20250929",
+            "claude-haiku-4-5-20251001"
         ]
         seen = set()
         dedup_models = []
@@ -330,6 +497,7 @@ async def generate_consolidated_daily_brief(documents: List[Dict[str, Any]], fec
         safe_prompt = context_prompt if len(context_prompt) <= max_prompt_chars else context_prompt[:max_prompt_chars] + "\n\n[...Extractos adicionales condensados por volumen...]"
 
         for model_name in dedup_models:
+            t0 = time.time()
             try:
                 print(f"[LLM] Generando síntesis consolidada con: {model_name} (límite: {active_max_tokens} tokens)...")
                 try:
@@ -347,11 +515,43 @@ async def generate_consolidated_daily_brief(documents: List[Dict[str, Any]], fec
                         messages=[{"role": "user", "content": f"{active_system_prompt}\n\n---\n\n{safe_prompt}"}]
                     )
 
-                brief_text = extract_text_from_response(response)
-                print(f"[LLM] ✅ Síntesis consolidada generada exitosamente con '{model_name}'.")
-                return brief_text, detected_topics
+                latency = int((time.time() - t0) * 1000)
+                brief_text, in_tok, out_tok, stop_reason = extract_text_and_meta(response)
+
+                if not brief_text.strip():
+                    raise ValueError(f"Claude devolvió texto vacío (stop_reason: '{stop_reason}', in_tok: {in_tok}, out_tok: {out_tok})")
+
+                record_api_log(
+                    servicio="claude",
+                    accion="sintesis_consolidada",
+                    modelo_o_proveedor=model_name,
+                    estado="exitoso",
+                    codigo_http=200,
+                    latencia_ms=latency,
+                    tokens_input=in_tok,
+                    tokens_output=out_tok,
+                    tokens_total=in_tok + out_tok,
+                    max_tokens_configurado=active_max_tokens,
+                    peticion_payload=f"[System Prompt]\n{active_system_prompt}\n\n[Context]\n{safe_prompt}",
+                    respuesta_payload=brief_text
+                )
+
+                print(f"[LLM] ✅ Síntesis consolidada generada exitosamente con '{model_name}' ({in_tok + out_tok} tokens, {latency}ms).")
+                return brief_text, detected_topics, (in_tok + out_tok)
             except Exception as e:
+                latency = int((time.time() - t0) * 1000)
                 err_str = str(e).lower()
+                record_api_log(
+                    servicio="claude",
+                    accion="sintesis_consolidada",
+                    modelo_o_proveedor=model_name,
+                    estado="error",
+                    codigo_http=500,
+                    latencia_ms=latency,
+                    max_tokens_configurado=active_max_tokens,
+                    peticion_payload=f"[System Prompt]\n{active_system_prompt}\n\n[Context]\n{safe_prompt}",
+                    error_mensaje=str(e)
+                )
                 print(f"[LLM] Advertencia: Modelo '{model_name}' falló ({e}). Probando alternativa...")
                 last_error = e
                 continue
@@ -369,5 +569,5 @@ async def generate_consolidated_daily_brief(documents: List[Dict[str, Any]], fec
             f"📌 *Atención Operativa:* Revisar comisiones de riesgos y análisis de siniestros.\n\n"
             f"_(Nota: Claude API retornó '{str(e)[:70]}...'. Se generó síntesis de respaldo editable)_"
         )
-        return fallback_brief, detected_topics
+        return fallback_brief, detected_topics, 0
 

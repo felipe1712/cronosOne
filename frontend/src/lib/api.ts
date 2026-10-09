@@ -77,6 +77,41 @@ export interface UpdateConfiguracionPayload {
   whatsapp_template_language?: string;
 }
 
+export interface ApiLogItem {
+  id: string;
+  servicio: "claude" | "whatsapp" | string;
+  accion: string;
+  modelo_o_proveedor: string;
+  estado: "exitoso" | "error" | "timeout" | string;
+  codigo_http?: number;
+  latencia_ms?: number;
+  tokens_input: number;
+  tokens_output: number;
+  tokens_total: number;
+  max_tokens_configurado?: number;
+  destinatario?: string;
+  peticion_payload: string;
+  respuesta_payload: string;
+  error_mensaje?: string;
+  creado_en: string;
+}
+
+export interface ApiLogStats {
+  total_claude: number;
+  tokens_claude: number;
+  exitosos_claude: number;
+  errores_claude: number;
+  total_whatsapp: number;
+  exitosos_whatsapp: number;
+  errores_whatsapp: number;
+}
+
+export interface ApiLogsResponse {
+  logs: ApiLogItem[];
+  stats: ApiLogStats;
+  total: number;
+}
+
 export interface GrupoDistribucion {
   id: string;
   nombre: string;
@@ -500,5 +535,23 @@ export const ApiService = {
         method: 'DELETE',
       }
     ),
+
+  // Logs de APIs (Claude y WhatsApp)
+  getApiLogs: (servicio?: string, estado?: string, limite: number = 50, offset: number = 0) => {
+    const params = new URLSearchParams();
+    if (servicio && servicio !== 'todos') params.append('servicio', servicio);
+    if (estado && estado !== 'todos') params.append('estado', estado);
+    params.append('limite', String(limite));
+    params.append('offset', String(offset));
+    return apiFetch<ApiLogsResponse>(`/configuracion/logs-api?${params.toString()}`);
+  },
+
+  clearApiLogs: (servicio?: string) => {
+    const params = new URLSearchParams();
+    if (servicio && servicio !== 'todos') params.append('servicio', servicio);
+    return apiFetch<{ ok: boolean; eliminados: number }>(`/configuracion/logs-api?${params.toString()}`, {
+      method: 'DELETE',
+    });
+  },
 };
 

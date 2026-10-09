@@ -76,7 +76,10 @@ async def run_bulletin_pipeline(boletin_id: str, ruta_archivo: str):
 
         # 5. Síntesis LLM con Claude API
         print(f"[Pipeline] Generando síntesis ejecutiva con Claude API...")
-        brief_texto, temas = await generate_executive_brief(secciones, fecha_str)
+        brief_res = await generate_executive_brief(secciones, fecha_str)
+        brief_texto = brief_res[0]
+        temas = brief_res[1]
+        tokens_ejecutivos = brief_res[2] if len(brief_res) > 2 else 0
 
         # 6. Guardar síntesis
         cur.execute(
@@ -373,7 +376,10 @@ async def consolidar_sintesis_diaria_endpoint(payload: ConsolidarSintesisDiariaR
         from llm_synthesis import generate_consolidated_daily_brief, get_configured_model
         active_model = get_configured_model()
         print(f"[Consolidar] Generando síntesis consolidada para {len(documentos_data)} documentos de {fecha} con {active_model}...")
-        brief_texto, detected_topics = await generate_consolidated_daily_brief(documentos_data, fecha)
+        brief_res = await generate_consolidated_daily_brief(documentos_data, fecha)
+        brief_texto = brief_res[0]
+        detected_topics = brief_res[1]
+        total_tokens = brief_res[2] if len(brief_res) > 2 else 0
 
         # Preparar y validar UUIDs de documentos para PostgreSQL
         import uuid as uuid_lib
@@ -395,10 +401,10 @@ async def consolidar_sintesis_diaria_endpoint(payload: ConsolidarSintesisDiariaR
             cur.execute(
                 """
                 INSERT INTO sintesis_diarias (
-                    fecha, texto, temas, documentos_ids, estado, modelo_usado, actualizado_en
+                    fecha, texto, temas, documentos_ids, estado, modelo_usado, tokens_usados, actualizado_en
                 )
                 VALUES (
-                    %s, %s, %s::text[], %s::uuid[], 'sintesis_lista', %s, now()
+                    %s, %s, %s::text[], %s::uuid[], 'sintesis_lista', %s, %s, now()
                 )
                 ON CONFLICT (fecha) DO UPDATE
                 SET texto = EXCLUDED.texto,
@@ -406,10 +412,11 @@ async def consolidar_sintesis_diaria_endpoint(payload: ConsolidarSintesisDiariaR
                     documentos_ids = EXCLUDED.documentos_ids,
                     estado = 'sintesis_lista',
                     modelo_usado = EXCLUDED.modelo_usado,
+                    tokens_usados = EXCLUDED.tokens_usados,
                     actualizado_en = now()
-                RETURNING id, fecha, texto, temas, documentos_ids, estado, modelo_usado, creado_en, actualizado_en
+                RETURNING id, fecha, texto, temas, documentos_ids, estado, modelo_usado, tokens_usados, creado_en, actualizado_en
                 """,
-                (fecha, brief_texto, safe_temas_str, safe_doc_ids_str, active_model)
+                (fecha, brief_texto, safe_temas_str, safe_doc_ids_str, active_model, total_tokens)
             )
             row = cur.fetchone()
             conn.commit()
@@ -421,19 +428,20 @@ async def consolidar_sintesis_diaria_endpoint(payload: ConsolidarSintesisDiariaR
             cur.execute(
                 """
                 INSERT INTO sintesis_diarias (
-                    fecha, texto, estado, modelo_usado, actualizado_en
+                    fecha, texto, estado, modelo_usado, tokens_usados, actualizado_en
                 )
                 VALUES (
-                    %s, %s, 'sintesis_lista', %s, now()
+                    %s, %s, 'sintesis_lista', %s, %s, now()
                 )
                 ON CONFLICT (fecha) DO UPDATE
                 SET texto = EXCLUDED.texto,
                     estado = 'sintesis_lista',
                     modelo_usado = EXCLUDED.modelo_usado,
+                    tokens_usados = EXCLUDED.tokens_usados,
                     actualizado_en = now()
-                RETURNING id, fecha, texto, estado, modelo_usado, creado_en, actualizado_en
+                RETURNING id, fecha, texto, estado, modelo_usado, tokens_usados, creado_en, actualizado_en
                 """,
-                (fecha, brief_texto, active_model)
+                (fecha, brief_texto, active_model, total_tokens)
             )
             row = cur.fetchone()
             conn.commit()
@@ -457,6 +465,7 @@ async def consolidar_sintesis_diaria_endpoint(payload: ConsolidarSintesisDiariaR
                 "documentos_ids": parsed_doc_ids,
                 "estado": row.get("estado", "sintesis_lista") if row else "sintesis_lista",
                 "modelo_usado": row.get("modelo_usado", active_model) if row else active_model,
+                "tokens_usados": total_tokens or (row.get("tokens_usados") if row else 0),
                 "creado_en": creado_iso,
                 "actualizado_en": act_iso,
             },

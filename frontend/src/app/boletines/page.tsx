@@ -188,7 +188,7 @@ export default function BoletinesPage() {
     }
   };
 
-  const fetchWorkspace = async (targetFecha: string) => {
+  const fetchWorkspace = async (targetFecha: string, preserveExistingText: boolean = false) => {
     try {
       setLoadingWorkspace(true);
       setError(null);
@@ -196,7 +196,7 @@ export default function BoletinesPage() {
       setWorkspace(resp);
       if (resp.sintesis && resp.sintesis.texto) {
         setEditedText(resp.sintesis.texto);
-      } else {
+      } else if (!preserveExistingText) {
         setEditedText("");
       }
     } catch (err: any) {
@@ -526,7 +526,9 @@ export default function BoletinesPage() {
       setError(null);
       const res = await ApiService.consolidarSintesisFecha(fechaTrabajo, docsIncluidos);
       if (res && res.sintesis) {
-        setEditedText(res.sintesis.texto || "");
+        const textReturned = res.sintesis.texto || "";
+        setEditedText(textReturned);
+        setWorkspace((prev) => prev ? { ...prev, sintesis: res.sintesis } : prev);
         setSuccess(
           `✅ Síntesis consolidada generada con éxito a partir de ${res.documentos_procesados || docsIncluidos.length} documentos.`
         );
@@ -536,7 +538,7 @@ export default function BoletinesPage() {
           }
         }, 150);
       }
-      fetchWorkspace(fechaTrabajo);
+      await fetchWorkspace(fechaTrabajo, true);
       fetchHistorial();
     } catch (err: any) {
       console.error("[Consolidar Síntesis Error]:", err);

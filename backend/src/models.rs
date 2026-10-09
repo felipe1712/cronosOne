@@ -444,4 +444,97 @@ pub struct AprobarSintesisDiariaRequest {
     pub enviar_whatsapp: Option<bool>,
 }
 
+// ============================================================================
+// 7. Logs de APIs (Claude y WhatsApp)
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct ApiLogRow {
+    pub id: Uuid,
+    pub servicio: String,
+    pub accion: String,
+    pub modelo_o_proveedor: Option<String>,
+    pub estado: String,
+    pub codigo_http: Option<i32>,
+    pub latencia_ms: Option<i32>,
+    pub tokens_input: Option<i32>,
+    pub tokens_output: Option<i32>,
+    pub tokens_total: Option<i32>,
+    pub max_tokens_configurado: Option<i32>,
+    pub destinatario: Option<String>,
+    pub peticion_payload: Option<String>,
+    pub respuesta_payload: Option<String>,
+    pub error_mensaje: Option<String>,
+    pub creado_en: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiLogItem {
+    pub id: String,
+    pub servicio: String,
+    pub accion: String,
+    pub modelo_o_proveedor: String,
+    pub estado: String,
+    pub codigo_http: Option<i32>,
+    pub latencia_ms: Option<i32>,
+    pub tokens_input: i32,
+    pub tokens_output: i32,
+    pub tokens_total: i32,
+    pub max_tokens_configurado: Option<i32>,
+    pub destinatario: Option<String>,
+    pub peticion_payload: String,
+    pub respuesta_payload: String,
+    pub error_mensaje: Option<String>,
+    pub creado_en: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ApiLogStats {
+    pub total_claude: i64,
+    pub tokens_claude: i64,
+    pub exitosos_claude: i64,
+    pub errores_claude: i64,
+    pub total_whatsapp: i64,
+    pub exitosos_whatsapp: i64,
+    pub errores_whatsapp: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiLogsResponse {
+    pub logs: Vec<ApiLogItem>,
+    pub stats: ApiLogStats,
+    pub total: i64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GetApiLogsQuery {
+    pub servicio: Option<String>,
+    pub estado: Option<String>,
+    pub limite: Option<i64>,
+    pub offset: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ClearApiLogsQuery {
+    pub servicio: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateApiLogPayload {
+    pub servicio: String,
+    pub accion: String,
+    pub modelo_o_proveedor: Option<String>,
+    pub estado: String,
+    pub codigo_http: Option<i32>,
+    pub latencia_ms: Option<i32>,
+    pub tokens_input: Option<i32>,
+    pub tokens_output: Option<i32>,
+    pub tokens_total: Option<i32>,
+    pub max_tokens_configurado: Option<i32>,
+    pub destinatario: Option<String>,
+    pub peticion_payload: Option<String>,
+    pub respuesta_payload: Option<String>,
+    pub error_mensaje: Option<String>,
+}
+
 

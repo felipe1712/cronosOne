@@ -589,7 +589,7 @@ pub async fn test_whatsapp(
     let client = KapsoClient::new(api_key.to_string(), phone_number_id.to_string());
     let start = Instant::now();
 
-    match client.send_text(target_phone, &test_body).await {
+    match client.send_text_with_log(Some(&pool), target_phone, &test_body, "test_whatsapp").await {
         Ok(msg_id) => {
             let latency_ms = start.elapsed().as_millis();
             Ok((
@@ -675,7 +675,7 @@ pub async fn test_template(
     let client = KapsoClient::new(api_key.to_string(), phone_number_id.to_string());
     let start = Instant::now();
 
-    match client.send_template(target_phone, tpl_name, tpl_lang, req.variables.as_deref()).await {
+    match client.send_template_with_log(Some(&pool), target_phone, tpl_name, tpl_lang, req.variables.as_deref(), "test_plantilla").await {
         Ok(msg_id) => {
             let latency_ms = start.elapsed().as_millis();
             Ok((
@@ -933,7 +933,7 @@ pub async fn create_destinatario(
             let default_vars = vec![nombre.to_string()];
             let vars = payload.template_variables.as_ref().unwrap_or(&default_vars);
 
-            match client.send_template(telefono, tpl_name, tpl_lang, Some(vars)).await {
+            match client.send_template_with_log(Some(&pool), telefono, tpl_name, tpl_lang, Some(vars), "plantilla_bienvenida").await {
                 Ok(msg_id) => {
                     plantilla_enviada = true;
                     kapso_msg_id = Some(msg_id.clone());
@@ -1159,7 +1159,7 @@ pub async fn enviar_plantilla_destinatario(
 
     let client = KapsoClient::new(api_key.to_string(), phone_number_id.to_string());
 
-    match client.send_template(target_phone, tpl_name, tpl_lang, Some(vars)).await {
+    match client.send_template_with_log(Some(&pool), target_phone, tpl_name, tpl_lang, Some(vars), "plantilla_destinatario").await {
         Ok(msg_id) => {
             let _ = sqlx::query(
                 "INSERT INTO mensajes_pendientes (tipo, referencia_id, texto, destinatario, estado, proveedor, kapso_message_id, meta_status, confirmado_en)
@@ -1408,4 +1408,211 @@ pub async fn delete_grupo(
         StatusCode::OK,
         Json(json!({"mensaje": "Lista de distribución eliminada exitosamente"})),
     ))
+}
+
+// ============================================================================
+// Métodos para Auditoría y Logs de APIs (Claude y WhatsApp)
+// ============================================================================
+
+pub async fn ensure_api_logs_schema(pool: &DbPool) {
+    let _ = sqlx::query(
+        "CREATE TABLE IF NOT EXISTS api_logs (
+            id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            servicio                VARCHAR(50) NOT NULL,
+            accion                  VARCHAR(100) NOT NULL,
+            modelo_o_proveedor      VARCHAR(100),
+            estado                  VARCHAR(50) NOT NULL,
+            codigo_http             INT,
+            latencia_ms             INT,
+            tokens_input            INT DEFAULT 0,
+            tokens_output           INT DEFAULT 0,
+            tokens_total            INT DEFAULT 0,
+            max_tokens_configurado  INT,
+            destinatario            VARCHAR(100),
+            peticion_payload        TEXT,
+            respuesta_payload       TEXT,
+            error_mensaje           TEXT,
+            creado_en               TIMESTAMPTZ NOT NULL DEFAULT now()
+        )"
+    )
+    .execute(pool)
+    .await;
+
+    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_api_logs_servicio_fecha ON api_logs (servicio, creado_en DESC)").execute(pool).await;
+    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_api_logs_creado_en ON api_logs (creado_en DESC)").execute(pool).await;
+}
+
+pub async fn get_api_logs(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+    axum::extract::Query(query): axum::extract::Query<crate::models::GetApiLogsQuery>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    ensure_api_logs_schema(&pool).await;
+
+    let limit = query.limite.unwrap_or(50).clamp(1, 200);
+    let offset = query.offset.unwrap_or(0).max(0);
+
+    let mut sql = "SELECT id, servicio, accion, modelo_o_proveedor, estado, codigo_http, latencia_ms, tokens_input, tokens_output, tokens_total, max_tokens_configurado, destinatario, peticion_payload, respuesta_payload, error_mensaje, creado_en FROM api_logs".to_string();
+    let mut count_sql = "SELECT COUNT(*) FROM api_logs".to_string();
+    let mut conditions = Vec::new();
+
+    if let Some(ref s) = query.servicio {
+        let clean = s.trim().to_lowercase();
+        if !clean.is_empty() && clean != "todos" {
+            conditions.push(format!("servicio = '{}'", clean));
+        }
+    }
+
+    if let Some(ref st) = query.estado {
+        let clean = st.trim().to_lowercase();
+        if !clean.is_empty() && clean != "todos" {
+            conditions.push(format!("estado = '{}'", clean));
+        }
+    }
+
+    if !conditions.is_empty() {
+        let where_clause = format!(" WHERE {}", conditions.join(" AND "));
+        sql.push_str(&where_clause);
+        count_sql.push_str(&where_clause);
+    }
+
+    sql.push_str(&format!(" ORDER BY creado_en DESC LIMIT {} OFFSET {}", limit, offset));
+
+    let rows = match sqlx::query_as::<_, crate::models::ApiLogRow>(&sql).fetch_all(&pool).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!("Error consultando api_logs: {}", e);
+            Vec::new()
+        }
+    };
+
+    let total: i64 = sqlx::query_scalar(&count_sql).fetch_one(&pool).await.unwrap_or(0);
+
+    #[derive(sqlx::FromRow)]
+    struct RawStats {
+        total_claude: Option<i64>,
+        tokens_claude: Option<i64>,
+        exitosos_claude: Option<i64>,
+        errores_claude: Option<i64>,
+        total_whatsapp: Option<i64>,
+        exitosos_whatsapp: Option<i64>,
+        errores_whatsapp: Option<i64>,
+    }
+
+    let stats_row = sqlx::query_as::<_, RawStats>(
+        "SELECT 
+            COUNT(*) FILTER (WHERE servicio = 'claude') as total_claude,
+            COALESCE(SUM(tokens_total) FILTER (WHERE servicio = 'claude'), 0) as tokens_claude,
+            COUNT(*) FILTER (WHERE servicio = 'claude' AND estado IN ('ok', 'exitoso')) as exitosos_claude,
+            COUNT(*) FILTER (WHERE servicio = 'claude' AND estado = 'error') as errores_claude,
+            COUNT(*) FILTER (WHERE servicio = 'whatsapp') as total_whatsapp,
+            COUNT(*) FILTER (WHERE servicio = 'whatsapp' AND estado IN ('ok', 'exitoso')) as exitosos_whatsapp,
+            COUNT(*) FILTER (WHERE servicio = 'whatsapp' AND estado = 'error') as errores_whatsapp
+         FROM api_logs"
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap_or(None);
+
+    let stats = if let Some(s) = stats_row {
+        crate::models::ApiLogStats {
+            total_claude: s.total_claude.unwrap_or(0),
+            tokens_claude: s.tokens_claude.unwrap_or(0),
+            exitosos_claude: s.exitosos_claude.unwrap_or(0),
+            errores_claude: s.errores_claude.unwrap_or(0),
+            total_whatsapp: s.total_whatsapp.unwrap_or(0),
+            exitosos_whatsapp: s.exitosos_whatsapp.unwrap_or(0),
+            errores_whatsapp: s.errores_whatsapp.unwrap_or(0),
+        }
+    } else {
+        crate::models::ApiLogStats::default()
+    };
+
+    let logs: Vec<crate::models::ApiLogItem> = rows.into_iter().map(|r| crate::models::ApiLogItem {
+        id: r.id.to_string(),
+        servicio: r.servicio,
+        accion: r.accion,
+        modelo_o_proveedor: r.modelo_o_proveedor.unwrap_or_default(),
+        estado: r.estado,
+        codigo_http: r.codigo_http,
+        latencia_ms: r.latencia_ms,
+        tokens_input: r.tokens_input.unwrap_or(0),
+        tokens_output: r.tokens_output.unwrap_or(0),
+        tokens_total: r.tokens_total.unwrap_or(0),
+        max_tokens_configurado: r.max_tokens_configurado,
+        destinatario: r.destinatario,
+        peticion_payload: r.peticion_payload.unwrap_or_default(),
+        respuesta_payload: r.respuesta_payload.unwrap_or_default(),
+        error_mensaje: r.error_mensaje,
+        creado_en: r.creado_en.to_rfc3339(),
+    }).collect();
+
+    Ok((
+        StatusCode::OK,
+        Json(json!({
+            "logs": logs,
+            "stats": stats,
+            "total": total
+        }))
+    ))
+}
+
+pub async fn create_api_log(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+    Json(payload): Json<crate::models::CreateApiLogPayload>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    ensure_api_logs_schema(&pool).await;
+
+    let res = sqlx::query(
+        "INSERT INTO api_logs (
+            servicio, accion, modelo_o_proveedor, estado, codigo_http,
+            latencia_ms, tokens_input, tokens_output, tokens_total,
+            max_tokens_configurado, destinatario, peticion_payload,
+            respuesta_payload, error_mensaje, creado_en
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, now())"
+    )
+    .bind(&payload.servicio)
+    .bind(&payload.accion)
+    .bind(&payload.modelo_o_proveedor)
+    .bind(&payload.estado)
+    .bind(payload.codigo_http)
+    .bind(payload.latencia_ms)
+    .bind(payload.tokens_input.unwrap_or(0))
+    .bind(payload.tokens_output.unwrap_or(0))
+    .bind(payload.tokens_total.unwrap_or(0))
+    .bind(payload.max_tokens_configurado)
+    .bind(&payload.destinatario)
+    .bind(&payload.peticion_payload)
+    .bind(&payload.respuesta_payload)
+    .bind(&payload.error_mensaje)
+    .execute(&pool)
+    .await;
+
+    match res {
+        Ok(_) => Ok((StatusCode::CREATED, Json(json!({"ok": true})))),
+        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"ok": false, "error": e.to_string()})))),
+    }
+}
+
+pub async fn clear_api_logs(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+    axum::extract::Query(query): axum::extract::Query<crate::models::ClearApiLogsQuery>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    ensure_api_logs_schema(&pool).await;
+
+    let affected = if let Some(ref s) = query.servicio {
+        let clean = s.trim().to_lowercase();
+        if clean == "claude" || clean == "whatsapp" {
+            sqlx::query("DELETE FROM api_logs WHERE servicio = $1").bind(clean).execute(&pool).await
+        } else {
+            sqlx::query("DELETE FROM api_logs").execute(&pool).await
+        }
+    } else {
+        sqlx::query("DELETE FROM api_logs").execute(&pool).await
+    };
+
+    match affected {
+        Ok(res) => Ok((StatusCode::OK, Json(json!({"ok": true, "eliminados": res.rows_affected()})))),
+        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"ok": false, "error": e.to_string()})))),
+    }
 }

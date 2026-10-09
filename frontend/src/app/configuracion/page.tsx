@@ -65,7 +65,15 @@ import PersonIcon from "@mui/icons-material/Person";
 import PauseCircleOutlineIcon from "@mui/icons-material/PauseCircleOutline";
 import LabelIcon from "@mui/icons-material/Label";
 import CheckIcon from "@mui/icons-material/Check";
-import { ApiService, Destinatario, GrupoDistribucion } from "@/lib/api";
+import TerminalIcon from "@mui/icons-material/Terminal";
+import ContentCopyIcon from "@mui/icons-material/ContentCopy";
+import HistoryIcon from "@mui/icons-material/History";
+import CodeIcon from "@mui/icons-material/Code";
+import SearchIcon from "@mui/icons-material/Search";
+import FilterListIcon from "@mui/icons-material/FilterList";
+import DataUsageIcon from "@mui/icons-material/DataUsage";
+import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
+import { ApiService, Destinatario, GrupoDistribucion, ApiLogItem, ApiLogStats } from "@/lib/api";
 
 interface AvailableModel {
   id: string;
@@ -144,6 +152,19 @@ export default function ConfiguracionPage() {
   const [editingGrupoId, setEditingGrupoId] = useState<string | null>(null);
   const [savingGrupo, setSavingGrupo] = useState<boolean>(false);
   const [deleteGrupoConfirmId, setDeleteGrupoConfirmId] = useState<string | null>(null);
+
+  // Estados para Logs de APIs
+  const [apiLogs, setApiLogs] = useState<ApiLogItem[]>([]);
+  const [apiLogStats, setApiLogStats] = useState<ApiLogStats | null>(null);
+  const [loadingApiLogs, setLoadingApiLogs] = useState<boolean>(false);
+  const [apiLogsServiceTab, setApiLogsServiceTab] = useState<"claude" | "whatsapp" | "todos">("claude");
+  const [apiLogsStatusFilter, setApiLogsStatusFilter] = useState<"todos" | "ok" | "error">("todos");
+  const [apiLogsSearch, setApiLogsSearch] = useState<string>("");
+  const [selectedLogForModal, setSelectedLogForModal] = useState<ApiLogItem | null>(null);
+  const [modalLogTab, setModalLogTab] = useState<number>(0);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [clearLogsConfirmOpen, setClearLogsConfirmOpen] = useState<boolean>(false);
+  const [clearingLogs, setClearingLogs] = useState<boolean>(false);
 
   // Estados generales
   const [loading, setLoading] = useState<boolean>(true);
@@ -662,6 +683,133 @@ export default function ConfiguracionPage() {
     }
   };
 
+  // Cargar Logs de APIs
+  const loadApiLogs = async (
+    service: "claude" | "whatsapp" | "todos" = apiLogsServiceTab,
+    statusFilter: "todos" | "ok" | "error" = apiLogsStatusFilter
+  ) => {
+    try {
+      setLoadingApiLogs(true);
+      const svcParam = service === "todos" ? undefined : service;
+      const statusParam = statusFilter === "todos" ? undefined : statusFilter;
+      const res = await ApiService.getApiLogs(svcParam, statusParam, 200);
+      setApiLogs(res.logs || []);
+      setApiLogStats(res.stats || null);
+    } catch (err: any) {
+      console.error("Error al cargar logs de API:", err);
+    } finally {
+      setLoadingApiLogs(false);
+    }
+  };
+
+  useEffect(() => {
+    if (tabIndex === 4) {
+      loadApiLogs(apiLogsServiceTab, apiLogsStatusFilter);
+    }
+  }, [tabIndex, apiLogsServiceTab, apiLogsStatusFilter]);
+
+  const handleClearApiLogs = async () => {
+    try {
+      setClearingLogs(true);
+      const svcParam = apiLogsServiceTab === "todos" ? undefined : apiLogsServiceTab;
+      await ApiService.clearApiLogs(svcParam);
+      setClearLogsConfirmOpen(false);
+      setSuccessMsg(`Historial de logs ${apiLogsServiceTab === "todos" ? "completo" : `de ${apiLogsServiceTab}`} limpiado exitosamente.`);
+      await loadApiLogs(apiLogsServiceTab, apiLogsStatusFilter);
+    } catch (err: any) {
+      setErrorMsg(err.message || "Error al limpiar logs.");
+    } finally {
+      setClearingLogs(false);
+    }
+  };
+
+  const handleCopyClipboard = (text: string, key: string) => {
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(text);
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey(null), 2000);
+    }
+  };
+
+  const formatPayloadString = (payload: any): string => {
+    if (payload === null || payload === undefined) return "Sin datos registrados.";
+    if (typeof payload === "string") {
+      try {
+        const parsed = JSON.parse(payload);
+        return JSON.stringify(parsed, null, 2);
+      } catch {
+        return payload;
+      }
+    }
+    return JSON.stringify(payload, null, 2);
+  };
+
+  const filteredLogs = apiLogs.filter((log) => {
+    if (!apiLogsSearch.trim()) return true;
+    const q = apiLogsSearch.toLowerCase();
+    const accion = (log.accion || "").toLowerCase();
+    const modelo = (log.modelo_o_proveedor || "").toLowerCase();
+    const dest = (log.destinatario || "").toLowerCase();
+    const err = (log.error_mensaje || "").toLowerCase();
+    const code = String(log.codigo_http || "");
+    const estado = (log.estado || "").toLowerCase();
+    return (
+      accion.includes(q) ||
+      modelo.includes(q) ||
+      dest.includes(q) ||
+      err.includes(q) ||
+      code.includes(q) ||
+      estado.includes(q)
+    );
+  });
+
+  const statsDisplay = React.useMemo(() => {
+    const isClaudeTab = apiLogsServiceTab === "claude";
+    const isWhatsappTab = apiLogsServiceTab === "whatsapp";
+
+    const totalPeticiones = isClaudeTab
+      ? (apiLogStats?.total_claude ?? 0)
+      : isWhatsappTab
+      ? (apiLogStats?.total_whatsapp ?? 0)
+      : ((apiLogStats?.total_claude ?? 0) + (apiLogStats?.total_whatsapp ?? 0));
+
+    const exitosos = isClaudeTab
+      ? (apiLogStats?.exitosos_claude ?? 0)
+      : isWhatsappTab
+      ? (apiLogStats?.exitosos_whatsapp ?? 0)
+      : ((apiLogStats?.exitosos_claude ?? 0) + (apiLogStats?.exitosos_whatsapp ?? 0));
+
+    const errores = isClaudeTab
+      ? (apiLogStats?.errores_claude ?? 0)
+      : isWhatsappTab
+      ? (apiLogStats?.errores_whatsapp ?? 0)
+      : ((apiLogStats?.errores_claude ?? 0) + (apiLogStats?.errores_whatsapp ?? 0));
+
+    const targetLogs = apiLogs.filter(
+      (l) => apiLogsServiceTab === "todos" || l.servicio === apiLogsServiceTab
+    );
+    const sumInput = targetLogs.reduce((acc, l) => acc + (l.tokens_input || 0), 0);
+    const sumOutput = targetLogs.reduce((acc, l) => acc + (l.tokens_output || 0), 0);
+    const sumTotal = (apiLogStats?.tokens_claude && apiLogStats.tokens_claude > 0)
+      ? apiLogStats.tokens_claude
+      : targetLogs.reduce((acc, l) => acc + (l.tokens_total || (l.tokens_input || 0) + (l.tokens_output || 0)), 0);
+
+    const validLatencies = targetLogs.filter((l) => typeof l.latencia_ms === "number" && (l.latencia_ms as number) > 0);
+    const avgLatency = validLatencies.length > 0
+      ? Math.round(validLatencies.reduce((acc, l) => acc + (l.latencia_ms || 0), 0) / validLatencies.length)
+      : 0;
+
+    return {
+      totalPeticiones,
+      exitosos,
+      errores,
+      tokensTotal: sumTotal,
+      tokensInput: sumInput,
+      tokensOutput: sumOutput,
+      avgLatency,
+    };
+  }, [apiLogStats, apiLogsServiceTab, apiLogs]);
+
   return (
     <Box sx={{ p: { xs: 2, md: 3 } }}>
       {/* Encabezado Principal */}
@@ -721,6 +869,12 @@ export default function ConfiguracionPage() {
             icon={<GroupIcon sx={{ color: "#0284c7" }} />}
             iconPosition="start"
             label="Lista de Distribución"
+            sx={{ fontWeight: 600, textTransform: "none", fontSize: "0.95rem" }}
+          />
+          <Tab
+            icon={<TerminalIcon sx={{ color: "#6366f1" }} />}
+            iconPosition="start"
+            label="Logs de APIs"
             sx={{ fontWeight: 600, textTransform: "none", fontSize: "0.95rem" }}
           />
         </Tabs>
@@ -1819,6 +1973,459 @@ export default function ConfiguracionPage() {
               </Card>
             </Box>
           )}
+
+          {/* ================================================================= */}
+          {/* PESTAÑA 4: LOGS DE APIS (CLAUDE Y WHATSAPP)                       */}
+          {/* ================================================================= */}
+          {tabIndex === 4 && (
+            <Box>
+              {/* Encabezado de la pestaña y Acciones */}
+              <Card sx={{ borderRadius: "12px", boxShadow: "0 2px 6px rgba(0,0,0,0.04)", mb: 3 }}>
+                <CardContent sx={{ p: 3 }}>
+                  <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 2 }}>
+                    <Box>
+                      <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, mb: 0.5 }}>
+                        <TerminalIcon sx={{ color: "#6366f1", fontSize: 28 }} />
+                        <Typography variant="h6" sx={{ fontWeight: 700, color: "#1e293b" }}>
+                          Logs de APIs y Trazabilidad
+                        </Typography>
+                      </Box>
+                      <Typography variant="body2" sx={{ color: "#64748b" }}>
+                        Registro completo de todas las peticiones y respuestas intercambiadas con Anthropic Claude y WhatsApp Kapso.
+                      </Typography>
+                    </Box>
+
+                    <Box sx={{ display: "flex", gap: 1.5, alignItems: "center" }}>
+                      <Button
+                        variant="outlined"
+                        startIcon={loadingApiLogs ? <CircularProgress size={16} /> : <RefreshIcon />}
+                        onClick={() => loadApiLogs(apiLogsServiceTab, apiLogsStatusFilter)}
+                        disabled={loadingApiLogs}
+                        sx={{ textTransform: "none", fontWeight: 600, borderColor: "#cbd5e1", color: "#475569" }}
+                      >
+                        Actualizar Logs
+                      </Button>
+                      <Button
+                        variant="outlined"
+                        color="error"
+                        startIcon={<DeleteOutlineIcon />}
+                        onClick={() => setClearLogsConfirmOpen(true)}
+                        disabled={loadingApiLogs || apiLogs.length === 0}
+                        sx={{ textTransform: "none", fontWeight: 600 }}
+                      >
+                        Limpiar Historial
+                      </Button>
+                    </Box>
+                  </Box>
+
+                  {/* Apartados: Selector de Servicio (Claude vs WhatsApp vs Todos) */}
+                  <Divider sx={{ my: 2.5 }} />
+                  <Box sx={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 2 }}>
+                    <Tabs
+                      value={apiLogsServiceTab}
+                      onChange={(_, val) => setApiLogsServiceTab(val)}
+                      textColor="primary"
+                      indicatorColor="primary"
+                      sx={{
+                        "& .MuiTab-root": {
+                          textTransform: "none",
+                          fontWeight: 700,
+                          fontSize: "0.95rem",
+                          minHeight: 48,
+                          px: 2.5,
+                        },
+                      }}
+                    >
+                      <Tab
+                        value="claude"
+                        icon={<SmartToyIcon sx={{ color: "#d97706" }} />}
+                        iconPosition="start"
+                        label="Apartado Claude (Anthropic)"
+                      />
+                      <Tab
+                        value="whatsapp"
+                        icon={<WhatsAppIcon sx={{ color: "#25D366" }} />}
+                        iconPosition="start"
+                        label="Apartado WhatsApp (Kapso)"
+                      />
+                      <Tab
+                        value="todos"
+                        icon={<HistoryIcon sx={{ color: "#6366f1" }} />}
+                        iconPosition="start"
+                        label="Todos los Registros"
+                      />
+                    </Tabs>
+
+                    {/* Filtro por Estado */}
+                    <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
+                      <Typography variant="body2" sx={{ color: "#64748b", fontWeight: 600, display: "flex", alignItems: "center", gap: 0.5 }}>
+                        <FilterListIcon fontSize="small" /> Filtro:
+                      </Typography>
+                      <Chip
+                        label="Todos"
+                        onClick={() => setApiLogsStatusFilter("todos")}
+                        color={apiLogsStatusFilter === "todos" ? "primary" : "default"}
+                        variant={apiLogsStatusFilter === "todos" ? "filled" : "outlined"}
+                        size="small"
+                        sx={{ fontWeight: 600, cursor: "pointer" }}
+                      />
+                      <Chip
+                        label="Solo Exitosos (200)"
+                        onClick={() => setApiLogsStatusFilter("ok")}
+                        color={apiLogsStatusFilter === "ok" ? "success" : "default"}
+                        variant={apiLogsStatusFilter === "ok" ? "filled" : "outlined"}
+                        size="small"
+                        sx={{ fontWeight: 600, cursor: "pointer" }}
+                      />
+                      <Chip
+                        label="Solo Errores"
+                        onClick={() => setApiLogsStatusFilter("error")}
+                        color={apiLogsStatusFilter === "error" ? "error" : "default"}
+                        variant={apiLogsStatusFilter === "error" ? "filled" : "outlined"}
+                        size="small"
+                        sx={{ fontWeight: 600, cursor: "pointer" }}
+                      />
+                    </Box>
+                  </Box>
+                </CardContent>
+              </Card>
+
+              {/* Tarjetas KPI de Resumen */}
+              <Grid container spacing={2.5} sx={{ mb: 3 }}>
+                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                  <Card sx={{ borderRadius: "12px", border: "1px solid #e2e8f0", boxShadow: "none" }}>
+                    <CardContent sx={{ p: 2.5 }}>
+                      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 1 }}>
+                        <Typography variant="caption" sx={{ fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>
+                          Total Peticiones
+                        </Typography>
+                        <HistoryIcon sx={{ color: "#6366f1", fontSize: 20 }} />
+                      </Box>
+                      <Typography variant="h4" sx={{ fontWeight: 800, color: "#1e293b" }}>
+                        {statsDisplay.totalPeticiones}
+                      </Typography>
+                      <Box sx={{ display: "flex", gap: 1.5, mt: 1 }}>
+                        <Typography variant="caption" sx={{ color: "#16a34a", fontWeight: 600 }}>
+                          ✓ {statsDisplay.exitosos} exitosas
+                        </Typography>
+                        {statsDisplay.errores > 0 && (
+                          <Typography variant="caption" sx={{ color: "#dc2626", fontWeight: 600 }}>
+                            ✗ {statsDisplay.errores} fallidas
+                          </Typography>
+                        )}
+                      </Box>
+                    </CardContent>
+                  </Card>
+                </Grid>
+
+                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                  <Card sx={{ borderRadius: "12px", border: "1px solid #e2e8f0", boxShadow: "none" }}>
+                    <CardContent sx={{ p: 2.5 }}>
+                      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 1 }}>
+                        <Typography variant="caption" sx={{ fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>
+                          {apiLogsServiceTab === "whatsapp" ? "Mensajes WhatsApp" : "Tokens Prompt (Input)"}
+                        </Typography>
+                        {apiLogsServiceTab === "whatsapp" ? (
+                          <WhatsAppIcon sx={{ color: "#25D366", fontSize: 20 }} />
+                        ) : (
+                          <DataUsageIcon sx={{ color: "#d97706", fontSize: 20 }} />
+                        )}
+                      </Box>
+                      <Typography variant="h4" sx={{ fontWeight: 800, color: apiLogsServiceTab === "whatsapp" ? "#25D366" : "#d97706" }}>
+                        {apiLogsServiceTab === "whatsapp"
+                          ? statsDisplay.totalPeticiones
+                          : statsDisplay.tokensInput.toLocaleString()}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: "#64748b", mt: 1, display: "block" }}>
+                        {apiLogsServiceTab === "whatsapp"
+                          ? "Canal Kapso / Meta WABA"
+                          : "Enviados a Claude (Síntesis)"}
+                      </Typography>
+                    </CardContent>
+                  </Card>
+                </Grid>
+
+                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                  <Card sx={{ borderRadius: "12px", border: "1px solid #e2e8f0", boxShadow: "none" }}>
+                    <CardContent sx={{ p: 2.5 }}>
+                      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 1 }}>
+                        <Typography variant="caption" sx={{ fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>
+                          {apiLogsServiceTab === "whatsapp" ? "Tasa de Entrega" : "Tokens Generados (Output)"}
+                        </Typography>
+                        {apiLogsServiceTab === "whatsapp" ? (
+                          <CheckCircleOutlineIcon sx={{ color: "#16a34a", fontSize: 20 }} />
+                        ) : (
+                          <SpeedIcon sx={{ color: "#0284c7", fontSize: 20 }} />
+                        )}
+                      </Box>
+                      <Typography variant="h4" sx={{ fontWeight: 800, color: apiLogsServiceTab === "whatsapp" ? "#16a34a" : "#0284c7" }}>
+                        {apiLogsServiceTab === "whatsapp"
+                          ? `${statsDisplay.totalPeticiones > 0 ? Math.round((statsDisplay.exitosos / statsDisplay.totalPeticiones) * 100) : 100}%`
+                          : statsDisplay.tokensOutput.toLocaleString()}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: "#64748b", mt: 1, display: "block" }}>
+                        {apiLogsServiceTab === "whatsapp"
+                          ? "Envíos confirmados por Meta"
+                          : `Total combinado: ${statsDisplay.tokensTotal.toLocaleString()}`}
+                      </Typography>
+                    </CardContent>
+                  </Card>
+                </Grid>
+
+                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                  <Card sx={{ borderRadius: "12px", border: "1px solid #e2e8f0", boxShadow: "none" }}>
+                    <CardContent sx={{ p: 2.5 }}>
+                      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 1 }}>
+                        <Typography variant="caption" sx={{ fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>
+                          Latencia Promedio
+                        </Typography>
+                        <SpeedIcon sx={{ color: "#16a34a", fontSize: 20 }} />
+                      </Box>
+                      <Typography variant="h4" sx={{ fontWeight: 800, color: "#16a34a" }}>
+                        {statsDisplay.avgLatency > 1000
+                          ? `${(statsDisplay.avgLatency / 1000).toFixed(1)} s`
+                          : `${statsDisplay.avgLatency} ms`}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: "#64748b", mt: 1, display: "block" }}>
+                        Tiempo de respuesta promedio
+                      </Typography>
+                    </CardContent>
+                  </Card>
+                </Grid>
+              </Grid>
+
+              {/* Barra de Búsqueda y Resultados */}
+              <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 2, flexWrap: "wrap", gap: 2 }}>
+                <TextField
+                  size="small"
+                  placeholder="Buscar en logs (acción, modelo, destinatario, error)..."
+                  value={apiLogsSearch}
+                  onChange={(e) => setApiLogsSearch(e.target.value)}
+                  sx={{ width: { xs: "100%", sm: 400 }, backgroundColor: "#ffffff" }}
+                  InputProps={{
+                    startAdornment: (
+                      <InputAdornment position="start">
+                        <SearchIcon sx={{ color: "#94a3b8" }} />
+                      </InputAdornment>
+                    ),
+                  }}
+                />
+                <Typography variant="body2" sx={{ color: "#64748b", fontWeight: 500 }}>
+                  Mostrando <strong>{filteredLogs.length}</strong> de <strong>{apiLogs.length}</strong> registros
+                </Typography>
+              </Box>
+
+              {/* Tabla de Logs */}
+              <Card sx={{ borderRadius: "12px", boxShadow: "0 2px 6px rgba(0,0,0,0.04)" }}>
+                {loadingApiLogs ? (
+                  <Box sx={{ p: 6, textAlign: "center" }}>
+                    <CircularProgress size={32} />
+                    <Typography variant="body2" sx={{ mt: 2, color: "#64748b" }}>
+                      Cargando historial de intercambio de peticiones...
+                    </Typography>
+                  </Box>
+                ) : filteredLogs.length === 0 ? (
+                  <Box sx={{ p: 6, textAlign: "center" }}>
+                    <HistoryIcon sx={{ fontSize: 48, color: "#cbd5e1", mb: 1 }} />
+                    <Typography variant="subtitle1" sx={{ fontWeight: 600, color: "#475569" }}>
+                      No se encontraron registros de peticiones
+                    </Typography>
+                    <Typography variant="body2" sx={{ color: "#94a3b8", maxWidth: 450, mx: "auto", mt: 0.5 }}>
+                      {apiLogsSearch
+                        ? "No hay registros que coincidan con el término de búsqueda."
+                        : `Aún no se han registrado peticiones para ${apiLogsServiceTab === "todos" ? "ningún servicio" : apiLogsServiceTab}. Las llamadas a la síntesis de Claude y envíos de WhatsApp se reflejarán aquí en tiempo real.`}
+                    </Typography>
+                  </Box>
+                ) : (
+                  <TableContainer>
+                    <Table size="medium">
+                      <TableHead sx={{ backgroundColor: "#f8fafc" }}>
+                        <TableRow>
+                          <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Fecha / Hora</TableCell>
+                          <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Servicio</TableCell>
+                          <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Acción</TableCell>
+                          <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Modelo / Destino</TableCell>
+                          <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Consumo / Límite</TableCell>
+                          <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Estado / HTTP</TableCell>
+                          <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Latencia</TableCell>
+                          <TableCell align="right" sx={{ fontWeight: 700, color: "#475569" }}>Detalle</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {filteredLogs.map((log) => {
+                          const isClaude = log.servicio === "claude";
+                          const isOk = log.estado === "ok" || log.estado === "exitoso";
+                          return (
+                            <TableRow key={log.id} hover sx={{ "&:hover": { backgroundColor: "#f8fafc" } }}>
+                              <TableCell sx={{ whiteSpace: "nowrap" }}>
+                                <Typography variant="body2" sx={{ fontWeight: 600, color: "#1e293b" }}>
+                                  {new Date(log.creado_en).toLocaleDateString("es-MX", {
+                                    day: "2-digit",
+                                    month: "short",
+                                    year: "numeric",
+                                  })}
+                                </Typography>
+                                <Typography variant="caption" sx={{ color: "#64748b" }}>
+                                  {new Date(log.creado_en).toLocaleTimeString("es-MX", {
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                    second: "2-digit",
+                                  })}
+                                </Typography>
+                              </TableCell>
+
+                              <TableCell>
+                                {isClaude ? (
+                                  <Chip
+                                    icon={<SmartToyIcon sx={{ fontSize: 16 }} />}
+                                    label="Claude"
+                                    size="small"
+                                    sx={{
+                                      backgroundColor: "#fef3c7",
+                                      color: "#b45309",
+                                      fontWeight: 700,
+                                      fontSize: "0.75rem",
+                                    }}
+                                  />
+                                ) : (
+                                  <Chip
+                                    icon={<WhatsAppIcon sx={{ fontSize: 16 }} />}
+                                    label="WhatsApp"
+                                    size="small"
+                                    sx={{
+                                      backgroundColor: "#dcfce7",
+                                      color: "#15803d",
+                                      fontWeight: 700,
+                                      fontSize: "0.75rem",
+                                    }}
+                                  />
+                                )}
+                              </TableCell>
+
+                              <TableCell>
+                                <Typography variant="body2" sx={{ fontWeight: 600, color: "#334155" }}>
+                                  {log.accion === "sintesis_consolidada"
+                                    ? "Síntesis Consolidada"
+                                    : log.accion === "sintesis_boletin"
+                                    ? "Síntesis de Boletín"
+                                    : log.accion === "test_conexion"
+                                    ? "Test de Conexión"
+                                    : log.accion === "mensaje_texto"
+                                    ? "Mensaje de Texto"
+                                    : log.accion === "plantilla_meta"
+                                    ? "Plantilla Meta WABA"
+                                    : log.accion}
+                                </Typography>
+                              </TableCell>
+
+                              <TableCell>
+                                {isClaude ? (
+                                  <Tooltip title={log.modelo_o_proveedor || ""}>
+                                    <Typography
+                                      variant="body2"
+                                      sx={{
+                                        fontFamily: "monospace",
+                                        fontSize: "0.8rem",
+                                        color: "#475569",
+                                        maxWidth: 180,
+                                        overflow: "hidden",
+                                        textOverflow: "ellipsis",
+                                        whiteSpace: "nowrap",
+                                      }}
+                                    >
+                                      {log.modelo_o_proveedor || "Claude"}
+                                    </Typography>
+                                  </Tooltip>
+                                ) : (
+                                  <Typography variant="body2" sx={{ color: "#475569", fontWeight: 500 }}>
+                                    {log.destinatario || "Director"}
+                                  </Typography>
+                                )}
+                              </TableCell>
+
+                              <TableCell>
+                                {isClaude ? (
+                                  <Box>
+                                    <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
+                                      <Typography variant="caption" sx={{ fontWeight: 700, color: "#1e293b" }}>
+                                        {log.tokens_total ?? (log.tokens_input ?? 0) + (log.tokens_output ?? 0)} tokens
+                                      </Typography>
+                                    </Box>
+                                    <Typography variant="caption" sx={{ color: "#64748b", display: "block" }}>
+                                      In: {log.tokens_input ?? 0} | Out: {log.tokens_output ?? 0}
+                                      {log.max_tokens_configurado ? ` (Límite: ${log.max_tokens_configurado})` : ""}
+                                    </Typography>
+                                  </Box>
+                                ) : (
+                                  <Typography variant="caption" sx={{ color: "#64748b" }}>
+                                    {log.destinatario ? `Dest: ${log.destinatario}` : "API Kapso"}
+                                  </Typography>
+                                )}
+                              </TableCell>
+
+                              <TableCell>
+                                <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+                                  <Chip
+                                    label={log.codigo_http ? `${log.codigo_http} ${isOk ? "OK" : "Error"}` : isOk ? "OK" : "Error"}
+                                    size="small"
+                                    color={isOk ? "success" : "error"}
+                                    variant="filled"
+                                    sx={{ fontWeight: 700, fontSize: "0.75rem", height: 22 }}
+                                  />
+                                </Box>
+                                {log.error_mensaje && (
+                                  <Tooltip title={log.error_mensaje}>
+                                    <Typography
+                                      variant="caption"
+                                      sx={{
+                                        color: "#dc2626",
+                                        display: "block",
+                                        maxWidth: 160,
+                                        overflow: "hidden",
+                                        textOverflow: "ellipsis",
+                                        whiteSpace: "nowrap",
+                                      }}
+                                    >
+                                      {log.error_mensaje}
+                                    </Typography>
+                                  </Tooltip>
+                                )}
+                              </TableCell>
+
+                              <TableCell>
+                                <Typography variant="body2" sx={{ fontFamily: "monospace", color: "#334155" }}>
+                                  {log.latencia_ms !== null && log.latencia_ms !== undefined
+                                    ? log.latencia_ms > 1000
+                                      ? `${(log.latencia_ms / 1000).toFixed(1)}s`
+                                      : `${log.latencia_ms}ms`
+                                    : "—"}
+                                </Typography>
+                              </TableCell>
+
+                              <TableCell align="right">
+                                <Button
+                                  size="small"
+                                  variant="outlined"
+                                  startIcon={<CodeIcon sx={{ fontSize: 16 }} />}
+                                  onClick={() => {
+                                    setSelectedLogForModal(log);
+                                    setModalLogTab(0);
+                                  }}
+                                  sx={{ textTransform: "none", fontSize: "0.75rem", py: 0.4 }}
+                                >
+                                  Ver Detalle
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                )}
+              </Card>
+            </Box>
+          )}
         </>
       )}
 
@@ -2222,6 +2829,319 @@ export default function ConfiguracionPage() {
             sx={{ textTransform: "none", fontWeight: 600 }}
           >
             Eliminar Lista
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Modal de Detalle e Inspección de API Log */}
+      <Dialog
+        open={Boolean(selectedLogForModal)}
+        onClose={() => setSelectedLogForModal(null)}
+        maxWidth="md"
+        fullWidth
+        PaperProps={{ sx: { borderRadius: "12px", p: 1 } }}
+      >
+        <DialogTitle sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", pb: 1 }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+            <TerminalIcon sx={{ color: "#6366f1" }} />
+            <Box>
+              <Typography variant="h6" sx={{ fontWeight: 700, color: "#1e293b" }}>
+                Inspección de Petición y Respuesta
+              </Typography>
+              <Box sx={{ display: "flex", gap: 1, alignItems: "center", mt: 0.5 }}>
+                <Chip
+                  label={selectedLogForModal?.servicio === "claude" ? "Claude (Anthropic)" : "WhatsApp (Kapso)"}
+                  size="small"
+                  sx={{
+                    fontWeight: 700,
+                    fontSize: "0.75rem",
+                    backgroundColor: selectedLogForModal?.servicio === "claude" ? "#fef3c7" : "#dcfce7",
+                    color: selectedLogForModal?.servicio === "claude" ? "#b45309" : "#15803d",
+                  }}
+                />
+                <Chip
+                  label={selectedLogForModal?.accion || "Acción"}
+                  size="small"
+                  variant="outlined"
+                  sx={{ fontWeight: 600, fontSize: "0.75rem" }}
+                />
+                <Chip
+                  label={
+                    selectedLogForModal?.estado === "ok" || selectedLogForModal?.estado === "exitoso"
+                      ? `${selectedLogForModal?.codigo_http || 200} OK`
+                      : `Error ${selectedLogForModal?.codigo_http || 500}`
+                  }
+                  size="small"
+                  color={
+                    selectedLogForModal?.estado === "ok" || selectedLogForModal?.estado === "exitoso"
+                      ? "success"
+                      : "error"
+                  }
+                  sx={{ fontWeight: 700, fontSize: "0.75rem" }}
+                />
+              </Box>
+            </Box>
+          </Box>
+
+          <Typography variant="caption" sx={{ color: "#64748b" }}>
+            {selectedLogForModal?.creado_en ? new Date(selectedLogForModal.creado_en).toLocaleString("es-MX") : ""}
+          </Typography>
+        </DialogTitle>
+
+        <DialogContent dividers>
+          {selectedLogForModal?.error_mensaje && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                Error registrado en la llamada:
+              </Typography>
+              <Typography variant="body2" sx={{ fontFamily: "monospace", mt: 0.5 }}>
+                {selectedLogForModal.error_mensaje}
+              </Typography>
+            </Alert>
+          )}
+
+          {/* Sub-tabs del Modal: Petición vs Respuesta vs Diagnóstico */}
+          <Box sx={{ borderBottom: 1, borderColor: "divider", mb: 2 }}>
+            <Tabs
+              value={modalLogTab}
+              onChange={(_, v) => setModalLogTab(v)}
+              textColor="primary"
+              indicatorColor="primary"
+            >
+              <Tab label="Petición Enviada (Request)" sx={{ textTransform: "none", fontWeight: 600 }} />
+              <Tab label="Respuesta Recibida (Response)" sx={{ textTransform: "none", fontWeight: 600 }} />
+              <Tab label="Diagnóstico y Metadatos" sx={{ textTransform: "none", fontWeight: 600 }} />
+            </Tabs>
+          </Box>
+
+          {/* Pestaña 0: Request */}
+          {modalLogTab === 0 && (
+            <Box>
+              <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 1 }}>
+                <Typography variant="caption" sx={{ fontWeight: 700, color: "#64748b" }}>
+                  PAYLOAD O TEXTO ENVIADO:
+                </Typography>
+                <Button
+                  size="small"
+                  startIcon={copiedKey === "req" ? <CheckIcon /> : <ContentCopyIcon />}
+                  onClick={() =>
+                    handleCopyClipboard(
+                      formatPayloadString(selectedLogForModal?.peticion_payload),
+                      "req"
+                    )
+                  }
+                  sx={{ textTransform: "none", fontSize: "0.75rem" }}
+                >
+                  {copiedKey === "req" ? "¡Copiado!" : "Copiar Petición"}
+                </Button>
+              </Box>
+              <Paper
+                variant="outlined"
+                sx={{
+                  p: 2,
+                  backgroundColor: "#0f172a",
+                  color: "#f8fafc",
+                  borderRadius: "8px",
+                  maxHeight: "380px",
+                  overflowY: "auto",
+                  fontFamily: "monospace",
+                  fontSize: "0.85rem",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                }}
+              >
+                {formatPayloadString(selectedLogForModal?.peticion_payload)}
+              </Paper>
+            </Box>
+          )}
+
+          {/* Pestaña 1: Response */}
+          {modalLogTab === 1 && (
+            <Box>
+              <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 1 }}>
+                <Typography variant="caption" sx={{ fontWeight: 700, color: "#64748b" }}>
+                  RESPUESTA O TEXTO DEVUELTO:
+                </Typography>
+                <Button
+                  size="small"
+                  startIcon={copiedKey === "resp" ? <CheckIcon /> : <ContentCopyIcon />}
+                  onClick={() =>
+                    handleCopyClipboard(
+                      formatPayloadString(selectedLogForModal?.respuesta_payload),
+                      "resp"
+                    )
+                  }
+                  sx={{ textTransform: "none", fontSize: "0.75rem" }}
+                >
+                  {copiedKey === "resp" ? "¡Copiado!" : "Copiar Respuesta"}
+                </Button>
+              </Box>
+              <Paper
+                variant="outlined"
+                sx={{
+                  p: 2,
+                  backgroundColor: "#0f172a",
+                  color: "#f8fafc",
+                  borderRadius: "8px",
+                  maxHeight: "380px",
+                  overflowY: "auto",
+                  fontFamily: "monospace",
+                  fontSize: "0.85rem",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                }}
+              >
+                {formatPayloadString(selectedLogForModal?.respuesta_payload)}
+              </Paper>
+            </Box>
+          )}
+
+          {/* Pestaña 2: Metadatos */}
+          {modalLogTab === 2 && (
+            <Box>
+              <Grid container spacing={2}>
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <Paper variant="outlined" sx={{ p: 2, borderRadius: "8px" }}>
+                    <Typography variant="caption" sx={{ fontWeight: 700, color: "#64748b" }}>
+                      MÉTRICAS DE RENDIMIENTO
+                    </Typography>
+                    <Box sx={{ mt: 1.5, display: "flex", flexDirection: "column", gap: 1 }}>
+                      <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+                        <Typography variant="body2" sx={{ color: "#64748b" }}>Latencia:</Typography>
+                        <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                          {selectedLogForModal?.latencia_ms} ms
+                        </Typography>
+                      </Box>
+                      <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+                        <Typography variant="body2" sx={{ color: "#64748b" }}>Código HTTP:</Typography>
+                        <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                          {selectedLogForModal?.codigo_http ?? "—"}
+                        </Typography>
+                      </Box>
+                      <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+                        <Typography variant="body2" sx={{ color: "#64748b" }}>Estado:</Typography>
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            fontWeight: 700,
+                            color:
+                              selectedLogForModal?.estado === "ok" || selectedLogForModal?.estado === "exitoso"
+                                ? "#16a34a"
+                                : "#dc2626",
+                          }}
+                        >
+                          {selectedLogForModal?.estado}
+                        </Typography>
+                      </Box>
+                    </Box>
+                  </Paper>
+                </Grid>
+
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <Paper variant="outlined" sx={{ p: 2, borderRadius: "8px" }}>
+                    <Typography variant="caption" sx={{ fontWeight: 700, color: "#64748b" }}>
+                      CONSUMO DE TOKENS (CLAUDE)
+                    </Typography>
+                    <Box sx={{ mt: 1.5, display: "flex", flexDirection: "column", gap: 1 }}>
+                      <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+                        <Typography variant="body2" sx={{ color: "#64748b" }}>Tokens Input (Prompt):</Typography>
+                        <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                          {selectedLogForModal?.tokens_input ?? 0}
+                        </Typography>
+                      </Box>
+                      <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+                        <Typography variant="body2" sx={{ color: "#64748b" }}>Tokens Output (Respuesta):</Typography>
+                        <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                          {selectedLogForModal?.tokens_output ?? 0}
+                        </Typography>
+                      </Box>
+                      <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+                        <Typography variant="body2" sx={{ color: "#64748b" }}>Tokens Totales:</Typography>
+                        <Typography variant="body2" sx={{ fontWeight: 700, color: "#d97706" }}>
+                          {selectedLogForModal?.tokens_total ?? 0}
+                        </Typography>
+                      </Box>
+                      <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+                        <Typography variant="body2" sx={{ color: "#64748b" }}>Límite Max Tokens configurado:</Typography>
+                        <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                          {selectedLogForModal?.max_tokens_configurado ?? "No definido"}
+                        </Typography>
+                      </Box>
+                    </Box>
+                  </Paper>
+                </Grid>
+
+                <Grid size={{ xs: 12 }}>
+                  <Paper variant="outlined" sx={{ p: 2, borderRadius: "8px" }}>
+                    <Typography variant="caption" sx={{ fontWeight: 700, color: "#64748b" }}>
+                      DETALLES ADICIONALES
+                    </Typography>
+                    <Box sx={{ mt: 1.5, display: "flex", flexDirection: "column", gap: 1 }}>
+                      <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+                        <Typography variant="body2" sx={{ color: "#64748b" }}>Modelo o Proveedor:</Typography>
+                        <Typography variant="body2" sx={{ fontWeight: 700, fontFamily: "monospace" }}>
+                          {selectedLogForModal?.modelo_o_proveedor || "—"}
+                        </Typography>
+                      </Box>
+                      {selectedLogForModal?.destinatario && (
+                        <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+                          <Typography variant="body2" sx={{ color: "#64748b" }}>Destinatario:</Typography>
+                          <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                            {selectedLogForModal.destinatario}
+                          </Typography>
+                        </Box>
+                      )}
+                      <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+                        <Typography variant="body2" sx={{ color: "#64748b" }}>Fecha de Creación:</Typography>
+                        <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                          {selectedLogForModal?.creado_en ? new Date(selectedLogForModal.creado_en).toLocaleString("es-MX") : "—"}
+                        </Typography>
+                      </Box>
+                    </Box>
+                  </Paper>
+                </Grid>
+              </Grid>
+            </Box>
+          )}
+        </DialogContent>
+
+        <DialogActions sx={{ p: 2 }}>
+          <Button onClick={() => setSelectedLogForModal(null)} sx={{ textTransform: "none", color: "#64748b" }}>
+            Cerrar
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Confirmación para Limpiar Logs */}
+      <Dialog open={clearLogsConfirmOpen} onClose={() => !clearingLogs && setClearLogsConfirmOpen(false)}>
+        <DialogTitle sx={{ fontWeight: 700, color: "#dc2626", display: "flex", alignItems: "center", gap: 1 }}>
+          <DeleteOutlineIcon />
+          ¿Limpiar Historial de Logs?
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">
+            ¿Estás seguro de que deseas eliminar los logs de{" "}
+            <strong>{apiLogsServiceTab === "todos" ? "todos los servicios (Claude y WhatsApp)" : `servicio ${apiLogsServiceTab.toUpperCase()}`}</strong>?
+            Esta acción vaciará el registro de peticiones acumuladas de la base de datos.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ p: 2 }}>
+          <Button
+            onClick={() => setClearLogsConfirmOpen(false)}
+            disabled={clearingLogs}
+            sx={{ textTransform: "none", color: "#64748b" }}
+          >
+            Cancelar
+          </Button>
+          <Button
+            variant="contained"
+            color="error"
+            onClick={handleClearApiLogs}
+            disabled={clearingLogs}
+            startIcon={clearingLogs ? <CircularProgress size={16} color="inherit" /> : <DeleteOutlineIcon />}
+            sx={{ textTransform: "none", fontWeight: 600 }}
+          >
+            {clearingLogs ? "Limpiando..." : "Confirmar y Limpiar"}
           </Button>
         </DialogActions>
       </Dialog>
