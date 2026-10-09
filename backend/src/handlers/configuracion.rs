@@ -1602,13 +1602,15 @@ pub async fn get_api_logs(
         creado_en: r.creado_en.to_rfc3339(),
     }).collect();
 
+    let response = crate::models::ApiLogsResponse {
+        logs,
+        stats,
+        total,
+    };
+
     Ok((
         StatusCode::OK,
-        Json(json!({
-            "logs": logs,
-            "stats": stats,
-            "total": total
-        }))
+        Json(response),
     ))
 }
 

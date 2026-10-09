@@ -500,6 +500,7 @@ pub struct ApiLogStats {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct ApiLogsResponse {
     pub logs: Vec<ApiLogItem>,
     pub stats: ApiLogStats,
@@ -507,6 +508,7 @@ pub struct ApiLogsResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct GetApiLogsQuery {
     pub servicio: Option<String>,
     pub estado: Option<String>,
@@ -515,11 +517,13 @@ pub struct GetApiLogsQuery {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct ClearApiLogsQuery {
     pub servicio: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct CreateApiLogPayload {
     pub servicio: String,
     pub accion: String,
