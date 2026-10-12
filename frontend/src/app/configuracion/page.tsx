@@ -468,25 +468,7 @@ export default function ConfiguracionPage() {
   };
 
   const handleTestIndividualWhatsapp = async (d: Destinatario) => {
-    try {
-      setTestingPhoneId(d.id);
-      setErrorMsg(null);
-      const res = await ApiService.testWhatsapp({
-        phone: d.telefono,
-        api_key: kapsoApiKey,
-        phone_number_id: kapsoPhoneNumberId,
-        message: `🔔 *Prueba Directa ExposureIQ — WhatsApp Oficial*\n\nHola *${d.nombre}*,\nEste es un mensaje de prueba para verificar que tu línea está correctamente dada de alta en la lista de distribución ejecutiva.`,
-      });
-      if (res.ok) {
-        setSuccessMsg(`Mensaje de prueba entregado a ${d.nombre} (${d.telefono}) vía Kapso (${res.latency_ms}ms).`);
-      } else {
-        setErrorMsg(`Fallo en el envío a ${d.nombre}: ${res.error || res.mensaje}`);
-      }
-    } catch (err: any) {
-      setErrorMsg(err.message || "Error enviando mensaje de prueba.");
-    } finally {
-      setTestingPhoneId(null);
-    }
+    await handleEnviarPlantilla(d);
   };
 
   const handleSaveModel = async (modelToSave?: string) => {
@@ -657,7 +639,7 @@ export default function ConfiguracionPage() {
         phone_number_id: kapsoPhoneNumberId,
       });
       if (res.ok) {
-        setSuccessMsg(`✅ Plantilla enviada con éxito a ${d.nombre} (${d.telefono}). Ventana de 24h Meta activada.`);
+        setSuccessMsg(`✅ Plantilla oficial "${whatsappTemplateName || "servicio_monitoreo"}" enviada con éxito a ${d.nombre} (${d.telefono}). Ventana de 24h Meta activada.`);
       } else {
         setErrorMsg(`Fallo al enviar plantilla a ${d.nombre}: ${res.error || res.mensaje}`);
       }
@@ -1921,28 +1903,22 @@ export default function ConfiguracionPage() {
 
                             <TableCell align="right">
                               <Box sx={{ display: "flex", justifyContent: "flex-end", gap: 0.5 }}>
-                                <Tooltip title="Enviar plantilla oficial (Abrir ventana 24h Meta)">
+                                <Tooltip title={`Enviar plantilla oficial de prueba (${whatsappTemplateName || "servicio_monitoreo"}) — Iniciar conversación y abrir ventana 24h Meta`}>
                                   <span>
                                     <IconButton
                                       size="small"
                                       disabled={sendingTemplateId === d.id}
                                       onClick={() => handleEnviarPlantilla(d)}
-                                      sx={{ color: "#16a34a" }}
+                                      sx={{
+                                        color: "#16a34a",
+                                        "&:hover": { backgroundColor: "#dcfce7" },
+                                      }}
                                     >
-                                      {sendingTemplateId === d.id ? <CircularProgress size={16} color="inherit" /> : <WhatsAppIcon fontSize="small" />}
-                                    </IconButton>
-                                  </span>
-                                </Tooltip>
-                                <Tooltip title="Enviar mensaje de prueba vía Kapso">
-                                  <span>
-                                    <IconButton
-                                      size="small"
-                                      color="primary"
-                                      disabled={testingPhoneId === d.id}
-                                      onClick={() => handleTestIndividualWhatsapp(d)}
-                                      sx={{ color: "#25D366" }}
-                                    >
-                                      {testingPhoneId === d.id ? <CircularProgress size={16} /> : <SendIcon fontSize="small" />}
+                                      {sendingTemplateId === d.id ? (
+                                        <CircularProgress size={16} color="inherit" />
+                                      ) : (
+                                        <WhatsAppIcon fontSize="small" />
+                                      )}
                                     </IconButton>
                                   </span>
                                 </Tooltip>
