@@ -50,7 +50,14 @@ impl KapsoClient {
     }
 
     pub fn sanitize_phone(phone: &str) -> String {
-        phone.chars().filter(|c| c.is_ascii_digit()).collect()
+        let digits: String = phone.chars().filter(|c| c.is_ascii_digit()).collect();
+        // Si el usuario ingresa un número de 10 dígitos (estándar nacional en México),
+        // anteponer el código de país 52 requerido por Meta Cloud API
+        if digits.len() == 10 {
+            format!("52{}", digits)
+        } else {
+            digits
+        }
     }
 
     pub async fn send_text_with_log(
@@ -389,7 +396,7 @@ pub async fn get_whatsapp_config(pool: &PgPool) -> KapsoConfig {
     let mut api_key = String::new();
     let mut phone_number_id = String::new();
     let mut director_phone = String::new();
-    let mut template_name = "hello_world".to_string();
+    let mut template_name = "servicio_monitoreo".to_string();
     let mut template_language = "es_MX".to_string();
 
     for r in rows {
@@ -403,8 +410,9 @@ pub async fn get_whatsapp_config(pool: &PgPool) -> KapsoConfig {
                 }
             }
             "WHATSAPP_TEMPLATE_NAME" => {
-                if !r.valor.trim().is_empty() {
-                    template_name = r.valor.trim().to_string();
+                let v = r.valor.trim();
+                if !v.is_empty() && v != "hello_world" {
+                    template_name = v.to_string();
                 }
             }
             "WHATSAPP_TEMPLATE_LANGUAGE" => {
@@ -444,14 +452,22 @@ pub async fn get_whatsapp_config(pool: &PgPool) -> KapsoConfig {
     }
 
     if let Ok(env_tpl) = std::env::var("WHATSAPP_TEMPLATE_NAME") {
-        if !env_tpl.trim().is_empty() {
-            template_name = env_tpl.trim().to_string();
+        let v = env_tpl.trim();
+        if !v.is_empty() && v != "hello_world" {
+            template_name = v.to_string();
         }
     }
     if let Ok(env_lang) = std::env::var("WHATSAPP_TEMPLATE_LANGUAGE") {
         if !env_lang.trim().is_empty() {
             template_language = env_lang.trim().to_string();
         }
+    }
+
+    if template_name.is_empty() || template_name == "hello_world" {
+        template_name = "servicio_monitoreo".to_string();
+    }
+    if template_language.is_empty() {
+        template_language = "es_MX".to_string();
     }
 
     KapsoConfig {

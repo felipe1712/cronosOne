@@ -115,7 +115,7 @@ export default function ConfiguracionPage() {
   } | null>(null);
 
   // Estados para Plantillas de WhatsApp (Meta WABA 24h Window)
-  const [whatsappTemplateName, setWhatsappTemplateName] = useState<string>("hello_world");
+  const [whatsappTemplateName, setWhatsappTemplateName] = useState<string>("servicio_monitoreo");
   const [whatsappTemplateLanguage, setWhatsappTemplateLanguage] = useState<string>("es_MX");
   const [testingTemplate, setTestingTemplate] = useState<boolean>(false);
   const [templateTestResult, setTemplateTestResult] = useState<{
@@ -246,8 +246,10 @@ export default function ConfiguracionPage() {
           setDirectorWhatsappPhone("");
         }
 
-        if (data.whatsapp_template_name) {
-          setWhatsappTemplateName(data.whatsapp_template_name);
+        if (data.whatsapp_template_name && data.whatsapp_template_name.trim() !== "hello_world") {
+          setWhatsappTemplateName(data.whatsapp_template_name.trim());
+        } else {
+          setWhatsappTemplateName("servicio_monitoreo");
         }
         if (data.whatsapp_template_language) {
           setWhatsappTemplateLanguage(data.whatsapp_template_language);
@@ -1433,8 +1435,8 @@ export default function ConfiguracionPage() {
                                 value={whatsappTemplateName}
                                 onChange={(e) => setWhatsappTemplateName(e.target.value)}
                                 onBlur={() => handleSaveWhatsapp()}
-                                placeholder="hello_world"
-                                helperText="Ej: hello_world (plantilla estándar de Meta) o el nombre aprobado en tu panel WABA"
+                                placeholder="servicio_monitoreo"
+                                helperText="Nombre exacto aprobado en Meta/Kapso (ej: servicio_monitoreo)"
                               />
                             </Grid>
                             <Grid size={{ xs: 12, sm: 4 }}>
@@ -2565,7 +2567,7 @@ export default function ConfiguracionPage() {
                         Enviar plantilla oficial de WhatsApp de inmediato
                       </Typography>
                       <Typography variant="caption" sx={{ color: "#15803d", display: "block" }}>
-                        Despacha la plantilla ({whatsappTemplateName || "hello_world"}) para iniciar la conversación y abrir la ventana de 24 horas requerida por Meta.
+                        Despacha la plantilla ({whatsappTemplateName || "servicio_monitoreo"}) para iniciar la conversación y abrir la ventana de 24 horas requerida por Meta.
                       </Typography>
                     </Box>
                   }

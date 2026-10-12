@@ -383,11 +383,13 @@ pub async fn get_configuraciones(
         .get("WHATSAPP_TEMPLATE_NAME")
         .and_then(|v| v.as_str())
         .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+        .filter(|s| !s.is_empty() && s != "hello_world")
         .or_else(|| std::env::var("WHATSAPP_TEMPLATE_NAME").ok())
-        .unwrap_or_else(|| "hello_world".to_string());
+        .filter(|s| !s.trim().is_empty() && s.trim() != "hello_world")
+        .unwrap_or_else(|| "servicio_monitoreo".to_string());
 
-    if !config_map.contains_key("WHATSAPP_TEMPLATE_NAME") {
+    if !config_map.contains_key("WHATSAPP_TEMPLATE_NAME")
+        || config_map.get("WHATSAPP_TEMPLATE_NAME").and_then(|v| v.as_str()) == Some("hello_world") {
         upsert_config(&pool, "WHATSAPP_TEMPLATE_NAME", &whatsapp_template_name, "Nombre exacto de la plantilla aprobada en Meta Cloud API / WABA", "whatsapp").await;
         config_map.insert("WHATSAPP_TEMPLATE_NAME".to_string(), json!(&whatsapp_template_name));
     }
@@ -565,12 +567,15 @@ pub async fn test_whatsapp(
         .filter(|s| !s.is_empty())
         .unwrap_or(cfg.phone_number_id.trim());
 
-    let target_phone = payload
+    let raw_phone = payload
         .phone
         .as_deref()
         .map(|s| s.trim())
         .filter(|s| !s.is_empty() && *s != "5215512345678")
         .unwrap_or(cfg.director_phone.trim());
+
+    let clean_phone = KapsoClient::sanitize_phone(raw_phone);
+    let target_phone = if clean_phone.is_empty() { raw_phone } else { &clean_phone };
 
     if target_phone.is_empty() || target_phone == "5215512345678" {
         return Ok((
@@ -641,12 +646,15 @@ pub async fn test_template(
         .filter(|s| !s.is_empty())
         .unwrap_or(cfg.phone_number_id.trim());
 
-    let target_phone = req
+    let raw_phone = req
         .phone
         .as_deref()
         .map(|s| s.trim())
         .filter(|s| !s.is_empty() && *s != "5215512345678")
         .unwrap_or(cfg.director_phone.trim());
+
+    let clean_phone = KapsoClient::sanitize_phone(raw_phone);
+    let target_phone = if clean_phone.is_empty() { raw_phone } else { &clean_phone };
 
     if target_phone.is_empty() || target_phone == "5215512345678" {
         return Ok((
@@ -672,10 +680,12 @@ pub async fn test_template(
         .filter(|s| !s.is_empty())
         .unwrap_or(cfg.template_language.trim());
 
+    let vars = req.variables.as_deref().filter(|v| !v.is_empty());
+
     let client = KapsoClient::new(api_key.to_string(), phone_number_id.to_string());
     let start = Instant::now();
 
-    match client.send_template_with_log(Some(&pool), target_phone, tpl_name, tpl_lang, req.variables.as_deref(), "test_plantilla").await {
+    match client.send_template_with_log(Some(&pool), target_phone, tpl_name, tpl_lang, vars, "test_plantilla").await {
         Ok(msg_id) => {
             let latency_ms = start.elapsed().as_millis();
             Ok((
@@ -893,14 +903,18 @@ pub async fn create_destinatario(
     ensure_tablas_distribucion(&pool).await;
 
     let nombre = payload.nombre.trim();
-    let telefono = payload.telefono.trim();
+    let raw_telefono = payload.telefono.trim();
 
-    if nombre.is_empty() || telefono.is_empty() {
+    if nombre.is_empty() || raw_telefono.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(json!({"error": "El nombre y el teléfono son obligatorios"})),
         ));
     }
+
+    use crate::services::kapso::KapsoClient;
+    let clean_phone = KapsoClient::sanitize_phone(raw_telefono);
+    let telefono = if clean_phone.is_empty() { raw_telefono } else { &clean_phone };
 
     let activo = payload.activo.unwrap_or(true);
 
@@ -948,24 +962,24 @@ pub async fn create_destinatario(
     }
     dest.grupos = Some(grupos_resumen);
 
-    // Enviar plantilla oficial si fue solicitado al dar de alta
+    // Enviar plantilla oficial al dar de alta el teléfono antes de enviar cualquier mensaje
     let mut plantilla_enviada = false;
     let mut plantilla_error: Option<String> = None;
     let mut kapso_msg_id: Option<String> = None;
 
-    if payload.enviar_plantilla.unwrap_or(false) {
-        use crate::services::kapso::{get_whatsapp_config, KapsoClient};
+    if payload.enviar_plantilla.unwrap_or(true) {
+        use crate::services::kapso::get_whatsapp_config;
         let w_cfg = get_whatsapp_config(&pool).await;
 
         if w_cfg.api_key.trim().is_empty() || w_cfg.phone_number_id.trim().is_empty() {
-            plantilla_error = Some("No se pudo enviar la plantilla: credenciales de WhatsApp Cloud API (Kapso) no configuradas".to_string());
+            plantilla_error = Some("No se pudo enviar la plantilla: credenciales de WhatsApp Cloud API (Kapso) no configuradas en el servidor".to_string());
         } else {
             let client = KapsoClient::new(w_cfg.api_key.clone(), w_cfg.phone_number_id.clone());
             let tpl_name = payload
                 .template_name
                 .as_deref()
                 .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
+                .filter(|s| !s.is_empty() && *s != "hello_world")
                 .unwrap_or(w_cfg.template_name.as_str());
 
             let tpl_lang = payload
@@ -975,10 +989,13 @@ pub async fn create_destinatario(
                 .filter(|s| !s.is_empty())
                 .unwrap_or(w_cfg.template_language.as_str());
 
-            let default_vars = vec![nombre.to_string()];
-            let vars = payload.template_variables.as_ref().unwrap_or(&default_vars);
+            // Únicamente agregar template.components si se proporcionaron variables no vacías
+            let vars = payload
+                .template_variables
+                .as_deref()
+                .filter(|v| !v.is_empty());
 
-            match client.send_template_with_log(Some(&pool), telefono, tpl_name, tpl_lang, Some(vars), "plantilla_bienvenida").await {
+            match client.send_template_with_log(Some(&pool), telefono, tpl_name, tpl_lang, vars, "plantilla_bienvenida").await {
                 Ok(msg_id) => {
                     plantilla_enviada = true;
                     kapso_msg_id = Some(msg_id.clone());
@@ -1035,14 +1052,18 @@ pub async fn update_destinatario(
     ensure_tablas_distribucion(&pool).await;
 
     let nombre = payload.nombre.trim();
-    let telefono = payload.telefono.trim();
+    let raw_telefono = payload.telefono.trim();
 
-    if nombre.is_empty() || telefono.is_empty() {
+    if nombre.is_empty() || raw_telefono.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(json!({"error": "El nombre y el teléfono son obligatorios"})),
         ));
     }
+
+    use crate::services::kapso::KapsoClient;
+    let clean_phone = KapsoClient::sanitize_phone(raw_telefono);
+    let telefono = if clean_phone.is_empty() { raw_telefono } else { &clean_phone };
 
     let dest_row = sqlx::query_as::<_, DestinatarioRow>(
         "UPDATE lista_distribucion
@@ -1178,18 +1199,21 @@ pub async fn enviar_plantilla_destinatario(
         ));
     }
 
-    let target_phone = req
+    let raw_phone = req
         .telefono
         .as_deref()
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
         .unwrap_or(dest.telefono.trim());
 
+    let clean_target_phone = KapsoClient::sanitize_phone(raw_phone);
+    let target_phone = if clean_target_phone.is_empty() { raw_phone } else { &clean_target_phone };
+
     let tpl_name = req
         .template_name
         .as_deref()
         .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
+        .filter(|s| !s.is_empty() && *s != "hello_world")
         .unwrap_or(w_cfg.template_name.as_str());
 
     let tpl_lang = req
@@ -1199,12 +1223,12 @@ pub async fn enviar_plantilla_destinatario(
         .filter(|s| !s.is_empty())
         .unwrap_or(w_cfg.template_language.as_str());
 
-    let default_vars = vec![dest.nombre.clone()];
-    let vars = req.variables.as_ref().unwrap_or(&default_vars);
+    // Únicamente pasar variables si fueron proporcionadas explícitamente y no están vacías
+    let vars = req.variables.as_deref().filter(|v| !v.is_empty());
 
     let client = KapsoClient::new(api_key.to_string(), phone_number_id.to_string());
 
-    match client.send_template_with_log(Some(&pool), target_phone, tpl_name, tpl_lang, Some(vars), "plantilla_destinatario").await {
+    match client.send_template_with_log(Some(&pool), target_phone, tpl_name, tpl_lang, vars, "plantilla_destinatario").await {
         Ok(msg_id) => {
             let _ = sqlx::query(
                 "INSERT INTO mensajes_pendientes (tipo, referencia_id, texto, destinatario, estado, proveedor, kapso_message_id, meta_status, confirmado_en)
