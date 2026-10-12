@@ -52,7 +52,6 @@ import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import RestartAltIcon from "@mui/icons-material/RestartAlt";
 import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
-import SendIcon from "@mui/icons-material/Send";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
 import LaunchIcon from "@mui/icons-material/Launch";
@@ -106,13 +105,6 @@ export default function ConfiguracionPage() {
   const [directorWhatsappPhone, setDirectorWhatsappPhone] = useState<string>("");
   const [showApiKey, setShowApiKey] = useState<boolean>(false);
   const [savingWhatsapp, setSavingWhatsapp] = useState<boolean>(false);
-  const [testingWhatsapp, setTestingWhatsapp] = useState<boolean>(false);
-  const [whatsappTestResult, setWhatsappTestResult] = useState<{
-    ok: boolean;
-    latency_ms?: number;
-    mensaje: string;
-    error?: string;
-  } | null>(null);
 
   // Estados para Plantillas de WhatsApp (Meta WABA 24h Window)
   const [whatsappTemplateName, setWhatsappTemplateName] = useState<string>("servicio_monitoreo");
@@ -339,6 +331,7 @@ export default function ConfiguracionPage() {
           grupo_ids: formGrupoIds,
         });
         setSuccessMsg(`Destinatario "${formNombre}" actualizado exitosamente.`);
+      } else {
         const effectiveTemplate = (!whatsappTemplateName || whatsappTemplateName.trim() === "hello_world")
           ? "servicio_monitoreo"
           : whatsappTemplateName.trim();
@@ -469,10 +462,6 @@ export default function ConfiguracionPage() {
     }
   };
 
-  const handleTestIndividualWhatsapp = async (d: Destinatario) => {
-    await handleEnviarPlantilla(d);
-  };
-
   const handleSaveModel = async (modelToSave?: string) => {
     const targetModel = (typeof modelToSave === "string" ? modelToSave : selectedModel).trim();
     try {
@@ -579,29 +568,6 @@ export default function ConfiguracionPage() {
       setErrorMsg(err.message || "Error al guardar configuración de WhatsApp en PostgreSQL.");
     } finally {
       setSavingWhatsapp(false);
-    }
-  };
-
-  const handleTestWhatsapp = async () => {
-    try {
-      setTestingWhatsapp(true);
-      setWhatsappTestResult(null);
-      setErrorMsg(null);
-      const res = await ApiService.testWhatsapp({
-        phone: directorWhatsappPhone,
-        api_key: kapsoApiKey,
-        phone_number_id: kapsoPhoneNumberId,
-        message: "🔔 *Prueba de Conexión ExposureIQ — WhatsApp Cloud API via Kapso*\n\nSi estás leyendo esto, la entrega oficial de mensajes está 100% activa y funcionando.",
-      });
-      setWhatsappTestResult(res);
-    } catch (err: any) {
-      console.error("Error probando WhatsApp con Kapso:", err);
-      setWhatsappTestResult({
-        ok: false,
-        mensaje: `Error al probar WhatsApp: ${err.message}`,
-      });
-    } finally {
-      setTestingWhatsapp(false);
     }
   };
 
@@ -1448,26 +1414,7 @@ export default function ConfiguracionPage() {
 
                     <Divider sx={{ my: 3 }} />
 
-                    {/* Resultado del test de WhatsApp Texto Libre */}
-                    {whatsappTestResult && (
-                      <Alert
-                        severity={whatsappTestResult.ok ? "success" : "error"}
-                        sx={{ mb: 2 }}
-                        icon={whatsappTestResult.ok ? <CheckCircleIcon /> : <ErrorOutlineIcon />}
-                      >
-                        <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                          {whatsappTestResult.ok ? "Mensaje de Texto Libre Enviado con Éxito" : "Fallo en Mensaje de Texto Libre"}
-                        </Typography>
-                        <Typography variant="body2">{whatsappTestResult.mensaje}</Typography>
-                        {whatsappTestResult.latency_ms && (
-                          <Typography variant="caption" sx={{ display: "block", mt: 0.5, color: "#64748b" }}>
-                            Latencia de entrega a Meta: {whatsappTestResult.latency_ms} ms
-                          </Typography>
-                        )}
-                      </Alert>
-                    )}
-
-                    {/* Resultado del test de Plantilla */}
+                    {/* Resultado del test de Plantilla Oficial */}
                     {templateTestResult && (
                       <Alert
                         severity={templateTestResult.ok ? "success" : "error"}
@@ -1493,7 +1440,7 @@ export default function ConfiguracionPage() {
                         color="primary"
                         startIcon={<SaveIcon />}
                         onClick={() => handleSaveWhatsapp()}
-                        disabled={savingWhatsapp || testingWhatsapp || testingTemplate}
+                        disabled={savingWhatsapp || testingTemplate}
                         sx={{ fontWeight: 600, px: 3, textTransform: "none", borderRadius: "8px" }}
                       >
                         {savingWhatsapp ? "Guardando..." : "Guardar Configuración WhatsApp"}
@@ -1504,21 +1451,10 @@ export default function ConfiguracionPage() {
                         color="success"
                         startIcon={testingTemplate ? <CircularProgress size={18} /> : <WhatsAppIcon />}
                         onClick={handleTestTemplate}
-                        disabled={testingTemplate || testingWhatsapp || savingWhatsapp || !kapsoApiKey.trim() || !kapsoPhoneNumberId.trim()}
+                        disabled={testingTemplate || savingWhatsapp || !kapsoApiKey.trim() || !kapsoPhoneNumberId.trim()}
                         sx={{ fontWeight: 600, px: 2.5, textTransform: "none", borderRadius: "8px" }}
                       >
-                        {testingTemplate ? "Probando Plantilla..." : "Probar Envío de Plantilla"}
-                      </Button>
-
-                      <Button
-                        variant="outlined"
-                        color="inherit"
-                        startIcon={testingWhatsapp ? <CircularProgress size={18} /> : <SendIcon />}
-                        onClick={handleTestWhatsapp}
-                        disabled={testingWhatsapp || testingTemplate || savingWhatsapp || !kapsoApiKey.trim() || !kapsoPhoneNumberId.trim()}
-                        sx={{ fontWeight: 600, px: 2.5, textTransform: "none", borderRadius: "8px", borderColor: "#cbd5e1" }}
-                      >
-                        {testingWhatsapp ? "Enviando mensaje..." : "Probar Texto Libre (24h)"}
+                        {testingTemplate ? "Probando Plantilla..." : "Probar Envío de Plantilla Oficial"}
                       </Button>
                     </Box>
                   </CardContent>
@@ -1584,7 +1520,7 @@ export default function ConfiguracionPage() {
                     </Typography>
 
                     <Typography variant="body2" sx={{ color: "#14532d", lineHeight: 1.5 }}>
-                      4. Pégalos aquí y haz clic en <strong>"Enviar Mensaje de Prueba"</strong>.
+                      4. Pégalos aquí y haz clic en <strong>"Probar Envío de Plantilla Oficial"</strong>.
                     </Typography>
                   </CardContent>
                 </Card>
@@ -1911,7 +1847,7 @@ export default function ConfiguracionPage() {
 
                             <TableCell align="right">
                               <Box sx={{ display: "flex", justifyContent: "flex-end", gap: 0.5 }}>
-                                <Tooltip title={`Enviar plantilla oficial de prueba (${whatsappTemplateName || "servicio_monitoreo"}) — Iniciar conversación y abrir ventana 24h Meta`}>
+                                <Tooltip title={`Enviar plantilla oficial (${whatsappTemplateName || "servicio_monitoreo"}) — Iniciar conversación y abrir ventana 24h Meta`}>
                                   <span>
                                     <IconButton
                                       size="small"

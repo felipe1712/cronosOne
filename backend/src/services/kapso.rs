@@ -290,26 +290,29 @@ impl KapsoClient {
             }
         });
 
-        if let Some(vars) = variables {
-            // La plantilla aprobada 'servicio_monitoreo' no tiene variables en su cuerpo en Meta.
-            // Únicamente adjuntar components para plantillas que realmente requieran parámetros.
-            if !vars.is_empty() && t_name != "servicio_monitoreo" {
-                let params: Vec<serde_json::Value> = vars
-                    .iter()
-                    .map(|v| {
-                        json!({
-                            "type": "text",
-                            "text": v
+        // La plantilla aprobada 'servicio_monitoreo' fue aprobada sin variables en Meta.
+        // Bajo ninguna circunstancia debe adjuntarse el bloque 'components'.
+        if t_name.to_lowercase() != "servicio_monitoreo" {
+            if let Some(vars) = variables {
+                let non_empty_vars: Vec<&String> = vars.iter().filter(|v| !v.trim().is_empty()).collect();
+                if !non_empty_vars.is_empty() {
+                    let params: Vec<serde_json::Value> = non_empty_vars
+                        .iter()
+                        .map(|v| {
+                            json!({
+                                "type": "text",
+                                "text": v.trim()
+                            })
                         })
-                    })
-                    .collect();
+                        .collect();
 
-                template_obj["components"] = json!([
-                    {
-                        "type": "body",
-                        "parameters": params
-                    }
-                ]);
+                    template_obj["components"] = json!([
+                        {
+                            "type": "body",
+                            "parameters": params
+                        }
+                    ]);
+                }
             }
         }
 

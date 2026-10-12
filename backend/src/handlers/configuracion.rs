@@ -691,7 +691,11 @@ pub async fn test_template(
         .filter(|s| !s.is_empty())
         .unwrap_or(cfg.template_language.trim());
 
-    let vars = req.variables.as_deref().filter(|v| !v.is_empty());
+    let vars = if tpl_name.to_lowercase() == "servicio_monitoreo" {
+        None
+    } else {
+        req.variables.as_deref().filter(|v| !v.is_empty())
+    };
 
     let client = KapsoClient::new(api_key.to_string(), phone_number_id.to_string());
     let start = Instant::now();
@@ -1005,11 +1009,15 @@ pub async fn create_destinatario(
                 .filter(|s| !s.is_empty())
                 .unwrap_or(w_cfg.template_language.as_str());
 
-            // Únicamente agregar template.components si se proporcionaron variables no vacías
-            let vars = payload
-                .template_variables
-                .as_deref()
-                .filter(|v| !v.is_empty());
+            // La plantilla aprobada 'servicio_monitoreo' no lleva variables ni components
+            let vars = if tpl_name.to_lowercase() == "servicio_monitoreo" {
+                None
+            } else {
+                payload
+                    .template_variables
+                    .as_deref()
+                    .filter(|v| !v.is_empty())
+            };
 
             match client.send_template_with_log(Some(&pool), telefono, tpl_name, tpl_lang, vars, "plantilla_bienvenida").await {
                 Ok(msg_id) => {
@@ -1244,8 +1252,12 @@ pub async fn enviar_plantilla_destinatario(
         .filter(|s| !s.is_empty())
         .unwrap_or(w_cfg.template_language.as_str());
 
-    // Únicamente pasar variables si fueron proporcionadas explícitamente y no están vacías
-    let vars = req.variables.as_deref().filter(|v| !v.is_empty());
+    // La plantilla aprobada 'servicio_monitoreo' no lleva variables ni components
+    let vars = if tpl_name.to_lowercase() == "servicio_monitoreo" {
+        None
+    } else {
+        req.variables.as_deref().filter(|v| !v.is_empty())
+    };
 
     let client = KapsoClient::new(api_key.to_string(), phone_number_id.to_string());
 
