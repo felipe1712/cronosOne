@@ -339,7 +339,9 @@ export default function ConfiguracionPage() {
           grupo_ids: formGrupoIds,
         });
         setSuccessMsg(`Destinatario "${formNombre}" actualizado exitosamente.`);
-      } else {
+        const effectiveTemplate = (!whatsappTemplateName || whatsappTemplateName.trim() === "hello_world")
+          ? "servicio_monitoreo"
+          : whatsappTemplateName.trim();
         const res = await ApiService.createDestinatario({
           nombre: formNombre.trim(),
           telefono: formTelefono.trim(),
@@ -348,7 +350,7 @@ export default function ConfiguracionPage() {
           activo: formActivo,
           grupo_ids: formGrupoIds,
           enviar_plantilla: formEnviarPlantilla,
-          template_name: whatsappTemplateName.trim() || undefined,
+          template_name: effectiveTemplate,
           template_language: whatsappTemplateLanguage.trim() || undefined,
         });
         if (res.plantilla_enviada) {
@@ -608,10 +610,13 @@ export default function ConfiguracionPage() {
       setTestingTemplate(true);
       setTemplateTestResult(null);
       setErrorMsg(null);
+      const effectiveTemplate = (!whatsappTemplateName || whatsappTemplateName.trim() === "hello_world")
+        ? "servicio_monitoreo"
+        : whatsappTemplateName.trim();
       const res = await ApiService.testTemplate({
         phone: directorWhatsappPhone,
-        template_name: whatsappTemplateName,
-        template_language: whatsappTemplateLanguage,
+        template_name: effectiveTemplate,
+        template_language: whatsappTemplateLanguage || "es_MX",
         api_key: kapsoApiKey,
         phone_number_id: kapsoPhoneNumberId,
       });
@@ -632,14 +637,17 @@ export default function ConfiguracionPage() {
       setSendingTemplateId(d.id);
       setErrorMsg(null);
       setSuccessMsg(null);
+      const effectiveTemplate = (!whatsappTemplateName || whatsappTemplateName.trim() === "hello_world")
+        ? "servicio_monitoreo"
+        : whatsappTemplateName.trim();
       const res = await ApiService.enviarPlantillaDestinatario(d.id, {
-        template_name: whatsappTemplateName,
-        template_language: whatsappTemplateLanguage,
+        template_name: effectiveTemplate,
+        template_language: whatsappTemplateLanguage || "es_MX",
         api_key: kapsoApiKey,
         phone_number_id: kapsoPhoneNumberId,
       });
       if (res.ok) {
-        setSuccessMsg(`✅ Plantilla oficial "${whatsappTemplateName || "servicio_monitoreo"}" enviada con éxito a ${d.nombre} (${d.telefono}). Ventana de 24h Meta activada.`);
+        setSuccessMsg(`✅ Plantilla oficial "${effectiveTemplate}" enviada con éxito a ${d.nombre} (${d.telefono}). Ventana de 24h Meta activada.`);
       } else {
         setErrorMsg(`Fallo al enviar plantilla a ${d.nombre}: ${res.error || res.mensaje}`);
       }

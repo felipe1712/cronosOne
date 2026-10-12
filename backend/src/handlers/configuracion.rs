@@ -245,6 +245,11 @@ pub async fn get_configuraciones(
 
     // Asegurar limpieza automática de cualquier valor dummy previo en base de datos
     let _ = sqlx::query(
+        "UPDATE configuraciones_sistema SET valor = 'servicio_monitoreo' WHERE clave = 'WHATSAPP_TEMPLATE_NAME' AND (valor = 'hello_world' OR valor = '')"
+    )
+    .execute(&pool)
+    .await;
+    let _ = sqlx::query(
         "UPDATE configuraciones_sistema SET valor = '' WHERE clave = 'DIRECTOR_WHATSAPP_PHONE' AND valor = '5215512345678'"
     )
     .execute(&pool)
@@ -666,12 +671,17 @@ pub async fn test_template(
         ));
     }
 
-    let tpl_name = req
+    let raw_name = req
         .template_name
         .as_deref()
         .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
+        .filter(|s| !s.is_empty() && *s != "hello_world")
         .unwrap_or(cfg.template_name.trim());
+    let tpl_name = if raw_name == "hello_world" || raw_name.is_empty() {
+        "servicio_monitoreo"
+    } else {
+        raw_name
+    };
 
     let tpl_lang = req
         .template_language
@@ -975,12 +985,17 @@ pub async fn create_destinatario(
             plantilla_error = Some("No se pudo enviar la plantilla: credenciales de WhatsApp Cloud API (Kapso) no configuradas en el servidor".to_string());
         } else {
             let client = KapsoClient::new(w_cfg.api_key.clone(), w_cfg.phone_number_id.clone());
-            let tpl_name = payload
+            let raw_name = payload
                 .template_name
                 .as_deref()
                 .map(|s| s.trim())
                 .filter(|s| !s.is_empty() && *s != "hello_world")
                 .unwrap_or(w_cfg.template_name.as_str());
+            let tpl_name = if raw_name == "hello_world" || raw_name.is_empty() {
+                "servicio_monitoreo"
+            } else {
+                raw_name
+            };
 
             let tpl_lang = payload
                 .template_language
@@ -1209,12 +1224,17 @@ pub async fn enviar_plantilla_destinatario(
     let clean_target_phone = KapsoClient::sanitize_phone(raw_phone);
     let target_phone = if clean_target_phone.is_empty() { raw_phone } else { &clean_target_phone };
 
-    let tpl_name = req
+    let raw_name = req
         .template_name
         .as_deref()
         .map(|s| s.trim())
         .filter(|s| !s.is_empty() && *s != "hello_world")
         .unwrap_or(w_cfg.template_name.as_str());
+    let tpl_name = if raw_name == "hello_world" || raw_name.is_empty() {
+        "servicio_monitoreo"
+    } else {
+        raw_name
+    };
 
     let tpl_lang = req
         .template_language

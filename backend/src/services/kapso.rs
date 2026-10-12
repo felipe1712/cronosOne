@@ -183,7 +183,12 @@ impl KapsoClient {
     ) -> Result<String, String> {
         let start = std::time::Instant::now();
         let clean_phone = Self::sanitize_phone(to);
-        let t_name = template_name.trim();
+        let raw_name = template_name.trim();
+        let t_name = if raw_name.is_empty() || raw_name == "hello_world" {
+            "servicio_monitoreo"
+        } else {
+            raw_name
+        };
         let lang = if language_code.trim().is_empty() {
             "es_MX"
         } else {
@@ -198,7 +203,9 @@ impl KapsoClient {
         });
 
         if let Some(vars) = variables {
-            if !vars.is_empty() {
+            // La plantilla aprobada 'servicio_monitoreo' no tiene variables en su cuerpo en Meta.
+            // Únicamente adjuntar components para plantillas que realmente requieran parámetros.
+            if !vars.is_empty() && t_name != "servicio_monitoreo" {
                 let params: Vec<serde_json::Value> = vars
                     .iter()
                     .map(|v| {
