@@ -235,6 +235,7 @@ Reglas estrictas de formato para WhatsApp:
 - Incluye 3 o 4 puntos clave máximo, cada uno con su impacto operativo para la aseguradora.
 - Termina con un bloque breve de "Acción / Atención sugerida".
 - Longitud total: Entre 180 y 300 palabras. Debe verse limpio y ejecutivo.
+- Límite estricto de WhatsApp: El texto completo NO debe superar los 4,000 caracteres bajo ninguna circunstancia (límite técnico de WhatsApp: 4,096 caracteres).
 """
 
 def get_configured_system_prompt() -> str:
@@ -358,6 +359,18 @@ async def generate_executive_brief(sections: List[Dict[str, Any]], fecha_str: st
 
                 if not brief_text.strip():
                     raise ValueError(f"Claude devolvió texto vacío (stop_reason: '{stop_reason}', in_tok: {in_tok}, out_tok: {out_tok})")
+
+                # Enforzar límite estricto de 4,096 caracteres para WhatsApp
+                if len(brief_text) > 4096:
+                    print(f"[LLM] ⚠️ Briefing ({len(brief_text)} caracteres) excede límite de WhatsApp (4096). Ajustando corte...")
+                    cut_idx = brief_text[:4080].rfind("\n\n")
+                    if cut_idx == -1:
+                        cut_idx = brief_text[:4080].rfind("\n")
+                    if cut_idx == -1:
+                        cut_idx = brief_text[:4080].rfind(". ")
+                    if cut_idx == -1:
+                        cut_idx = 4080
+                    brief_text = brief_text[:cut_idx].strip()
 
                 record_api_log(
                     servicio="claude",
@@ -543,6 +556,18 @@ async def generate_consolidated_daily_brief(documents: List[Dict[str, Any]], fec
 
                 if not brief_text.strip():
                     raise ValueError(f"Claude devolvió texto vacío (stop_reason: '{stop_reason}', in_tok: {in_tok}, out_tok: {out_tok})")
+
+                # Enforzar límite estricto de 4,096 caracteres para WhatsApp
+                if len(brief_text) > 4096:
+                    print(f"[LLM] ⚠️ Síntesis consolidada ({len(brief_text)} caracteres) excede límite de WhatsApp (4096). Ajustando corte...")
+                    cut_idx = brief_text[:4080].rfind("\n\n")
+                    if cut_idx == -1:
+                        cut_idx = brief_text[:4080].rfind("\n")
+                    if cut_idx == -1:
+                        cut_idx = brief_text[:4080].rfind(". ")
+                    if cut_idx == -1:
+                        cut_idx = 4080
+                    brief_text = brief_text[:cut_idx].strip()
 
                 record_api_log(
                     servicio="claude",

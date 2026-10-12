@@ -1363,9 +1363,20 @@ export default function BoletinesPage() {
                   },
                 }}
               />
-              <Box sx={{ display: "flex", justifyContent: "space-between", mt: 1 }}>
-                <Typography variant="caption" sx={{ color: "#94a3b8" }}>
-                  {editedText.length} caracteres | {editedText.trim() ? editedText.trim().split(/\s+/).length : 0} palabras
+              <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mt: 1 }}>
+                <Typography
+                  variant="caption"
+                  sx={{
+                    color: editedText.length > 4096 ? "#dc2626" : "#64748b",
+                    fontWeight: editedText.length > 4096 ? 700 : 500,
+                  }}
+                >
+                  {editedText.length.toLocaleString()} / 4,096 caracteres | {editedText.trim() ? editedText.trim().split(/\s+/).length : 0} palabras
+                  {editedText.length > 4096 && (
+                    <span style={{ marginLeft: "8px", color: "#ea580c" }}>
+                      (⚠️ Excede 4,096 chars de WhatsApp: se enviará en partes automáticas)
+                    </span>
+                  )}
                 </Typography>
                 {workspace?.sintesis?.modelo_usado && (
                   <Typography variant="caption" sx={{ color: "#64748b" }}>

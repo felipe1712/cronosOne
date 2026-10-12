@@ -55,7 +55,8 @@ Reglas estrictas de formato para WhatsApp:
 - No uses encabezados Markdown tipo # o ##
 - Incluye 3 o 4 puntos clave máximo, cada uno con su impacto operativo para la aseguradora.
 - Termina con un bloque breve de "Acción / Atención sugerida".
-- Longitud total: Entre 180 y 300 palabras. Debe verse limpio y ejecutivo."#;
+- Longitud total: Entre 180 y 300 palabras. Debe verse limpio y ejecutivo.
+- Límite estricto de WhatsApp: El texto completo NO debe superar los 4,000 caracteres bajo ninguna circunstancia (límite técnico de WhatsApp: 4,096 caracteres)."#;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UpdateConfiguracionPayload {
