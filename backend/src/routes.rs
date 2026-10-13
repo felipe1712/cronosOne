@@ -90,7 +90,7 @@ pub fn create_router(pool: DbPool, config: Arc<Config>) -> Router {
 
     // Rutas públicas (consumidas por frontend login y cron n8n)
     let public_routes = Router::new()
-        .route("/health", get(|| async { "ExposureIQ Backend OK" }))
+        .route("/health", get(|| async { "ExposureIQ Backend v2.5 (Sin components Meta WABA) OK" }))
         .route("/api/auth/login", post(auth::login))
         // Endpoint prioritario de sondeo (polling) para cron de n8n
         .route("/api/mensajes/pendientes", get(mensajes::get_mensajes_pendientes))

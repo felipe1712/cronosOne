@@ -283,44 +283,19 @@ impl KapsoClient {
             language_code.trim()
         };
 
-        let mut template_obj = json!({
-            "name": t_name,
-            "language": {
-                "code": lang
-            }
-        });
-
-        // La plantilla aprobada 'servicio_monitoreo' fue aprobada sin variables en Meta.
-        // Bajo ninguna circunstancia debe adjuntarse el bloque 'components'.
-        if t_name.to_lowercase() != "servicio_monitoreo" {
-            if let Some(vars) = variables {
-                let non_empty_vars: Vec<&String> = vars.iter().filter(|v| !v.trim().is_empty()).collect();
-                if !non_empty_vars.is_empty() {
-                    let params: Vec<serde_json::Value> = non_empty_vars
-                        .iter()
-                        .map(|v| {
-                            json!({
-                                "type": "text",
-                                "text": v.trim()
-                            })
-                        })
-                        .collect();
-
-                    template_obj["components"] = json!([
-                        {
-                            "type": "body",
-                            "parameters": params
-                        }
-                    ]);
-                }
-            }
-        }
-
+        // Payload oficial para Meta Cloud API (Kapso).
+        // La plantilla 'servicio_monitoreo' fue aprobada SIN variables en Meta.
+        // Jamás incluye 'components'.
         let payload = json!({
             "messaging_product": "whatsapp",
             "to": clean_phone,
             "type": "template",
-            "template": template_obj
+            "template": {
+                "name": t_name,
+                "language": {
+                    "code": lang
+                }
+            }
         });
         let payload_str = payload.to_string();
 
