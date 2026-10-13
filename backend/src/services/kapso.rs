@@ -266,7 +266,7 @@ impl KapsoClient {
         to: &str,
         template_name: &str,
         language_code: &str,
-        variables: Option<&[String]>,
+        _variables: Option<&[String]>,
         accion: &str,
     ) -> Result<String, String> {
         let start = std::time::Instant::now();
