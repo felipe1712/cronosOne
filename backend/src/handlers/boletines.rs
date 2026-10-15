@@ -560,69 +560,20 @@ pub async fn ensure_sintesis_diarias_schema(pool: &DbPool) {
         tracing::error!("Error asegurando tabla sintesis_diarias: {}", e);
     }
 
-    if let Err(e) = sqlx::query("ALTER TABLE boletines ADD COLUMN IF NOT EXISTS incluido_en_sintesis BOOLEAN NOT NULL DEFAULT TRUE")
-        .execute(pool)
-        .await {
-        tracing::warn!("Aviso columna incluido_en_sintesis: {}", e);
-    }
-
-    if let Err(e) = sqlx::query("ALTER TABLE boletines ADD COLUMN IF NOT EXISTS origen VARCHAR(50) NOT NULL DEFAULT 'manual'")
-        .execute(pool)
-        .await {
-        tracing::warn!("Aviso columna origen: {}", e);
-    }
-
-    if let Err(e) = sqlx::query("ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS temas TEXT[] DEFAULT '{}'")
-        .execute(pool)
-        .await {
-        tracing::warn!("Aviso columna temas: {}", e);
-    }
-
-    let _ = sqlx::query("ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS documentos_ids UUID[] DEFAULT '{}'")
-        .execute(pool)
-        .await;
-
-    let _ = sqlx::query("ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS estado VARCHAR(30) NOT NULL DEFAULT 'borrador'")
-        .execute(pool)
-        .await;
-
-    let _ = sqlx::query("ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS modelo_usado VARCHAR(50) DEFAULT 'claude-sonnet-4-5-20250929'")
-        .execute(pool)
-        .await;
-
-    let _ = sqlx::query("ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS tokens_usados INT")
-        .execute(pool)
-        .await;
-
-    let _ = sqlx::query("ALTER TABLE sintesis_diarias ADD COLUMN IF NOT EXISTS aprobado_por UUID")
-        .execute(pool)
-        .await;
-
+    // Asegurar columnas requeridas en boletines de forma no bloqueante (evita AccessExclusiveLock)
     let _ = sqlx::query(
-        "CREATE TABLE IF NOT EXISTS api_logs (
-            id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            servicio                VARCHAR(50) NOT NULL,
-            accion                  VARCHAR(100) NOT NULL,
-            modelo_o_proveedor      VARCHAR(100),
-            estado                  VARCHAR(50) NOT NULL,
-            codigo_http             INT,
-            latencia_ms             INT,
-            tokens_input            INT DEFAULT 0,
-            tokens_output           INT DEFAULT 0,
-            tokens_total            INT DEFAULT 0,
-            max_tokens_configurado  INT,
-            destinatario            VARCHAR(100),
-            peticion_payload        TEXT,
-            respuesta_payload       TEXT,
-            error_mensaje           TEXT,
-            creado_en               TIMESTAMPTZ NOT NULL DEFAULT now()
-        )"
+        "DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'boletines' AND column_name = 'incluido_en_sintesis') THEN
+                ALTER TABLE boletines ADD COLUMN incluido_en_sintesis BOOLEAN NOT NULL DEFAULT TRUE;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'boletines' AND column_name = 'origen') THEN
+                ALTER TABLE boletines ADD COLUMN origen VARCHAR(50) NOT NULL DEFAULT 'manual';
+            END IF;
+        END $$;"
     )
     .execute(pool)
     .await;
-
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_api_logs_servicio_fecha ON api_logs (servicio, creado_en DESC)").execute(pool).await;
-    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_api_logs_creado_en ON api_logs (creado_en DESC)").execute(pool).await;
 }
 
 pub async fn list_fechas_sintesis(
