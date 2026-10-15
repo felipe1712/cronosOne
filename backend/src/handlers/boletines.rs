@@ -1108,7 +1108,7 @@ pub async fn toggle_documento_seleccion(
 }
 
 pub async fn consolidar_sintesis_fecha(
-    State((pool, config)): State<(DbPool, Arc<Config>)>,
+    State((_pool, config)): State<(DbPool, Arc<Config>)>,
     Path(fecha_str): Path<String>,
     payload: Option<Json<ConsolidarSintesisFechaRequest>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
