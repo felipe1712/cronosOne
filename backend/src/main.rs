@@ -31,6 +31,7 @@ async fn main() -> anyhow::Result<()> {
             }
             handlers::boletines::ensure_sintesis_diarias_schema(&p).await;
             handlers::configuracion::ensure_api_logs_schema(&p).await;
+            handlers::configuracion::ensure_tablas_distribucion(&p).await;
             p
         }
         Err(e) => {

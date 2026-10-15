@@ -732,8 +732,6 @@ pub async fn test_claude(
     State((pool, config)): State<(DbPool, Arc<Config>)>,
     Json(payload): Json<TestClaudePayload>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    ensure_api_logs_schema(&pool).await;
-
     let worker_url = format!("{}/api/test-claude", config.worker_base_url);
     let client = reqwest::Client::new();
     let start = std::time::Instant::now();
@@ -859,8 +857,6 @@ pub async fn ensure_tablas_distribucion(pool: &DbPool) {
 pub async fn list_destinatarios(
     State((pool, _)): State<(DbPool, Arc<Config>)>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    ensure_tablas_distribucion(&pool).await;
-
     let dest_rows = sqlx::query_as::<_, DestinatarioRow>(
         "SELECT id, nombre, telefono, cargo, activo, notas, creado_en, actualizado_en
          FROM lista_distribucion
@@ -915,8 +911,6 @@ pub async fn create_destinatario(
     State((pool, _)): State<(DbPool, Arc<Config>)>,
     Json(payload): Json<CreateDestinatarioRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    ensure_tablas_distribucion(&pool).await;
-
     let nombre = payload.nombre.trim();
     let raw_telefono = payload.telefono.trim();
 
@@ -1073,8 +1067,6 @@ pub async fn update_destinatario(
     Path(id): Path<Uuid>,
     Json(payload): Json<UpdateDestinatarioRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    ensure_tablas_distribucion(&pool).await;
-
     let nombre = payload.nombre.trim();
     let raw_telefono = payload.telefono.trim();
 
@@ -1378,8 +1370,6 @@ pub async fn delete_destinatario(
 pub async fn list_grupos(
     State((pool, _)): State<(DbPool, Arc<Config>)>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    ensure_tablas_distribucion(&pool).await;
-
     let grupos = sqlx::query_as::<_, GrupoDistribucion>(
         "SELECT g.id, g.nombre, g.descripcion, g.color, g.activo, g.creado_en,
                 COUNT(dg.destinatario_id) as total_miembros
@@ -1404,8 +1394,6 @@ pub async fn create_grupo(
     State((pool, _)): State<(DbPool, Arc<Config>)>,
     Json(payload): Json<CreateGrupoRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    ensure_tablas_distribucion(&pool).await;
-
     let nombre = payload.nombre.trim();
     if nombre.is_empty() {
         return Err((
@@ -1555,8 +1543,6 @@ pub async fn get_api_logs(
     State((pool, _)): State<(DbPool, Arc<Config>)>,
     axum::extract::Query(query): axum::extract::Query<crate::models::GetApiLogsQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    ensure_api_logs_schema(&pool).await;
-
     let limit = query.limite.unwrap_or(50).clamp(1, 200);
     let offset = query.offset.unwrap_or(0).max(0);
 
@@ -1675,8 +1661,6 @@ pub async fn create_api_log(
     State((pool, _)): State<(DbPool, Arc<Config>)>,
     Json(payload): Json<crate::models::CreateApiLogPayload>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    ensure_api_logs_schema(&pool).await;
-
     let res = sqlx::query(
         "INSERT INTO api_logs (
             servicio, accion, modelo_o_proveedor, estado, codigo_http,
@@ -1713,8 +1697,6 @@ pub async fn clear_api_logs(
     State((pool, _)): State<(DbPool, Arc<Config>)>,
     axum::extract::Query(query): axum::extract::Query<crate::models::ClearApiLogsQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    ensure_api_logs_schema(&pool).await;
-
     let affected = if let Some(ref s) = query.servicio {
         let clean = s.trim().to_lowercase();
         if clean == "claude" || clean == "whatsapp" {

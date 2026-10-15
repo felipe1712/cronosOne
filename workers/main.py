@@ -238,33 +238,14 @@ async def consolidar_sintesis_diaria_endpoint(payload: ConsolidarSintesisDiariaR
     Guarda el resultado en la tabla 'sintesis_diarias'.
     """
     fecha = payload.fecha.strip()
+
+    # 1. Fase de lectura y preparación de documentos desde la base de datos
+    documentos_data = []
+    doc_uuids = []
+
     conn = get_db_connection()
     cur = conn.cursor()
     try:
-        # Intentar asegurar esquema de forma segura sin abortar la transacción por permisos DDL
-        try:
-            cur.execute("""
-                CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-                CREATE TABLE IF NOT EXISTS sintesis_diarias (
-                    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                    fecha           DATE UNIQUE NOT NULL,
-                    texto           TEXT NOT NULL DEFAULT '',
-                    temas           TEXT[] DEFAULT '{}',
-                    documentos_ids  UUID[] DEFAULT '{}',
-                    estado          VARCHAR(30) NOT NULL DEFAULT 'borrador',
-                    modelo_usado    VARCHAR(50) DEFAULT 'claude-sonnet-4-5-20250929',
-                    tokens_usados   INT,
-                    aprobado_por    UUID,
-                    creado_en       TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    actualizado_en  TIMESTAMPTZ NOT NULL DEFAULT now()
-                );
-            """)
-            conn.commit()
-        except Exception as schema_warn:
-            if conn and not conn.closed:
-                conn.rollback()
-            print(f"[Consolidar] Aviso DDL (omitido por permisos de usuario): {schema_warn}")
-
         # Obtener los boletines objetivo
         if payload.documentos_ids and len(payload.documentos_ids) > 0:
             clean_ids = [str(i).strip() for i in payload.documentos_ids if str(i).strip()]
@@ -314,9 +295,6 @@ async def consolidar_sintesis_diaria_endpoint(payload: ConsolidarSintesisDiariaR
             )
 
         # Preparar documentos y sus secciones
-        documentos_data = []
-        doc_uuids = []
-
         from surya_client import resolve_file_path
 
         for b in boletines:
@@ -372,31 +350,56 @@ async def consolidar_sintesis_diaria_endpoint(payload: ConsolidarSintesisDiariaR
                 "origen": doc_origen,
                 "secciones": secs or []
             })
-
-        from llm_synthesis import generate_consolidated_daily_brief, get_configured_model
-        active_model = get_configured_model()
-        print(f"[Consolidar] Generando síntesis consolidada para {len(documentos_data)} documentos de {fecha} con {active_model}...")
-        brief_res = await generate_consolidated_daily_brief(documentos_data, fecha)
-        brief_texto = brief_res[0]
-        detected_topics = brief_res[1]
-        total_tokens = brief_res[2] if len(brief_res) > 2 else 0
-
-        # Preparar y validar UUIDs de documentos para PostgreSQL
-        import uuid as uuid_lib
-        valid_uuids = []
-        for uid in doc_uuids:
+    except HTTPException:
+        raise
+    except Exception as e:
+        if conn and not conn.closed:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Error consultando documentos para síntesis: {str(e)}")
+    finally:
+        if cur and not cur.closed:
             try:
-                valid_uuids.append(str(uuid_lib.UUID(str(uid).strip())))
+                cur.close()
+            except Exception:
+                pass
+        if conn and not conn.closed:
+            try:
+                conn.close()
             except Exception:
                 pass
 
-        # Construir representaciones seguras de arreglos PostgreSQL
-        safe_doc_ids_str = "{" + ",".join(valid_uuids) + "}"
-        clean_temas = [str(t).replace('"', '\\"').strip() for t in (detected_topics or []) if str(t).strip()]
-        safe_temas_str = "{" + ",".join(f'"{t}"' for t in clean_temas) + "}"
+    # 2. Fase de IA / LLM Claude (SIN conexión de base de datos retenida durante la llamada HTTP remota)
+    from llm_synthesis import generate_consolidated_daily_brief, get_configured_model
+    active_model = get_configured_model()
+    print(f"[Consolidar] Generando síntesis consolidada para {len(documentos_data)} documentos de {fecha} con {active_model}...")
+    try:
+        brief_res = await generate_consolidated_daily_brief(documentos_data, fecha)
+    except Exception as llm_err:
+        err_msg = f"Error al generar síntesis con Claude: {str(llm_err)}\n{traceback.format_exc()}"
+        print(f"[Consolidar] ❌ {err_msg}")
+        raise HTTPException(status_code=500, detail=f"Error al generar síntesis con Claude: {str(llm_err)}")
 
-        # Upsert en sintesis_diarias con fallback ultra seguro
-        row = None
+    brief_texto = brief_res[0]
+    detected_topics = brief_res[1]
+    total_tokens = brief_res[2] if len(brief_res) > 2 else 0
+
+    # 3. Fase de guardado: Abrir conexión puntual a PostgreSQL para persistir el resultado
+    import uuid as uuid_lib
+    valid_uuids = []
+    for uid in doc_uuids:
+        try:
+            valid_uuids.append(str(uuid_lib.UUID(str(uid).strip())))
+        except Exception:
+            pass
+
+    safe_doc_ids_str = "{" + ",".join(valid_uuids) + "}"
+    clean_temas = [str(t).replace('"', '\\"').strip() for t in (detected_topics or []) if str(t).strip()]
+    safe_temas_str = "{" + ",".join(f'"{t}"' for t in clean_temas) + "}"
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    row = None
+    try:
         try:
             cur.execute(
                 """
@@ -445,52 +448,47 @@ async def consolidar_sintesis_diaria_endpoint(payload: ConsolidarSintesisDiariaR
             )
             row = cur.fetchone()
             conn.commit()
-
-        raw_doc_ids = row.get("documentos_ids") if row and "documentos_ids" in row else None
-        raw_temas = row.get("temas") if row and "temas" in row else None
-
-        parsed_doc_ids = parse_pg_array(raw_doc_ids) or valid_uuids
-        parsed_temas = parse_pg_array(raw_temas) or detected_topics
-
-        creado_iso = row["creado_en"].isoformat() if row and row.get("creado_en") and hasattr(row["creado_en"], "isoformat") else str(row.get("creado_en") or "")
-        act_iso = row["actualizado_en"].isoformat() if row and row.get("actualizado_en") and hasattr(row["actualizado_en"], "isoformat") else str(row.get("actualizado_en") or "")
-
-        return {
-            "status": "completado",
-            "sintesis": {
-                "id": str(row["id"]) if row and row.get("id") else "",
-                "fecha": str(row["fecha"]) if row and row.get("fecha") else fecha,
-                "texto": row["texto"] if row and row.get("texto") else brief_texto,
-                "temas": parsed_temas,
-                "documentos_ids": parsed_doc_ids,
-                "estado": row.get("estado", "sintesis_lista") if row else "sintesis_lista",
-                "modelo_usado": row.get("modelo_usado", active_model) if row else active_model,
-                "tokens_usados": total_tokens or (row.get("tokens_usados") if row else 0),
-                "creado_en": creado_iso,
-                "actualizado_en": act_iso,
-            },
-            "documentos_procesados": len(documentos_data)
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
+    except Exception as db_save_err:
         if conn and not conn.closed:
             conn.rollback()
-        err_msg = f"Error al consolidar síntesis del día: {str(e)}\n{traceback.format_exc()}"
-        print(f"[Consolidar] ❌ {err_msg}")
-        raise HTTPException(status_code=500, detail=f"Error en worker consolidando síntesis: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error guardando síntesis consolidada: {str(db_save_err)}")
     finally:
-        try:
-            if cur and not cur.closed:
+        if cur and not cur.closed:
+            try:
                 cur.close()
-        except Exception:
-            pass
-        try:
-            if conn and not conn.closed:
+            except Exception:
+                pass
+        if conn and not conn.closed:
+            try:
                 conn.close()
-        except Exception:
-            pass
+            except Exception:
+                pass
+
+    raw_doc_ids = row.get("documentos_ids") if row and "documentos_ids" in row else None
+    raw_temas = row.get("temas") if row and "temas" in row else None
+
+    parsed_doc_ids = parse_pg_array(raw_doc_ids) or valid_uuids
+    parsed_temas = parse_pg_array(raw_temas) or detected_topics
+
+    creado_iso = row["creado_en"].isoformat() if row and row.get("creado_en") and hasattr(row["creado_en"], "isoformat") else str(row.get("creado_en") or "")
+    act_iso = row["actualizado_en"].isoformat() if row and row.get("actualizado_en") and hasattr(row["actualizado_en"], "isoformat") else str(row.get("actualizado_en") or "")
+
+    return {
+        "status": "completado",
+        "sintesis": {
+            "id": str(row["id"]) if row and row.get("id") else "",
+            "fecha": str(row["fecha"]) if row and row.get("fecha") else fecha,
+            "texto": row["texto"] if row and row.get("texto") else brief_texto,
+            "temas": parsed_temas,
+            "documentos_ids": parsed_doc_ids,
+            "estado": row.get("estado", "sintesis_lista") if row else "sintesis_lista",
+            "modelo_usado": row.get("modelo_usado", active_model) if row else active_model,
+            "tokens_usados": total_tokens or (row.get("tokens_usados") if row else 0),
+            "creado_en": creado_iso,
+            "actualizado_en": act_iso,
+        },
+        "documentos_procesados": len(documentos_data)
+    }
 
 
 if __name__ == "__main__":

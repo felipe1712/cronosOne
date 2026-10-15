@@ -30,9 +30,9 @@ impl Config {
             database_url: env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "postgres://postgres:postgres@localhost:5432/exposureiq_db".to_string()),
             database_max_connections: env::var("DATABASE_MAX_CONNECTIONS")
-                .unwrap_or_else(|_| "10".to_string())
+                .unwrap_or_else(|_| "30".to_string())
                 .parse()
-                .unwrap_or(10),
+                .unwrap_or(30),
             jwt_secret: env::var("JWT_SECRET")
                 .unwrap_or_else(|_| "dev_secret_key_exposureiq_2026".to_string()),
             jwt_expiration_hours: env::var("JWT_EXPIRATION_HOURS")

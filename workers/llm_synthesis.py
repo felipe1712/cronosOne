@@ -26,44 +26,25 @@ from typing import Optional
 def record_api_log(
     servicio: str,
     accion: str,
-    modelo_o_proveedor: str,
-    estado: str,
-    codigo_http: int = 200,
-    latencia_ms: int = 0,
-    tokens_input: int = 0,
-    tokens_output: int = 0,
-    tokens_total: int = 0,
+    modelo_o_proveedor: Optional[str] = None,
+    estado: str = "ok",
+    codigo_http: Optional[int] = 200,
+    latencia_ms: Optional[int] = 0,
+    tokens_input: Optional[int] = 0,
+    tokens_output: Optional[int] = 0,
+    tokens_total: Optional[int] = 0,
     max_tokens_configurado: Optional[int] = None,
-    destinatario: str = "",
-    peticion_payload: str = "",
-    respuesta_payload: str = "",
+    destinatario: Optional[str] = None,
+    peticion_payload: Optional[str] = None,
+    respuesta_payload: Optional[str] = None,
     error_mensaje: Optional[str] = None
 ):
     """Registra de forma segura un intercambio de API en la tabla api_logs de PostgreSQL."""
+    conn = None
+    cur = None
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("""
-            CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-            CREATE TABLE IF NOT EXISTS api_logs (
-                id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                servicio                VARCHAR(50) NOT NULL,
-                accion                  VARCHAR(100) NOT NULL,
-                modelo_o_proveedor      VARCHAR(100),
-                estado                  VARCHAR(50) NOT NULL,
-                codigo_http             INT,
-                latencia_ms             INT,
-                tokens_input            INT DEFAULT 0,
-                tokens_output           INT DEFAULT 0,
-                tokens_total            INT DEFAULT 0,
-                max_tokens_configurado  INT,
-                destinatario            VARCHAR(100),
-                peticion_payload        TEXT,
-                respuesta_payload       TEXT,
-                error_mensaje           TEXT,
-                creado_en               TIMESTAMPTZ NOT NULL DEFAULT now()
-            );
-        """)
         p_safe = peticion_payload[:250000] if peticion_payload else ""
         r_safe = respuesta_payload[:250000] if respuesta_payload else ""
         err_safe = str(error_mensaje)[:4000] if error_mensaje else None
@@ -87,11 +68,20 @@ def record_api_log(
             )
         )
         conn.commit()
-        cur.close()
-        conn.close()
         print(f"[ApiLogs] ✅ Log registrado: {servicio} / {accion} (estado: {norm_estado})")
     except Exception as log_err:
         print(f"[ApiLogs] ❌ Advertencia registrando log en PostgreSQL: {log_err}")
+    finally:
+        if cur and not cur.closed:
+            try:
+                cur.close()
+            except Exception:
+                pass
+        if conn and not conn.closed:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 def extract_text_and_meta(response) -> Tuple[str, int, int, str]:
     """

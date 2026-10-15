@@ -629,7 +629,6 @@ pub async fn list_fechas_sintesis(
     State((pool, _)): State<(DbPool, Arc<Config>)>,
     Query(query): Query<ListQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    ensure_sintesis_diarias_schema(&pool).await;
     let limit = query.limit.unwrap_or(30);
     let offset = query.offset.unwrap_or(0);
 
@@ -672,7 +671,6 @@ pub async fn list_fechas_sintesis(
         Ok(r) => r,
         Err(e) => {
             tracing::warn!("Aviso listando fechas con sintesis_diarias: {}. Reintentando con consulta base...", e);
-            ensure_sintesis_diarias_schema(&pool).await;
 
             #[derive(sqlx::FromRow)]
             struct SimpleResumenRow {
@@ -742,8 +740,6 @@ pub async fn get_workspace_fecha(
     State((pool, _)): State<(DbPool, Arc<Config>)>,
     Path(fecha_str): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    ensure_sintesis_diarias_schema(&pool).await;
-
     let fecha = NaiveDate::parse_from_str(&fecha_str, "%Y-%m-%d").map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
@@ -763,7 +759,6 @@ pub async fn get_workspace_fecha(
         Ok(s) => s,
         Err(e) => {
             tracing::warn!("Aviso consultando síntesis diaria completa para {}: {}. Intentando consulta básica...", fecha, e);
-            ensure_sintesis_diarias_schema(&pool).await;
 
             #[derive(sqlx::FromRow)]
             struct BasicSintesis {
@@ -831,7 +826,6 @@ pub async fn get_workspace_fecha(
         Ok(rows) => rows,
         Err(e) => {
             tracing::warn!("Aviso consultando boletines con origen para {}: {}. Reintentando con consulta básica...", fecha, e);
-            ensure_sintesis_diarias_schema(&pool).await;
 
             #[derive(sqlx::FromRow)]
             struct FallbackBoletinRow {
@@ -1090,8 +1084,6 @@ pub async fn toggle_documento_seleccion(
     Path(id): Path<Uuid>,
     Json(payload): Json<ToggleDocumentoSeleccionRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    ensure_sintesis_diarias_schema(&pool).await;
-
     sqlx::query(
         "UPDATE boletines SET incluido_en_sintesis = $1, actualizado_en = now() WHERE id = $2",
     )
@@ -1120,8 +1112,6 @@ pub async fn consolidar_sintesis_fecha(
     Path(fecha_str): Path<String>,
     payload: Option<Json<ConsolidarSintesisFechaRequest>>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    ensure_sintesis_diarias_schema(&pool).await;
-
     let worker_url = format!("{}/api/consolidar-sintesis-diaria", config.worker_base_url);
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(300))
@@ -1176,8 +1166,6 @@ pub async fn actualizar_sintesis_diaria(
     Path(fecha_str): Path<String>,
     Json(payload): Json<ActualizarSintesisDiariaRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    ensure_sintesis_diarias_schema(&pool).await;
-
     let fecha = NaiveDate::parse_from_str(&fecha_str, "%Y-%m-%d").map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
@@ -1213,8 +1201,6 @@ pub async fn aprobar_sintesis_diaria(
     Path(fecha_str): Path<String>,
     Json(payload): Json<AprobarSintesisDiariaRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    ensure_sintesis_diarias_schema(&pool).await;
-
     let fecha = NaiveDate::parse_from_str(&fecha_str, "%Y-%m-%d").map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
@@ -1382,8 +1368,6 @@ pub async fn eliminar_boletin(
     State((pool, _)): State<(DbPool, Arc<Config>)>,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    ensure_sintesis_diarias_schema(&pool).await;
-
     #[derive(sqlx::FromRow)]
     struct DocInfo {
         fecha_boletin: NaiveDate,
@@ -1464,8 +1448,6 @@ pub async fn eliminar_sintesis_diaria(
     Path(fecha_str): Path<String>,
     Query(params): Query<DeleteSintesisQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    ensure_sintesis_diarias_schema(&pool).await;
-
     let fecha = NaiveDate::parse_from_str(&fecha_str, "%Y-%m-%d").map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
