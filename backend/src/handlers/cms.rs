@@ -1042,8 +1042,12 @@ async fn execute_daily_broadcast(
     // Obtener template id o name configurado
     let template_id = if let Ok(env_tpl) = std::env::var("KAPSO_TEMPLATE_ID") {
         env_tpl
-    } else {
+    } else if let Ok(env_tpl) = std::env::var("WHATSAPP_BRIEF_TEMPLATE") {
+        env_tpl
+    } else if !kapso_cfg.template_name.trim().is_empty() && kapso_cfg.template_name != "servicio_monitoreo" {
         kapso_cfg.template_name.clone()
+    } else {
+        "brief_informativo_diario".to_string()
     };
 
     // 1. Obtener la edición
