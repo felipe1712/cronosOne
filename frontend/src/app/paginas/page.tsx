@@ -611,7 +611,7 @@ export default function CmsManagementPage() {
           {currentTab === 1 && (
             <Grid container spacing={3}>
               {/* Editions List */}
-              <Grid item xs={12} md={4}>
+              <Grid size={{ xs: 12, md: 4 }}>
                 <Card sx={{ borderRadius: 3, boxShadow: "0 4px 20px rgba(0,0,0,0.04)", border: "1px solid #e2e8f0" }}>
                   <CardContent sx={{ p: 2.5 }}>
                     <Typography variant="h6" sx={{ fontWeight: 700, color: "#1e293b", mb: 2 }}>
@@ -668,7 +668,7 @@ export default function CmsManagementPage() {
               </Grid>
 
               {/* Selected Edition Sections */}
-              <Grid item xs={12} md={8}>
+              <Grid size={{ xs: 12, md: 8 }}>
                 {selectedEdition ? (
                   <Card sx={{ borderRadius: 3, boxShadow: "0 4px 20px rgba(0,0,0,0.04)", border: "1px solid #e2e8f0" }}>
                     <CardContent sx={{ p: 3 }}>
@@ -807,7 +807,7 @@ export default function CmsManagementPage() {
               <CardContent sx={{ p: 3 }}>
                 {/* Metric Cards */}
                 <Grid container spacing={2} sx={{ mb: 3 }}>
-                  <Grid item xs={12} sm={4}>
+                  <Grid size={{ xs: 12, sm: 4 }}>
                     <Paper sx={{ p: 2, borderRadius: 2, bgcolor: "#f8fafc", border: "1px solid #e2e8f0" }}>
                       <Typography variant="caption" sx={{ color: "#64748b", fontWeight: 600 }}>
                         AUDIENCIA TOTAL REGISTRADA
@@ -817,7 +817,7 @@ export default function CmsManagementPage() {
                       </Typography>
                     </Paper>
                   </Grid>
-                  <Grid item xs={12} sm={4}>
+                  <Grid size={{ xs: 12, sm: 4 }}>
                     <Paper sx={{ p: 2, borderRadius: 2, bgcolor: "#f0fdf4", border: "1px solid #bbf7d0" }}>
                       <Typography variant="caption" sx={{ color: "#166534", fontWeight: 600 }}>
                         SUSCRIPCIONES ACTIVAS (OPT-IN)
@@ -827,7 +827,7 @@ export default function CmsManagementPage() {
                       </Typography>
                     </Paper>
                   </Grid>
-                  <Grid item xs={12} sm={4}>
+                  <Grid size={{ xs: 12, sm: 4 }}>
                     <Paper sx={{ p: 2, borderRadius: 2, bgcolor: "#fef2f2", border: "1px solid #fecaca" }}>
                       <Typography variant="caption" sx={{ color: "#991b1b", fontWeight: 600 }}>
                         BAJAS / UNSUBSCRIBED (STOP)
@@ -1089,7 +1089,7 @@ export default function CmsManagementPage() {
               fullWidth
             />
             <Grid container spacing={2}>
-              <Grid item xs={6}>
+              <Grid size={{ xs: 6 }}>
                 <TextField
                   label="Color Hex"
                   value={pageForm.color_hex}
@@ -1111,7 +1111,7 @@ export default function CmsManagementPage() {
                   }}
                 />
               </Grid>
-              <Grid item xs={6}>
+              <Grid size={{ xs: 6 }}>
                 <TextField
                   label="Ícono Material"
                   value={pageForm.icon_name}
@@ -1122,7 +1122,7 @@ export default function CmsManagementPage() {
               </Grid>
             </Grid>
             <Grid container spacing={2}>
-              <Grid item xs={6}>
+              <Grid size={{ xs: 6 }}>
                 <TextField
                   label="Orden de visualización"
                   type="number"
@@ -1131,7 +1131,7 @@ export default function CmsManagementPage() {
                   fullWidth
                 />
               </Grid>
-              <Grid item xs={6} sx={{ display: "flex", alignItems: "center" }}>
+              <Grid size={{ xs: 6 }} sx={{ display: "flex", alignItems: "center" }}>
                 <FormControlLabel
                   control={
                     <Switch
