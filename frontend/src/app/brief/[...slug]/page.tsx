@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   Box,
   Card,
@@ -43,63 +44,113 @@ interface WeekData {
   entries: BriefItem[];
 }
 
-export default function SectionBriefPage() {
-  const params = useParams();
+export default function UnifiedBriefSlugPage() {
+  const rawParams = useParams();
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  const seccion = (params?.seccion as string) || "politica";
-  const fechaParam = searchParams.get("fecha");
+  // Parse dynamic slug segments
+  const rawSlug = rawParams?.slug;
+  const slugArray: string[] = Array.isArray(rawSlug)
+    ? rawSlug
+    : typeof rawSlug === "string"
+    ? [rawSlug]
+    : ["politica"];
+
+  const isDateRegex = /^\d{4}-\d{2}-\d{2}$/;
+
+  let mode: "feed" | "historical" = "feed";
+  let targetSection = "politica";
+  let targetFecha: string | undefined = searchParams.get("fecha") || undefined;
+
+  if (slugArray.length >= 2) {
+    if (isDateRegex.test(slugArray[0])) {
+      // Formato /brief/2026-10-12/politica
+      targetFecha = slugArray[0];
+      targetSection = slugArray[1];
+      mode = "historical";
+    } else if (isDateRegex.test(slugArray[1])) {
+      // Formato alternativo /brief/politica/2026-10-12
+      targetSection = slugArray[0];
+      targetFecha = slugArray[1];
+      mode = "historical";
+    } else {
+      targetSection = slugArray[0];
+    }
+  } else if (slugArray.length === 1) {
+    targetSection = slugArray[0];
+    mode = "feed";
+  }
 
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Estados para modo Feed Semanal
   const [latestItem, setLatestItem] = useState<BriefItem | null>(null);
   const [weekData, setWeekData] = useState<WeekData | null>(null);
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  const fetchBrief = async (targetFecha?: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await ApiService.getPublicBrief(seccion, {
-        fecha: targetFecha,
-      });
-
-      if (res && res.item) {
-        setLatestItem(res.item);
-        setWeekData(res.week);
-        // Expandir por defecto el primer artículo más reciente
-        if (res.week?.entries?.length > 0) {
-          setExpandedIds({ [res.week.entries[0].id]: true });
-        }
-      } else {
-        setError("No se encontró información publicada para esta sección.");
-      }
-    } catch (err: any) {
-      setError(err.message || "Error al cargar la síntesis.");
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Estados para modo Histórico único
+  const [historicalItem, setHistoricalItem] = useState<BriefItem | null>(null);
+  const [copiedHistorical, setCopiedHistorical] = useState<boolean>(false);
 
   useEffect(() => {
-    fetchBrief(fechaParam || undefined);
-  }, [seccion, fechaParam]);
+    setLoading(true);
+    setError(null);
+
+    if (mode === "historical" && targetFecha) {
+      ApiService.getPublicBriefByDate(targetFecha, targetSection)
+        .then((res) => {
+          if (res && res.item) {
+            setHistoricalItem(res.item);
+          } else {
+            setError(`No se encontró la síntesis histórica para la fecha ${targetFecha}.`);
+          }
+        })
+        .catch((err) => {
+          setError(err.message || "Error consultando edición histórica.");
+        })
+        .finally(() => setLoading(false));
+    } else {
+      ApiService.getPublicBrief(targetSection, { fecha: targetFecha })
+        .then((res) => {
+          if (res && res.item) {
+            setLatestItem(res.item);
+            setWeekData(res.week);
+            if (res.week?.entries?.length > 0) {
+              setExpandedIds({ [res.week.entries[0].id]: true });
+            }
+          } else {
+            setError("No se encontró información publicada para esta sección.");
+          }
+        })
+        .catch((err) => {
+          setError(err.message || "Error al cargar el feed semanal.");
+        })
+        .finally(() => setLoading(false));
+    }
+  }, [mode, targetSection, targetFecha]);
 
   const toggleExpand = (id: string) => {
     setExpandedIds((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
   const copyPermalink = (dateStr: string, id: string) => {
-    const url = `${window.location.origin}/brief/${dateStr}/${seccion}`;
+    const url = `${window.location.origin}/brief/${dateStr}/${targetSection}`;
     navigator.clipboard.writeText(url);
     setCopiedId(id);
     setTimeout(() => setCopiedId(null), 2500);
   };
 
+  const copyHistoricalPermalink = () => {
+    navigator.clipboard.writeText(window.location.href);
+    setCopiedHistorical(true);
+    setTimeout(() => setCopiedHistorical(false), 2500);
+  };
+
   const handleNavigateWeek = (dateStr: string) => {
-    router.push(`/brief/${seccion}?fecha=${dateStr}`);
+    router.push(`/brief/${targetSection}?fecha=${dateStr}`);
   };
 
   const formatDateDisplay = (dateStr: string) => {
@@ -119,35 +170,145 @@ export default function SectionBriefPage() {
 
   if (loading) {
     return (
-      <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", py: 10 }}>
+      <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", py: 12 }}>
         <CircularProgress size={45} thickness={4} sx={{ color: "#0284c7" }} />
         <Typography variant="body2" sx={{ mt: 2, color: "#64748b", fontWeight: 500 }}>
-          Consultando edición ejecutiva...
+          Cargando síntesis ejecutiva...
         </Typography>
       </Box>
     );
   }
 
-  if (error || !latestItem) {
+  if (error) {
     return (
       <Box sx={{ maxWidth: 700, mx: "auto", py: 6 }}>
         <Alert severity="info" sx={{ borderRadius: "12px", border: "1px solid #bae6fd" }}>
-          {error || "Esta sección aún no cuenta con notas publicadas para esta jornada."}
+          {error}
         </Alert>
         <Box sx={{ mt: 3, textAlign: "center" }}>
           <Button variant="outlined" onClick={() => router.push("/brief/politica")} sx={{ borderRadius: "8px" }}>
-            Ver Sección de Política y Gobierno
+            Ver Canal de Política y Gobierno
           </Button>
         </Box>
       </Box>
     );
   }
 
+  // =========================================================================
+  // VISTA 1: EDICIÓN HISTÓRICA INDIVIDUAL (/brief/YYYY-MM-DD/seccion)
+  // =========================================================================
+  if (mode === "historical" && historicalItem) {
+    return (
+      <Box sx={{ maxWidth: 840, mx: "auto", py: 2 }}>
+        <Box sx={{ mb: 3 }}>
+          <Button
+            variant="text"
+            startIcon={<span className="material-symbols-outlined">arrow_back</span>}
+            onClick={() => router.push(`/brief/${historicalItem.section_key}`)}
+            sx={{ color: "#475569", fontWeight: 600, textTransform: "none", mb: 2 }}
+          >
+            Volver al feed semanal de {historicalItem.section_title}
+          </Button>
+
+          <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 2 }}>
+            <Box>
+              <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, mb: 1 }}>
+                <Chip
+                  label={historicalItem.section_title}
+                  sx={{
+                    backgroundColor: historicalItem.section_color || "#0284c7",
+                    color: "#ffffff",
+                    fontWeight: 700,
+                  }}
+                />
+                <Chip label="EDICIÓN HISTÓRICA DE ARCHIVO" size="small" variant="outlined" sx={{ color: "#64748b" }} />
+              </Box>
+              <Typography variant="h4" sx={{ fontWeight: 900, color: "#0f172a", letterSpacing: -0.5 }}>
+                {historicalItem.title}
+              </Typography>
+              <Typography variant="subtitle1" sx={{ color: "#475569", textTransform: "capitalize", mt: 0.5 }}>
+                📅 {formatDateDisplay(historicalItem.edition_date)}
+              </Typography>
+            </Box>
+
+            <Tooltip title={copiedHistorical ? "¡Enlace permanente copiado!" : "Copiar enlace permanente"}>
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<span className="material-symbols-outlined">{copiedHistorical ? "check" : "share"}</span>}
+                onClick={copyHistoricalPermalink}
+                sx={{ borderRadius: "8px", textTransform: "none", borderColor: "#cbd5e1", color: "#334155" }}
+              >
+                {copiedHistorical ? "Copiado" : "Compartir URL"}
+              </Button>
+            </Tooltip>
+          </Box>
+        </Box>
+
+        <Card
+          elevation={0}
+          sx={{
+            borderRadius: "16px",
+            border: `2px solid ${historicalItem.section_color || "#0284c7"}`,
+            backgroundColor: "#ffffff",
+            overflow: "hidden",
+            boxShadow: "0 10px 30px rgba(15, 23, 42, 0.05)",
+          }}
+        >
+          <CardContent sx={{ p: { xs: 3, md: 4 } }}>
+            {historicalItem.summary && (
+              <Box
+                sx={{
+                  backgroundColor: "#f8fafc",
+                  borderLeft: `4px solid ${historicalItem.section_color || "#0284c7"}`,
+                  p: 2.5,
+                  borderRadius: "0 10px 10px 0",
+                  mb: 3,
+                }}
+              >
+                <Typography variant="caption" sx={{ fontWeight: 800, color: historicalItem.section_color || "#0284c7", display: "block", mb: 0.5 }}>
+                  RESUMEN EJECUTIVO
+                </Typography>
+                <Typography variant="body1" sx={{ color: "#334155", lineHeight: 1.6, fontWeight: 500 }}>
+                  {historicalItem.summary}
+                </Typography>
+              </Box>
+            )}
+
+            <Divider sx={{ my: 3 }} />
+
+            <Box
+              sx={{
+                typography: "body1",
+                color: "#1e293b",
+                lineHeight: 1.9,
+                "& p": { mb: 2.5 },
+                "& ul": { pl: 3, mb: 2.5 },
+                "& li": { mb: 1 },
+                "& strong": { color: "#0f172a" },
+                whiteSpace: "pre-line",
+              }}
+            >
+              {historicalItem.full_content}
+            </Box>
+          </CardContent>
+        </Card>
+      </Box>
+    );
+  }
+
+  // =========================================================================
+  // VISTA 2: FEED SEMANAL POR CANAL (/brief/politica)
+  // =========================================================================
+  if (!latestItem) {
+    return null;
+  }
+
   const entries = weekData?.entries || [latestItem];
 
   return (
     <Box sx={{ maxWidth: 880, mx: "auto" }}>
-      {/* Week Navigator Bar */}
+      {/* Barra de Navegación Semanal */}
       {weekData && (
         <Paper
           elevation={0}
@@ -193,7 +354,7 @@ export default function SectionBriefPage() {
               <Button
                 variant="outlined"
                 size="small"
-                onClick={() => router.push(`/brief/${seccion}`)}
+                onClick={() => router.push(`/brief/${targetSection}`)}
                 sx={{
                   borderRadius: "8px",
                   fontSize: "0.75rem",
@@ -219,7 +380,7 @@ export default function SectionBriefPage() {
         </Paper>
       )}
 
-      {/* Hero Header for this Section */}
+      {/* Encabezado del Canal */}
       <Box sx={{ mb: 4, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 2 }}>
         <Box>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, mb: 0.5 }}>
@@ -247,7 +408,7 @@ export default function SectionBriefPage() {
         </Box>
       </Box>
 
-      {/* Feed List: Entries for the Selected Week (Newest to Oldest) */}
+      {/* Feed de Ediciones de la Semana (Más Reciente Primero) */}
       <Box sx={{ display: "flex", flexDirection: "column", gap: 3.5 }}>
         {entries.map((item, index) => {
           const isExpanded = expandedIds[item.id] ?? (index === 0);
@@ -359,7 +520,7 @@ export default function SectionBriefPage() {
                     {isExpanded ? "Ocultar desglose completo" : "Leer análisis completo del día"}
                   </Button>
 
-                  <a
+                  <Link
                     href={`/brief/${item.edition_date}/${item.section_key}`}
                     style={{
                       fontSize: "0.8rem",
@@ -374,7 +535,7 @@ export default function SectionBriefPage() {
                     <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>
                       open_in_new
                     </span>
-                  </a>
+                  </Link>
                 </Box>
               </CardContent>
             </Card>
