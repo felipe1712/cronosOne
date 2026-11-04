@@ -542,3 +542,179 @@ pub struct CreateApiLogPayload {
 }
 
 
+
+// ============================================================================
+// 8. Modelos CMS de Páginas, Ediciones Diarias y Broadcasts (Kapso Platform)
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct NewsPage {
+    pub id: Uuid,
+    pub section_key: String,
+    pub title: String,
+    pub subtitle: Option<String>,
+    pub color: String,
+    pub icon: String,
+    pub orden: i32,
+    pub active: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateNewsPageRequest {
+    pub section_key: String,
+    pub title: String,
+    pub subtitle: Option<String>,
+    pub color: Option<String>,
+    pub icon: Option<String>,
+    pub orden: Option<i32>,
+    pub active: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateNewsPageRequest {
+    pub title: String,
+    pub subtitle: Option<String>,
+    pub color: Option<String>,
+    pub icon: Option<String>,
+    pub orden: Option<i32>,
+    pub active: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct NewsEdition {
+    pub id: Uuid,
+    pub edition_date: NaiveDate,
+    pub status: String,
+    pub generated_at: Option<DateTime<Utc>>,
+    pub published_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct NewsSection {
+    pub id: Uuid,
+    pub edition_id: Uuid,
+    pub section_key: String,
+    pub title: String,
+    pub summary: String,
+    pub full_content: String,
+    pub public_slug: String,
+    pub published: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewsEditionWithSections {
+    pub edition: NewsEdition,
+    pub sections: Vec<NewsSection>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateNewsSectionRequest {
+    pub title: String,
+    pub summary: String,
+    pub full_content: String,
+    pub published: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PublishEditionRequest {
+    pub send_broadcast: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublicSectionInfo {
+    pub section_key: String,
+    pub title: String,
+    pub subtitle: Option<String>,
+    pub color: String,
+    pub icon: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublicBriefItem {
+    pub id: Uuid,
+    pub edition_date: NaiveDate,
+    pub section_key: String,
+    pub section_title: String,
+    pub section_color: String,
+    pub section_icon: String,
+    pub title: String,
+    pub summary: String,
+    pub full_content: String,
+    pub public_slug: String,
+    pub published_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublicWeekSummary {
+    pub week_number: u32,
+    pub year: i32,
+    pub start_date: NaiveDate,
+    pub end_date: NaiveDate,
+    pub label: String,
+    pub is_current_week: bool,
+    pub items: Vec<PublicBriefItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Subscriber {
+    pub id: Uuid,
+    pub phone_number: String,
+    pub display_name: Option<String>,
+    pub consent_status: String,
+    pub consent_source: String,
+    pub consent_text_version: String,
+    pub consented_at: DateTime<Utc>,
+    pub unsubscribed_at: Option<DateTime<Utc>>,
+    pub last_marketing_preference: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateSubscriberRequest {
+    pub phone_number: String,
+    pub display_name: Option<String>,
+    pub consent_status: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateSubscriberRequest {
+    pub phone_number: String,
+    pub display_name: Option<String>,
+    pub consent_status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct WhatsappBroadcastRecord {
+    pub id: Uuid,
+    pub edition_id: Option<Uuid>,
+    pub broadcast_id: String,
+    pub phone_number_id: String,
+    pub template_id: String,
+    pub edition_date: NaiveDate,
+    pub status: String,
+    pub scheduled_at: Option<DateTime<Utc>>,
+    pub total_recipients: Option<i32>,
+    pub sent_count: Option<i32>,
+    pub delivered_count: Option<i32>,
+    pub read_count: Option<i32>,
+    pub failed_count: Option<i32>,
+    pub suppressed_count: Option<i32>,
+    pub responded_count: Option<i32>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TriggerBroadcastRequest {
+    pub edition_date: Option<NaiveDate>,
+    pub send_immediately: Option<bool>,
+    pub test_phone: Option<String>,
+}

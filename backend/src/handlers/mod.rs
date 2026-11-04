@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod boletines;
+pub mod cms;
 pub mod configuracion;
 pub mod mensajes;
 pub mod osint;

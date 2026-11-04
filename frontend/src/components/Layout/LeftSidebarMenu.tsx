@@ -147,6 +147,27 @@ const LeftSidebarMenu: React.FC<LeftSidebarProps> = ({ toggleActive }) => {
                 </li>
                 <li className="sidemenu-item">
                   <Link
+                    href="/paginas"
+                    className={`sidemenu-link ${
+                      pathname === "/paginas" ? "active" : ""
+                    }`}
+                  >
+                    Páginas & Canales CMS
+                  </Link>
+                </li>
+                <li className="sidemenu-item">
+                  <Link
+                    href="/brief/politica"
+                    target="_blank"
+                    className="sidemenu-link"
+                    style={{ color: "#605DFF", display: "flex", alignItems: "center", justifyContent: "space-between" }}
+                  >
+                    <span>Ver Portal Público</span>
+                    <i className="material-symbols-outlined" style={{ fontSize: "1rem" }}>open_in_new</i>
+                  </Link>
+                </li>
+                <li className="sidemenu-item">
+                  <Link
                     href="/configuracion"
                     className={`sidemenu-link ${
                       pathname === "/configuracion" ? "active" : ""

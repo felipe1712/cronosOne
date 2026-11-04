@@ -406,6 +406,181 @@ impl KapsoClient {
     ) -> Result<String, String> {
         self.send_template_with_log(None, to, template_name, language_code, variables, "plantilla_whatsapp").await
     }
+
+    pub fn sanitize_e164(phone: &str) -> String {
+        let digits: String = phone.chars().filter(|c| c.is_ascii_digit()).collect();
+        if phone.trim().starts_with('+') {
+            format!("+{}", digits)
+        } else if digits.starts_with("52") {
+            format!("+{}", digits)
+        } else if digits.len() == 10 {
+            format!("+52{}", digits)
+        } else if !digits.is_empty() {
+            format!("+{}", digits)
+        } else {
+            phone.to_string()
+        }
+    }
+
+    // ========================================================================
+    // Kapso Platform API v1 — Módulo Broadcasts (Campañas Oficiales WhatsApp)
+    // ========================================================================
+
+    pub async fn create_broadcast(
+        &self,
+        name: &str,
+        template_id: &str,
+    ) -> Result<serde_json::Value, String> {
+        let url = "https://api.kapso.ai/platform/v1/whatsapp/broadcasts";
+        let payload = json!({
+            "whatsapp_broadcast": {
+                "name": name,
+                "phone_number_id": self.phone_number_id.trim(),
+                "whatsapp_template_id": template_id
+            }
+        });
+
+        let resp = self.client.post(url)
+            .header("X-API-Key", self.api_key.trim())
+            .header("Content-Type", "application/json")
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| format!("Error conectando con Kapso Platform API al crear broadcast: {}", e))?;
+
+        let status = resp.status();
+        let body: serde_json::Value = resp.json().await
+            .map_err(|e| format!("Error decodificando respuesta JSON de Kapso: {}", e))?;
+
+        if !status.is_success() {
+            let err_msg = body.get("error").or_else(|| body.get("message"))
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| format!("HTTP {}", status));
+            return Err(format!("Fallo al crear broadcast en Kapso ({}): {}", status, err_msg));
+        }
+
+        Ok(body)
+    }
+
+    pub async fn add_broadcast_recipients(
+        &self,
+        broadcast_id: &str,
+        recipients: &[serde_json::Value],
+    ) -> Result<serde_json::Value, String> {
+        let url = format!("https://api.kapso.ai/platform/v1/whatsapp/broadcasts/{}/recipients", broadcast_id);
+        let payload = json!({
+            "whatsapp_broadcast": {
+                "recipients": recipients
+            }
+        });
+
+        let resp = self.client.post(&url)
+            .header("X-API-Key", self.api_key.trim())
+            .header("Content-Type", "application/json")
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| format!("Error conectando con Kapso Platform API al agregar destinatarios: {}", e))?;
+
+        let status = resp.status();
+        let body: serde_json::Value = resp.json().await
+            .map_err(|e| format!("Error decodificando respuesta JSON de Kapso: {}", e))?;
+
+        if !status.is_success() {
+            let err_msg = body.get("error").or_else(|| body.get("message"))
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| format!("HTTP {}", status));
+            return Err(format!("Fallo al agregar destinatarios al broadcast {} ({}): {}", broadcast_id, status, err_msg));
+        }
+
+        Ok(body)
+    }
+
+    pub async fn schedule_broadcast(
+        &self,
+        broadcast_id: &str,
+        scheduled_at_utc_iso: &str,
+    ) -> Result<serde_json::Value, String> {
+        let url = format!("https://api.kapso.ai/platform/v1/whatsapp/broadcasts/{}/schedule", broadcast_id);
+        let payload = json!({
+            "scheduled_at": scheduled_at_utc_iso
+        });
+
+        let resp = self.client.post(&url)
+            .header("X-API-Key", self.api_key.trim())
+            .header("Content-Type", "application/json")
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| format!("Error programando broadcast en Kapso: {}", e))?;
+
+        let status = resp.status();
+        let body: serde_json::Value = resp.json().await
+            .map_err(|e| format!("Error decodificando respuesta de programación: {}", e))?;
+
+        if !status.is_success() {
+            let err_msg = body.get("error").or_else(|| body.get("message"))
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| format!("HTTP {}", status));
+            return Err(format!("Fallo al programar broadcast {} ({}): {}", broadcast_id, status, err_msg));
+        }
+
+        Ok(body)
+    }
+
+    pub async fn send_broadcast(
+        &self,
+        broadcast_id: &str,
+    ) -> Result<serde_json::Value, String> {
+        let url = format!("https://api.kapso.ai/platform/v1/whatsapp/broadcasts/{}/send", broadcast_id);
+
+        let resp = self.client.post(&url)
+            .header("X-API-Key", self.api_key.trim())
+            .header("Content-Type", "application/json")
+            .send()
+            .await
+            .map_err(|e| format!("Error enviando broadcast inmediato en Kapso: {}", e))?;
+
+        let status = resp.status();
+        let body: serde_json::Value = resp.json().await
+            .map_err(|e| format!("Error decodificando respuesta de envío de broadcast: {}", e))?;
+
+        if !status.is_success() {
+            let err_msg = body.get("error").or_else(|| body.get("message"))
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| format!("HTTP {}", status));
+            return Err(format!("Fallo al enviar broadcast {} ({}): {}", broadcast_id, status, err_msg));
+        }
+
+        Ok(body)
+    }
+
+    pub async fn get_broadcast(
+        &self,
+        broadcast_id: &str,
+    ) -> Result<serde_json::Value, String> {
+        let url = format!("https://api.kapso.ai/platform/v1/whatsapp/broadcasts/{}", broadcast_id);
+
+        let resp = self.client.get(&url)
+            .header("X-API-Key", self.api_key.trim())
+            .header("Content-Type", "application/json")
+            .send()
+            .await
+            .map_err(|e| format!("Error consultando broadcast en Kapso: {}", e))?;
+
+        let status = resp.status();
+        let body: serde_json::Value = resp.json().await
+            .map_err(|e| format!("Error decodificando respuesta de consulta de broadcast: {}", e))?;
+
+        if !status.is_success() {
+            let err_msg = body.get("error").or_else(|| body.get("message"))
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| format!("HTTP {}", status));
+            return Err(format!("Fallo al consultar broadcast {} ({}): {}", broadcast_id, status, err_msg));
+        }
+
+        Ok(body)
+    }
 }
 
 pub async fn log_whatsapp_api(

@@ -448,6 +448,43 @@ async def consolidar_sintesis_diaria_endpoint(payload: ConsolidarSintesisDiariaR
             )
             row = cur.fetchone()
             conn.commit()
+
+        # Sincronizar automáticamente con news_editions y news_sections para el blog público
+        try:
+            cur.execute(
+                """
+                INSERT INTO news_editions (edition_date, status, generated_at, updated_at)
+                VALUES (%s, 'published', now(), now())
+                ON CONFLICT (edition_date) DO UPDATE SET updated_at = now()
+                RETURNING id;
+                """,
+                (fecha,)
+            )
+            ed_row = cur.fetchone()
+            if ed_row and ed_row.get("id"):
+                ed_id = ed_row["id"]
+                sec_configs = [
+                    ("politica", f"Síntesis Política y Legislativa — {fecha}", brief_texto[:300], brief_texto),
+                    ("economia", f"Panorama Económico y Financiero — {fecha}", "Seguimiento a variables macroeconómicas, divisas y sectores regulados.", brief_texto),
+                    ("seguridad", f"Monitoreo de Seguridad e Incidentes — {fecha}", "Alertas de seguridad pública, incidentes carreteros y siniestros.", brief_texto)
+                ]
+                for s_key, s_title, s_sum, s_content in sec_configs:
+                    cur.execute(
+                        """
+                        INSERT INTO news_sections (edition_id, section_key, title, summary, full_content, public_slug, published, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, true, now())
+                        ON CONFLICT (edition_id, section_key) DO UPDATE
+                        SET title = EXCLUDED.title,
+                            summary = EXCLUDED.summary,
+                            full_content = EXCLUDED.full_content,
+                            published = true,
+                            updated_at = now();
+                        """,
+                        (ed_id, s_key, s_title, s_sum, s_content, s_key)
+                    )
+                conn.commit()
+        except Exception as cms_sync_err:
+            print(f"[Consolidar] Aviso sincronizando con news_editions/news_sections: {cms_sync_err}")
     except Exception as db_save_err:
         if conn and not conn.closed:
             conn.rollback()

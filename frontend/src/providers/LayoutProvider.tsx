@@ -22,6 +22,7 @@ const LayoutProvider: React.FC<LayoutProviderProps> = ({ children }) => {
   };
 
   const isAuthPage = pathname.startsWith("/authentication");
+  const isPublicPage = pathname.startsWith("/authentication") || pathname.startsWith("/brief");
 
   useEffect(() => {
     const handleChunkError = (event: ErrorEvent) => {
@@ -57,7 +58,7 @@ const LayoutProvider: React.FC<LayoutProviderProps> = ({ children }) => {
   }, []);
 
   useEffect(() => {
-    if (!isAuthPage) {
+    if (!isPublicPage) {
       const token = typeof window !== "undefined" ? localStorage.getItem("exposureiq_token") : null;
       if (!token) {
         router.replace("/authentication/sign-in");
@@ -65,10 +66,10 @@ const LayoutProvider: React.FC<LayoutProviderProps> = ({ children }) => {
       }
     }
     setIsCheckingAuth(false);
-  }, [pathname, isAuthPage, router]);
+  }, [pathname, isPublicPage, router]);
 
-  // Si no está autenticado y no es página de autenticación, mostrar carga mientras redirige
-  if (!isAuthPage && isCheckingAuth) {
+  // Si no está autenticado y no es página pública, mostrar carga mientras redirige
+  if (!isPublicPage && isCheckingAuth) {
     return (
       <Box
         sx={{
@@ -84,19 +85,21 @@ const LayoutProvider: React.FC<LayoutProviderProps> = ({ children }) => {
     );
   }
 
+  const isBrief = pathname.startsWith("/brief");
+
   return (
-    <div className={`main-wrapper-content ${active ? "active" : ""}`}>
-      {!isAuthPage && (
+    <div className={`main-wrapper-content ${active ? "active" : ""} ${isBrief ? "brief-mode" : ""}`}>
+      {!isPublicPage && (
         <>
           <TopNavbar toggleActive={toggleActive} />
           <LeftSidebarMenu toggleActive={toggleActive} />
         </>
       )}
 
-      <div className="main-content">
+      <div className={`main-content ${isBrief ? "brief-content" : ""}`} style={isBrief ? { padding: 0, margin: 0, maxWidth: "100%", width: "100%" } : undefined}>
         {children}
 
-        {!isAuthPage && <Footer />}
+        {!isPublicPage && <Footer />}
       </div>
     </div>
   );

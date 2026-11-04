@@ -553,5 +553,44 @@ export const ApiService = {
       method: 'DELETE',
     });
   },
+
+  // CMS Páginas y Canales Informativos
+  listCmsPages: () => apiFetch<any[]>('/cms/pages'),
+  createCmsPage: (data: any) => apiFetch<any>('/cms/pages', { method: 'POST', body: JSON.stringify(data) }),
+  updateCmsPage: (id: string, data: any) => apiFetch<any>(`/cms/pages/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  toggleCmsPage: (id: string) => apiFetch<any>(`/cms/pages/${id}/toggle`, { method: 'PATCH' }),
+  deleteCmsPage: (id: string) => apiFetch<any>(`/cms/pages/${id}`, { method: 'DELETE' }),
+
+  // CMS Ediciones Diarias y Secciones
+  listCmsEditions: () => apiFetch<any[]>('/cms/editions'),
+  getCmsEdition: (fecha: string) => apiFetch<any>(`/cms/editions/${fecha}`),
+  updateCmsSection: (fecha: string, sectionKey: string, data: any) =>
+    apiFetch<any>(`/cms/editions/${fecha}/sections/${sectionKey}`, { method: 'PUT', body: JSON.stringify(data) }),
+  publishCmsEdition: (fecha: string, sendBroadcast = false) =>
+    apiFetch<any>(`/cms/editions/${fecha}/publish`, { method: 'POST', body: JSON.stringify({ send_broadcast: sendBroadcast }) }),
+
+  // Suscriptores y Audiencia WhatsApp (Opt-in)
+  listSubscribers: () => apiFetch<{ subscribers: any[]; stats: { total: number; subscribed: number; unsubscribed: number } }>('/cms/subscribers'),
+  createSubscriber: (data: any) => apiFetch<any>('/cms/subscribers', { method: 'POST', body: JSON.stringify(data) }),
+  updateSubscriber: (id: string, data: any) => apiFetch<any>(`/cms/subscribers/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  toggleSubscriber: (id: string) => apiFetch<any>(`/cms/subscribers/${id}/toggle`, { method: 'PATCH' }),
+
+  // Campañas Broadcast Kapso Platform
+  listBroadcasts: () => apiFetch<any[]>('/cms/broadcasts'),
+  triggerBroadcast: (data: { edition_date?: string; send_immediately?: boolean; test_phone?: string }) =>
+    apiFetch<any>('/cms/broadcasts/trigger', { method: 'POST', body: JSON.stringify(data) }),
+  reconcileBroadcast: (id: string) => apiFetch<any>(`/cms/broadcasts/${id}/reconcile`, { method: 'POST' }),
+
+  // Lector Público (URLs Estables, Históricas y Feed Semanal)
+  getPublicSections: () => apiFetch<any[]>('/public/sections'),
+  getPublicBrief: (sectionKey: string, params?: { semana?: string; fecha?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.semana) q.append('semana', params.semana);
+    if (params?.fecha) q.append('fecha', params.fecha);
+    const qs = q.toString() ? `?${q.toString()}` : '';
+    return apiFetch<any>(`/public/brief/${sectionKey}${qs}`);
+  },
+  getPublicBriefByDate: (fecha: string, sectionKey: string) =>
+    apiFetch<any>(`/public/brief/${fecha}/${sectionKey}`),
 };
 

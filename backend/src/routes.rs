@@ -11,7 +11,7 @@ use tower_http::trace::TraceLayer;
 use crate::{
     config::Config,
     db::DbPool,
-    handlers::{auth, boletines, configuracion, mensajes, osint, scraper, waha},
+    handlers::{auth, boletines, cms, configuracion, mensajes, osint, scraper, waha},
     middleware::auth::require_auth,
 };
 
@@ -86,12 +86,35 @@ pub fn create_router(pool: DbPool, config: Arc<Config>) -> Router {
         .route("/api/scraper/senado/status", get(scraper::get_scraper_senado_status))
         .route("/api/scraper/senado/secciones", get(scraper::get_scraper_senado_secciones))
         .route("/api/scraper/senado/verificar", post(scraper::verificar_disponibilidad_senado))
+        // CMS Administrador de Páginas & Canales Informativos
+        .route("/api/cms/pages", get(cms::list_pages).post(cms::create_page))
+        .route("/api/cms/pages/:id", put(cms::update_page).delete(cms::delete_page))
+        .route("/api/cms/pages/:id/toggle", patch(cms::toggle_page))
+        // CMS Ediciones Diarias y Secciones
+        .route("/api/cms/editions", get(cms::list_editions))
+        .route("/api/cms/editions/:fecha", get(cms::get_edition))
+        .route("/api/cms/editions/:fecha/sections/:section_key", put(cms::update_section))
+        .route("/api/cms/editions/:fecha/publish", post(cms::publish_edition))
+        // Suscriptores & Audiencia WhatsApp (Opt-in)
+        .route("/api/cms/subscribers", get(cms::list_subscribers).post(cms::create_subscriber))
+        .route("/api/cms/subscribers/:id", put(cms::update_subscriber))
+        .route("/api/cms/subscribers/:id/toggle", patch(cms::toggle_subscriber))
+        // Orquestador de Broadcasts WhatsApp (Kapso Platform)
+        .route("/api/cms/broadcasts", get(cms::list_broadcasts))
+        .route("/api/cms/broadcasts/trigger", post(cms::trigger_daily_broadcast))
+        .route("/api/cms/broadcasts/:id/reconcile", post(cms::reconcile_broadcast))
         .layer(middleware::from_fn_with_state(config.clone(), require_auth));
 
-    // Rutas públicas (consumidas por frontend login y cron n8n)
+    // Rutas públicas (consumidas por el lector web, frontend login, Kapso webhooks y cron n8n)
     let public_routes = Router::new()
         .route("/health", get(|| async { "ExposureIQ Backend v2.5 (Sin components Meta WABA) OK" }))
         .route("/api/auth/login", post(auth::login))
+        // API Pública de Lectura: URLs Estables, Históricas y Feed Semanal
+        .route("/api/public/sections", get(cms::get_public_sections))
+        .route("/api/public/brief/:section_key", get(cms::get_public_brief))
+        .route("/api/public/brief/:fecha/:section_key", get(cms::get_public_brief_by_date))
+        // Webhooks de Kapso (Entregas, Lecturas y Bajas STOP)
+        .route("/api/webhooks/kapso", post(cms::webhook_kapso))
         // Endpoint prioritario de sondeo (polling) para cron de n8n
         .route("/api/mensajes/pendientes", get(mensajes::get_mensajes_pendientes))
         // Webhook para que n8n confirme la entrega
