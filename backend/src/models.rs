@@ -608,6 +608,7 @@ pub struct NewsSection {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct NewsEditionWithSections {
     pub edition: NewsEdition,
     pub sections: Vec<NewsSection>,
@@ -652,6 +653,7 @@ pub struct PublicBriefItem {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct PublicWeekSummary {
     pub week_number: u32,
     pub year: i32,

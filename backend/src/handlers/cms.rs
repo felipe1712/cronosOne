@@ -8,7 +8,7 @@ use chrono::{Datelike, DateTime, Duration, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::{
@@ -517,8 +517,9 @@ pub async fn get_public_sections(
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 pub struct PublicBriefQuery {
-    pub semana: Option<String>, // '2026-W42'
+    pub semana: Option<String>, // '2026-10-12' o inicio de semana
     pub fecha: Option<String>,  // '2026-10-12'
 }
 
@@ -556,6 +557,31 @@ pub async fn get_public_brief(
             )
             .bind(&section_key)
             .bind(d)
+            .fetch_optional(&pool)
+            .await
+            .unwrap_or(None)
+        } else {
+            None
+        }
+    } else if let Some(ref s_str) = params.semana {
+        if let Ok(d) = NaiveDate::parse_from_str(s_str, "%Y-%m-%d") {
+            let (w_start, w_end) = get_week_range_for_date(d);
+            sqlx::query_as::<_, BriefRow>(
+                "SELECT s.id, e.edition_date, s.section_key, p.title as section_title, 
+                        p.color as section_color, p.icon as section_icon,
+                        s.title, s.summary, s.full_content, s.public_slug, e.published_at
+                 FROM news_sections s
+                 JOIN news_editions e ON e.id = s.edition_id
+                 JOIN news_pages p ON p.section_key = s.section_key
+                 WHERE s.section_key = $1 
+                   AND e.edition_date >= $2 AND e.edition_date <= $3
+                   AND s.published = true AND p.active = true
+                 ORDER BY e.edition_date DESC
+                 LIMIT 1"
+            )
+            .bind(&section_key)
+            .bind(w_start)
+            .bind(w_end)
             .fetch_optional(&pool)
             .await
             .unwrap_or(None)
