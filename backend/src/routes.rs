@@ -114,7 +114,7 @@ pub fn create_router(pool: DbPool, config: Arc<Config>) -> Router {
         .route("/api/public/brief/:section_key", get(cms::get_public_brief))
         .route("/api/public/brief/:fecha/:section_key", get(cms::get_public_brief_by_date))
         // Webhooks de Kapso (Entregas, Lecturas y Bajas STOP)
-        .route("/api/webhooks/kapso", post(cms::webhook_kapso))
+        .route("/api/webhooks/kapso", post(cms::webhook_kapso).get(cms::verify_webhook_kapso))
         // Endpoint prioritario de sondeo (polling) para cron de n8n
         .route("/api/mensajes/pendientes", get(mensajes::get_mensajes_pendientes))
         // Webhook para que n8n confirme la entrega

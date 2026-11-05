@@ -908,6 +908,27 @@ pub async fn reconcile_broadcast(
 // 7. Webhook Kapso: Entrega, Lectura y Bajas (STOP)
 // ============================================================================
 
+#[derive(Deserialize)]
+#[allow(dead_code)]
+pub struct WebhookVerifyQuery {
+    #[serde(rename = "hub.mode")]
+    pub mode: Option<String>,
+    #[serde(rename = "hub.challenge")]
+    pub challenge: Option<String>,
+    #[serde(rename = "hub.verify_token")]
+    pub verify_token: Option<String>,
+}
+
+pub async fn verify_webhook_kapso(
+    Query(params): Query<WebhookVerifyQuery>,
+) -> impl IntoResponse {
+    if let Some(challenge) = params.challenge {
+        (StatusCode::OK, challenge)
+    } else {
+        (StatusCode::OK, "Kapso Webhook Ready".to_string())
+    }
+}
+
 pub async fn webhook_kapso(
     State((pool, _)): State<(DbPool, Arc<Config>)>,
     Json(payload): Json<serde_json::Value>,
