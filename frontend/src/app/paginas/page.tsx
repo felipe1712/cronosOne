@@ -957,6 +957,10 @@ export default function CmsManagementPage() {
                   </Button>
                 </Box>
 
+                <Alert severity="info" sx={{ mb: 3 }}>
+                  <strong>Webhook de Kapso:</strong> Registra la URL <code>https://monitoreo.causer.com.mx/api/webhooks/kapso</code> en el panel de Kapso para telemetría en tiempo real y bajas automáticas de usuarios al escribir <code>STOP</code>. Puedes configurar el <em>Secret</em> en la pestaña Configuración.
+                </Alert>
+
                 <TableContainer component={Paper} elevation={0} sx={{ border: "1px solid #f1f5f9", borderRadius: 2 }}>
                   <Table>
                     <TableHead sx={{ bgcolor: "#f8fafc" }}>

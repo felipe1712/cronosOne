@@ -75,6 +75,7 @@ export interface UpdateConfiguracionPayload {
   director_whatsapp_phone?: string;
   whatsapp_template_name?: string;
   whatsapp_template_language?: string;
+  kapso_webhook_secret?: string;
 }
 
 export interface ApiLogItem {

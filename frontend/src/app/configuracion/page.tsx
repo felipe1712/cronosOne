@@ -102,6 +102,7 @@ export default function ConfiguracionPage() {
   const [whatsappProvider, setWhatsappProvider] = useState<string>("kapso");
   const [kapsoApiKey, setKapsoApiKey] = useState<string>("");
   const [kapsoPhoneNumberId, setKapsoPhoneNumberId] = useState<string>("");
+  const [kapsoWebhookSecret, setKapsoWebhookSecret] = useState<string>("");
   const [directorWhatsappPhone, setDirectorWhatsappPhone] = useState<string>("");
   const [showApiKey, setShowApiKey] = useState<boolean>(false);
   const [savingWhatsapp, setSavingWhatsapp] = useState<boolean>(false);
@@ -229,6 +230,11 @@ export default function ConfiguracionPage() {
         // Kapso Phone Number ID: Desde PostgreSQL
         if (data.kapso_phone_number_id !== undefined) {
           setKapsoPhoneNumberId(data.kapso_phone_number_id || "");
+        }
+
+        // Kapso Webhook Secret: Desde PostgreSQL
+        if (data.kapso_webhook_secret !== undefined) {
+          setKapsoWebhookSecret(data.kapso_webhook_secret || "");
         }
 
         // Teléfono del Director: Desde PostgreSQL (filtrando dummy)
@@ -545,6 +551,7 @@ export default function ConfiguracionPage() {
         whatsapp_provider: whatsappProvider,
         kapso_api_key: cleanKey,
         kapso_phone_number_id: cleanPhoneId,
+        kapso_webhook_secret: kapsoWebhookSecret.trim(),
         director_whatsapp_phone: cleanPhone,
         whatsapp_template_name: whatsappTemplateName.trim(),
         whatsapp_template_language: whatsappTemplateLanguage.trim(),
@@ -556,6 +563,7 @@ export default function ConfiguracionPage() {
       if (data) {
         if (data.kapso_api_key !== undefined) setKapsoApiKey(data.kapso_api_key || "");
         if (data.kapso_phone_number_id !== undefined) setKapsoPhoneNumberId(data.kapso_phone_number_id || "");
+        if (data.kapso_webhook_secret !== undefined) setKapsoWebhookSecret(data.kapso_webhook_secret || "");
         if (data.director_whatsapp_phone && data.director_whatsapp_phone !== "5215512345678") {
           setDirectorWhatsappPhone(data.director_whatsapp_phone);
         }
@@ -1368,6 +1376,62 @@ export default function ConfiguracionPage() {
                           placeholder="647015955153740"
                           helperText="ID numérico asignado en dashboard.kapso.ai → WhatsApp → Phone numbers"
                         />
+                      </Grid>
+
+                      {/* Webhook Endpoint & Secret (Telemetría y Bajas STOP) */}
+                      <Grid size={{ xs: 12 }}>
+                        <Box sx={{ p: 2.5, bgcolor: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "10px" }}>
+                          <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5 }}>
+                            <SettingsIcon sx={{ color: "#605DFF", fontSize: 20 }} />
+                            <Typography variant="subtitle2" sx={{ fontWeight: 700, color: "#1e293b" }}>
+                              Webhook de Telemetría y Bajas STOP (Kapso)
+                            </Typography>
+                          </Box>
+                          <Typography variant="caption" sx={{ color: "#64748b", display: "block", mb: 2, lineHeight: 1.4 }}>
+                            Registra esta URL en tu panel de Kapso (Settings → Webhooks) para recibir confirmaciones de entrega y procesar automáticamente cuando un usuario responde <strong>STOP</strong>.
+                          </Typography>
+                          <Grid container spacing={2}>
+                            <Grid size={{ xs: 12, sm: 7 }}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="URL del Webhook (Endpoint)"
+                                value="https://monitoreo.causer.com.mx/api/webhooks/kapso"
+                                InputProps={{
+                                  readOnly: true,
+                                  endAdornment: (
+                                    <InputAdornment position="end">
+                                      <Tooltip title="Copiar URL del Webhook">
+                                        <IconButton
+                                          size="small"
+                                          onClick={() => {
+                                            navigator.clipboard.writeText("https://monitoreo.causer.com.mx/api/webhooks/kapso");
+                                            setSuccessMsg("URL del Webhook copiada al portapapeles.");
+                                          }}
+                                        >
+                                          <ContentCopyIcon fontSize="small" />
+                                        </IconButton>
+                                      </Tooltip>
+                                    </InputAdornment>
+                                  ),
+                                }}
+                                helperText="Pégala en el panel de Kapso en Settings → Webhooks"
+                              />
+                            </Grid>
+                            <Grid size={{ xs: 12, sm: 5 }}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Webhook Secret / Verify Token (Opcional)"
+                                value={kapsoWebhookSecret}
+                                onChange={(e) => setKapsoWebhookSecret(e.target.value)}
+                                onBlur={() => handleSaveWhatsapp()}
+                                placeholder="whsec_... (Opcional)"
+                                helperText="Si Kapso te genera o pide un Secret, ingrésalo aquí"
+                              />
+                            </Grid>
+                          </Grid>
+                        </Box>
                       </Grid>
 
                       {/* Plantilla Oficial de Apertura (Meta WABA / Ventana 24h) */}

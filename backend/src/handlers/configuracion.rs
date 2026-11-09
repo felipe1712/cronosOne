@@ -69,6 +69,7 @@ pub struct UpdateConfiguracionPayload {
     pub director_whatsapp_phone: Option<String>,
     pub whatsapp_template_name: Option<String>,
     pub whatsapp_template_language: Option<String>,
+    pub kapso_webhook_secret: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -413,6 +414,13 @@ pub async fn get_configuraciones(
         config_map.insert("WHATSAPP_TEMPLATE_LANGUAGE".to_string(), json!(&whatsapp_template_language));
     }
 
+    let kapso_webhook_secret = config_map
+        .get("KAPSO_WEBHOOK_SECRET")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .or_else(|| std::env::var("KAPSO_WEBHOOK_SECRET").ok())
+        .unwrap_or_default();
+
     let available_models = get_available_claude_models();
 
     Ok((
@@ -429,6 +437,7 @@ pub async fn get_configuraciones(
             "director_whatsapp_phone": director_whatsapp_phone,
             "whatsapp_template_name": whatsapp_template_name,
             "whatsapp_template_language": whatsapp_template_language,
+            "kapso_webhook_secret": kapso_webhook_secret,
             "todas": config_map
         })),
     ))
@@ -510,6 +519,11 @@ pub async fn update_configuracion(
         if !clean_lang.is_empty() {
             upsert_config(&pool, "WHATSAPP_TEMPLATE_LANGUAGE", clean_lang, "Código de idioma de la plantilla (ej: es_MX, en_US)", "whatsapp").await;
         }
+    }
+
+    if let Some(ref secret) = payload.kapso_webhook_secret {
+        let clean_secret = secret.trim();
+        upsert_config(&pool, "KAPSO_WEBHOOK_SECRET", clean_secret, "Secreto o Verify Token para el Webhook de Kapso", "whatsapp").await;
     }
 
     if let Some(ref phone) = payload.director_whatsapp_phone {

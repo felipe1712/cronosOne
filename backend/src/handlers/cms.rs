@@ -919,9 +919,38 @@ pub struct WebhookVerifyQuery {
     pub verify_token: Option<String>,
 }
 
+async fn get_webhook_secret(pool: &DbPool) -> Option<String> {
+    if let Ok(env_sec) = std::env::var("KAPSO_WEBHOOK_SECRET") {
+        let s = env_sec.trim().to_string();
+        if !s.is_empty() {
+            return Some(s);
+        }
+    }
+    let db_sec: Option<String> = sqlx::query_scalar(
+        "SELECT valor FROM configuraciones_sistema WHERE clave = 'KAPSO_WEBHOOK_SECRET' AND trim(valor) != ''"
+    )
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None);
+
+    db_sec.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
 pub async fn verify_webhook_kapso(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
     Query(params): Query<WebhookVerifyQuery>,
 ) -> impl IntoResponse {
+    let configured_secret = get_webhook_secret(&pool).await;
+
+    if let Some(ref sec) = configured_secret {
+        if let Some(ref token) = params.verify_token {
+            if token != sec {
+                warn!("⚠️ Intento de verificación de webhook Kapso con token inválido");
+                return (StatusCode::FORBIDDEN, "Token de verificación inválido".to_string());
+            }
+        }
+    }
+
     if let Some(challenge) = params.challenge {
         (StatusCode::OK, challenge)
     } else {
@@ -931,8 +960,30 @@ pub async fn verify_webhook_kapso(
 
 pub async fn webhook_kapso(
     State((pool, _)): State<(DbPool, Arc<Config>)>,
+    headers: axum::http::HeaderMap,
     Json(payload): Json<serde_json::Value>,
 ) -> impl IntoResponse {
+    let configured_secret = get_webhook_secret(&pool).await;
+
+    if let Some(ref sec) = configured_secret {
+        let incoming_secret = headers
+            .get("X-Webhook-Secret")
+            .or_else(|| headers.get("x-webhook-secret"))
+            .or_else(|| headers.get("X-Kapso-Secret"))
+            .or_else(|| headers.get("x-kapso-secret"))
+            .or_else(|| headers.get("X-Webhook-Token"))
+            .or_else(|| headers.get("x-webhook-token"))
+            .or_else(|| headers.get("Authorization"))
+            .and_then(|h| h.to_str().ok())
+            .map(|s| s.trim_start_matches("Bearer ").trim());
+
+        let matches = incoming_secret.map(|s| s == sec).unwrap_or(false);
+
+        if !matches {
+            warn!("⚠️ Petición a webhook de Kapso rechazada: secreto inválido o ausente");
+            return (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized: invalid webhook secret"})));
+        }
+    }
     let event_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("unknown");
     let event_id = payload.get("id").and_then(|v| v.as_str()).unwrap_or("");
 
