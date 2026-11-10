@@ -2,12 +2,19 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Dependencias del sistema para compilación y bibliotecas compartidas requeridas por Firefox/Camoufox
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+# Dependencias completas del sistema para Firefox/Camoufox y Xvfb (Virtual Display)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libpq-dev \
     curl \
     ca-certificates \
+    unzip \
+    xvfb \
+    libnss3 \
+    libnspr4 \
     libgtk-3-0 \
     libdbus-glib-1-2 \
     libxt6 \
@@ -31,10 +38,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Pre-descarga de binarios de Camoufox durante el build para evitar descargas en tiempo de ejecución
+# Pre-descarga de binarios de Camoufox durante el build
 RUN python -m camoufox fetch || true
 
 COPY . .
 
 EXPOSE 8001
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]
+CMD ["xvfb-run", "--server-args=-screen 0 1920x1080x24", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]
