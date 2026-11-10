@@ -392,6 +392,47 @@ impl KapsoClient {
 
         if !status.is_success() {
             let err_detail = extract_error_detail(status, &body);
+            let err_lower = err_detail.to_lowercase();
+
+            // Si falló por discrepancia de componentes/parámetros en Meta, intentar fallback automático
+            if (err_lower.contains("parameter") || err_lower.contains("param") || err_lower.contains("component")) && variables.is_some() {
+                tracing::warn!("⚠️ Fallo al enviar plantilla con variables ({}), reintentando sin componentes...", err_detail);
+                let fallback_payload = json!({
+                    "messaging_product": "whatsapp",
+                    "to": clean_phone,
+                    "type": "template",
+                    "template": {
+                        "name": t_name,
+                        "language": {
+                            "code": lang
+                        }
+                    }
+                });
+                if let Ok(resp2) = self.client.post(&url)
+                    .header("X-API-Key", self.api_key.trim())
+                    .header("Content-Type", "application/json")
+                    .json(&fallback_payload)
+                    .send()
+                    .await
+                {
+                    if resp2.status().is_success() {
+                        let b2: serde_json::Value = resp2.json().await.unwrap_or_default();
+                        let msg_id = b2.get("messages")
+                            .and_then(|m| m.as_array())
+                            .and_then(|arr| arr.first())
+                            .and_then(|first| first.get("id"))
+                            .and_then(|id| id.as_str())
+                            .unwrap_or("kapso_template_ok")
+                            .to_string();
+                        info!("✅ Plantilla WhatsApp entregada a Kapso con éxito (fallback sin componentes). Message ID: {}", msg_id);
+                        if let Some(p) = pool {
+                            log_whatsapp_api(p, accion, to, "ok", Some(200), Some(latency), &fallback_payload.to_string(), &b2.to_string(), None).await;
+                        }
+                        return Ok(msg_id);
+                    }
+                }
+            }
+
             error!("Error en Kapso Template API (HTTP {}): {:?}", status, body);
             if let Some(p) = pool {
                 log_whatsapp_api(p, accion, to, "error", Some(status.as_u16() as i32), Some(latency), &payload_str, &body_str, Some(&err_detail)).await;

@@ -1232,15 +1232,7 @@ async fn execute_daily_broadcast(
         }
     }
 
-    // 2. Crear Broadcast en Kapso Platform API
-    info!("Iniciando creación de Broadcast '{}' en Kapso Platform...", broadcast_name);
-    let create_resp = client.create_broadcast(&broadcast_name, &template_id).await?;
-    let kapso_b_id = create_resp.get("data").and_then(|d| d.get("id")).and_then(|i| i.as_str())
-        .or_else(|| create_resp.get("id").and_then(|i| i.as_str()))
-        .ok_or_else(|| "Respuesta de Kapso no incluye id de broadcast".to_string())?
-        .to_string();
-
-    // 3. Sincronizar automáticamente cualquier contacto activo de lista_distribucion hacia subscribers
+    // 2. Sincronizar automáticamente cualquier contacto activo de lista_distribucion hacia subscribers
     let _ = sqlx::query(
         "INSERT INTO subscribers (phone_number, display_name, consent_status, consent_source, consent_text_version, consented_at, created_at, updated_at)
          SELECT 
@@ -1266,7 +1258,7 @@ async fn execute_daily_broadcast(
     .execute(pool)
     .await;
 
-    // Obtener destinatarios (suscriptores activos)
+    // 3. Obtener destinatarios (suscriptores activos)
     let recipients_data: Vec<(Uuid, String)> = if let Some(ref t_phone) = test_phone {
         let clean = KapsoClient::sanitize_e164(t_phone);
         vec![(Uuid::new_v4(), clean)]
@@ -1280,10 +1272,37 @@ async fn execute_daily_broadcast(
     };
 
     if recipients_data.is_empty() {
-        return Err("No hay suscriptores con consentimiento activo ('subscribed') para enviar el broadcast".to_string());
+        return Err("No hay suscriptores con consentimiento activo ('subscribed') para enviar la síntesis".to_string());
     }
 
-    // 4. Registrar en base de datos local
+    // 4. Determinar si template_id es un UUID de Kapso Platform (Broadcast) o nombre de plantilla Meta (Envío Directo)
+    let is_uuid = Uuid::parse_str(&template_id).is_ok();
+    let mut broadcast_via_kapso = is_uuid;
+    let mut kapso_b_id = String::new();
+
+    if is_uuid {
+        info!("Iniciando creación de Broadcast '{}' en Kapso Platform con UUID: {}", broadcast_name, template_id);
+        match client.create_broadcast(&broadcast_name, &template_id).await {
+            Ok(create_resp) => {
+                if let Some(id) = create_resp.get("data").and_then(|d| d.get("id")).and_then(|i| i.as_str())
+                    .or_else(|| create_resp.get("id").and_then(|i| i.as_str())) {
+                    kapso_b_id = id.to_string();
+                } else {
+                    broadcast_via_kapso = false;
+                }
+            }
+            Err(e) => {
+                warn!("Aviso: No se pudo crear broadcast en Kapso ({}). Alternando automáticamente a Opción 1: Envío directo de plantilla...", e);
+                broadcast_via_kapso = false;
+            }
+        }
+    } else {
+        info!("'{}' es un nombre de plantilla Meta Cloud API. Se utilizará Opción 1 (Envío directo de plantilla a cada suscriptor).", template_id);
+        broadcast_via_kapso = false;
+    }
+
+    // 5. Registrar registro maestro en base de datos local
+    let local_b_id_str = if kapso_b_id.is_empty() { format!("direct-{}", Uuid::new_v4()) } else { kapso_b_id.clone() };
     let local_broadcast_id: Uuid = sqlx::query_scalar(
         "INSERT INTO whatsapp_broadcasts (
             edition_id, broadcast_id, phone_number_id, template_id, edition_date,
@@ -1298,7 +1317,7 @@ async fn execute_daily_broadcast(
         RETURNING id"
     )
     .bind(edition_id)
-    .bind(&kapso_b_id)
+    .bind(&local_b_id_str)
     .bind(&kapso_cfg.phone_number_id)
     .bind(&template_id)
     .bind(target_date)
@@ -1307,56 +1326,125 @@ async fn execute_daily_broadcast(
     .await
     .map_err(|e| format!("Error guardando broadcast local: {}", e))?;
 
-    // 5. Cargar destinatarios en lotes de 1,000 en Kapso
-    for chunk in recipients_data.chunks(1000) {
-        let mut kapso_recipients = Vec::new();
-        for (sub_id, phone) in chunk {
-            kapso_recipients.push(json!({
-                "phone_number": phone
-            }));
+    // 6. Ejecución del Despacho
+    if broadcast_via_kapso {
+        // Opción 2: Cargar destinatarios en lotes de 1,000 en Kapso Platform
+        for chunk in recipients_data.chunks(1000) {
+            let mut kapso_recipients = Vec::new();
+            for (sub_id, phone) in chunk {
+                kapso_recipients.push(json!({
+                    "phone_number": phone
+                }));
 
-            // Registrar en whatsapp_broadcast_recipients
-            let _ = sqlx::query(
-                "INSERT INTO whatsapp_broadcast_recipients (broadcast_id, subscriber_id, phone_number, status, created_at, updated_at)
-                 VALUES ($1, $2, $3, 'pending', now(), now())"
-            )
-            .bind(local_broadcast_id)
-            .bind(sub_id)
-            .bind(phone)
-            .execute(pool)
-            .await;
+                let _ = sqlx::query(
+                    "INSERT INTO whatsapp_broadcast_recipients (broadcast_id, subscriber_id, phone_number, status, created_at, updated_at)
+                     VALUES ($1, $2, $3, 'pending', now(), now())"
+                )
+                .bind(local_broadcast_id)
+                .bind(sub_id)
+                .bind(phone)
+                .execute(pool)
+                .await;
+            }
+
+            client.add_broadcast_recipients(&kapso_b_id, &kapso_recipients).await?;
         }
 
-        client.add_broadcast_recipients(&kapso_b_id, &kapso_recipients).await?;
-    }
+        let final_status: String;
+        if send_immediately {
+            info!("Enviando broadcast {} inmediatamente...", kapso_b_id);
+            client.send_broadcast(&kapso_b_id).await?;
+            final_status = "sending".to_string();
+        } else {
+            let scheduled_utc = format!("{}T13:00:00Z", target_date);
+            info!("Programando broadcast {} para {} UTC...", kapso_b_id, scheduled_utc);
+            client.schedule_broadcast(&kapso_b_id, &scheduled_utc).await?;
+            final_status = "scheduled".to_string();
+        }
 
-    // 6. Enviar ahora o Programar
-    let final_status: String;
-    if send_immediately {
-        info!("Enviando broadcast {} inmediatamente...", kapso_b_id);
-        client.send_broadcast(&kapso_b_id).await?;
-        final_status = "sending".to_string();
+        let _ = sqlx::query("UPDATE whatsapp_broadcasts SET status = $1, updated_at = now() WHERE id = $2")
+            .bind(&final_status)
+            .bind(local_broadcast_id)
+            .execute(pool)
+            .await;
+
+        Ok(json!({
+            "ok": true,
+            "tipo_envio": "broadcast_kapso",
+            "broadcast_id": kapso_b_id,
+            "status": final_status,
+            "total_destinatarios": recipients_data.len(),
+            "edition_date": target_date
+        }))
     } else {
-        // Programar a las 07:00 AM hora México (UTC = 13:00 en horario estándar o 12:00 en verano)
-        let scheduled_utc = format!("{}T13:00:00Z", target_date);
-        info!("Programando broadcast {} para {} UTC...", kapso_b_id, scheduled_utc);
-        client.schedule_broadcast(&kapso_b_id, &scheduled_utc).await?;
-        final_status = "scheduled".to_string();
+        // Opción 1: Envío directo de plantilla aprobada Meta Cloud API a la audiencia
+        use chrono::Datelike;
+        let mes_str = match target_date.month() {
+            1 => "enero", 2 => "febrero", 3 => "marzo", 4 => "abril", 5 => "mayo", 6 => "junio",
+            7 => "julio", 8 => "agosto", 9 => "septiembre", 10 => "octubre", 11 => "noviembre", 12 => "diciembre", _ => ""
+        };
+        let date_str = format!("{} de {} de {}", target_date.day(), mes_str, target_date.year());
+        let date_vars = vec![date_str];
+
+        let mut sent_count = 0;
+        let mut failed_count = 0;
+
+        for (sub_id, phone) in &recipients_data {
+            let res = client.send_template_with_log(
+                Some(pool),
+                phone,
+                &kapso_cfg.template_name,
+                &kapso_cfg.template_language,
+                Some(date_vars.as_slice()),
+                "despacho_cms_plantilla_directa",
+            ).await;
+
+            match res {
+                Ok(wamid) => {
+                    sent_count += 1;
+                    let _ = sqlx::query(
+                        "INSERT INTO whatsapp_broadcast_recipients (broadcast_id, subscriber_id, phone_number, status, wamid, created_at, updated_at)
+                         VALUES ($1, $2, $3, 'sent', $4, now(), now())"
+                    )
+                    .bind(local_broadcast_id)
+                    .bind(sub_id)
+                    .bind(phone)
+                    .bind(&wamid)
+                    .execute(pool)
+                    .await;
+                }
+                Err(err_msg) => {
+                    failed_count += 1;
+                    let _ = sqlx::query(
+                        "INSERT INTO whatsapp_broadcast_recipients (broadcast_id, subscriber_id, phone_number, status, error_message, created_at, updated_at)
+                         VALUES ($1, $2, $3, 'failed', $4, now(), now())"
+                    )
+                    .bind(local_broadcast_id)
+                    .bind(sub_id)
+                    .bind(phone)
+                    .bind(&err_msg)
+                    .execute(pool)
+                    .await;
+                }
+            }
+        }
+
+        let _ = sqlx::query("UPDATE whatsapp_broadcasts SET status = 'completed', sent_count = $1, failed_count = $2, updated_at = now() WHERE id = $3")
+            .bind(sent_count)
+            .bind(failed_count)
+            .bind(local_broadcast_id)
+            .execute(pool)
+            .await;
+
+        Ok(json!({
+            "ok": true,
+            "tipo_envio": "plantilla_directa",
+            "mensaje": format!("Síntesis despachada con la plantilla oficial '{}' a {} suscriptores ({} enviados, {} con error)", kapso_cfg.template_name, recipients_data.len(), sent_count, failed_count),
+            "destinatarios_notificados": sent_count,
+            "fallidos": failed_count,
+            "broadcast_id": local_broadcast_id
+        }))
     }
-
-    sqlx::query("UPDATE whatsapp_broadcasts SET status = $1, updated_at = now() WHERE id = $2")
-        .bind(&final_status)
-        .bind(local_broadcast_id)
-        .execute(pool)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    Ok(json!({
-        "ok": true,
-        "broadcast_id": kapso_b_id,
-        "status": final_status,
-        "total_destinatarios": recipients_data.len()
-    }))
 }
 
 fn get_week_range_for_date(date: NaiveDate) -> (NaiveDate, NaiveDate) {
