@@ -4,7 +4,15 @@ from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
 
 env_path = Path(__file__).resolve().parent / ".env"
-load_dotenv(dotenv_path=env_path)
+if env_path.exists():
+    load_dotenv(dotenv_path=env_path, override=True)
+
+def _get_env_non_empty(*keys, default=""):
+    for k in keys:
+        v = os.getenv(k, "").strip()
+        if v:
+            return v
+    return default
 
 class Settings(BaseSettings):
     port: int = int(os.getenv("PORT", "8091"))
@@ -21,12 +29,14 @@ class Settings(BaseSettings):
     senado_sintesis_url: str = os.getenv("SENADO_SINTESIS_URL", "https://comunicacionsocial.senado.gob.mx/sintesiss")
     lightpanda_cdp_url: str = os.getenv("LIGHTPANDA_CDP_URL", "")
     
-    # Configuración de Proxy Residencial (ej. Geonode, BrightData, IPRoyal)
-    scraper_proxy_url: str = os.getenv("SCRAPER_PROXY_URL", "")
-    scraper_proxy_host: str = os.getenv("SCRAPER_PROXY_HOST", "")
-    scraper_proxy_port: str = os.getenv("SCRAPER_PROXY_PORT", "")
-    scraper_proxy_username: str = os.getenv("SCRAPER_PROXY_USERNAME", "")
-    scraper_proxy_password: str = os.getenv("SCRAPER_PROXY_PASSWORD", "")
+    # Configuración de Proxy Residencial (Geonode, etc.)
+    scraper_proxy_url: str = _get_env_non_empty(
+        "SCRAPER_PROXY_URL", "GEONODE_PROXY_URL", "PROXY_URL", "HTTP_PROXY", "HTTPS_PROXY"
+    )
+    scraper_proxy_host: str = _get_env_non_empty("SCRAPER_PROXY_HOST", "GEONODE_HOST")
+    scraper_proxy_port: str = _get_env_non_empty("SCRAPER_PROXY_PORT", "GEONODE_PORT", default="9000")
+    scraper_proxy_username: str = _get_env_non_empty("SCRAPER_PROXY_USERNAME", "GEONODE_USER", "SCRAPER_PROXY_USER")
+    scraper_proxy_password: str = _get_env_non_empty("SCRAPER_PROXY_PASSWORD", "GEONODE_PASSWORD", "SCRAPER_PROXY_PASS")
     
     auto_ingest_dir: str = os.getenv("AUTO_INGEST_DIR", "")
 

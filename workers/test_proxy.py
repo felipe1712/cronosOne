@@ -6,8 +6,16 @@ O dentro del contenedor:
   docker compose exec workers python test_proxy.py
 """
 
+import os
 import sys
-import json
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Cargar explícitamente workers/.env con override=True
+env_file = Path(__file__).resolve().parent / ".env"
+if env_file.exists():
+    load_dotenv(dotenv_path=env_file, override=True)
+
 import httpx
 from config import settings
 from senado_scraper import get_resolved_proxy_config
@@ -16,12 +24,18 @@ def test_proxy_connection():
     print("=================================================================")
     print("   ExposureIQ — Diagnóstico de Conexión de Proxy Residencial     ")
     print("=================================================================")
+    print(f"📁 Archivo .env inspeccionado: {env_file} (Existe: {env_file.exists()})")
 
     proxy_cfg = get_resolved_proxy_config()
     if not proxy_cfg:
         print("\n❌ ERROR: No se detectó ninguna configuración de proxy.")
-        print("Asegúrate de haber definido SCRAPER_PROXY_URL en workers/.env o en el entorno.")
-        print("Ejemplo: SCRAPER_PROXY_URL=http://user-country-mx:pass@premium-residential.geonode.com:9000")
+        print("Variables buscadas: SCRAPER_PROXY_URL, GEONODE_PROXY_URL, HTTP_PROXY o SCRAPER_PROXY_HOST")
+        if env_file.exists():
+            with open(env_file, "r", encoding="utf-8", errors="ignore") as f:
+                lines = [l.strip() for l in f if "PROXY" in l.upper()]
+                print(f"Líneas con 'PROXY' encontradas en {env_file.name}: {lines if lines else 'Ninguna'}")
+        print("\nFormato correcto en workers/.env:")
+        print("SCRAPER_PROXY_URL=http://tu_usuario:tu_password@92.204.171.83:9000")
         sys.exit(1)
 
     server = proxy_cfg["server"]
@@ -36,7 +50,6 @@ def test_proxy_connection():
     else:
         user_pass = ""
     clean_server = server.replace("http://", "").replace("https://", "")
-    proxy_url = f"http://user_pass_hidden@{clean_server}"
     actual_proxy_url = f"http://{user_pass}{clean_server}"
 
     print(f"\n2. Verificando IP pública y país de salida a través del proxy...")
@@ -52,7 +65,7 @@ def test_proxy_connection():
                 
                 print(f"   ✅ Conexión con Geonode exitosa!")
                 print(f"   • IP de salida: {ip}")
-                print(f"   • País        : {country} {'(🇲🇽 México - Correcto)' if country == 'MX' else '(⚠️ Ojo: No es MX, revisa el filtro -country-mx)'}")
+                print(f"   • País        : {country} {'(🇲🇽 México - Correcto)' if country == 'MX' else '(⚠️ Ojo: No es MX, revisa el filtro -country-mx en el usuario)'}")
                 print(f"   • Ciudad      : {city}")
                 print(f"   • Proveedor/ISP: {org}")
             else:
@@ -76,7 +89,7 @@ def test_proxy_connection():
             if resp.status_code == 200:
                 print(f"   ✅ El portal del Senado responde correctamente a través del proxy!")
             elif resp.status_code == 403:
-                print(f"   ⚠️ El Senado respondió 403. Esto es normal en petición HTTP cruda; Camoufox resolverá el reto en el navegador.")
+                print(f"   ℹ️ El Senado devolvió HTTP 403 (reto WAF activo). Camoufox resolverá la telemetría en el navegador.")
             else:
                 print(f"   • Estado: Código {resp.status_code}")
     except Exception as e:
