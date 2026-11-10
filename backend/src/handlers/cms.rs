@@ -1035,6 +1035,7 @@ pub async fn verify_webhook_kapso(
 
 pub async fn webhook_kapso(
     State((pool, _)): State<(DbPool, Arc<Config>)>,
+    Query(query_params): Query<std::collections::HashMap<String, String>>,
     headers: axum::http::HeaderMap,
     Json(payload): Json<serde_json::Value>,
 ) -> impl IntoResponse {
@@ -1048,14 +1049,28 @@ pub async fn webhook_kapso(
             .or_else(|| headers.get("x-kapso-secret"))
             .or_else(|| headers.get("X-Webhook-Token"))
             .or_else(|| headers.get("x-webhook-token"))
+            .or_else(|| headers.get("X-Api-Key"))
+            .or_else(|| headers.get("x-api-key"))
             .or_else(|| headers.get("Authorization"))
             .and_then(|h| h.to_str().ok())
             .map(|s| s.trim_start_matches("Bearer ").trim());
 
-        let matches = incoming_secret.map(|s| s == sec).unwrap_or(false);
+        let query_secret = query_params
+            .get("secret")
+            .or_else(|| query_params.get("token"))
+            .or_else(|| query_params.get("key"))
+            .or_else(|| query_params.get("hub.verify_token"))
+            .map(|s| s.trim());
+
+        let matches = incoming_secret.map(|s| s == sec).unwrap_or(false)
+            || query_secret.map(|s| s == sec).unwrap_or(false);
 
         if !matches {
-            warn!("⚠️ Petición a webhook de Kapso rechazada: secreto inválido o ausente");
+            warn!(
+                "⚠️ Petición a webhook de Kapso rechazada: secreto inválido o ausente. Headers: {:?}, Query params: {:?}",
+                headers.keys().map(|k| k.as_str()).collect::<Vec<_>>(),
+                query_params.keys().collect::<Vec<_>>()
+            );
             return (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized: invalid webhook secret"})));
         }
     }

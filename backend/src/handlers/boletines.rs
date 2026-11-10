@@ -437,13 +437,28 @@ pub async fn aprobar_boletin(
         }
 
         let client = KapsoClient::new(cfg.api_key, cfg.phone_number_id);
+        let t_name = cfg.template_name.trim();
 
         for phone in &targets_clone {
             if phone == "Sin destinatario configurado" || phone == "5215512345678" {
                 continue;
             }
 
-            match client.send_text_with_log(Some(&pool_clone), phone, &texto_clone, "envio_boletin_whatsapp").await {
+            // Fuera de la ventana de 24h, WhatsApp Meta Cloud API exige estrictamente type: "template"
+            let send_res = if !t_name.is_empty() {
+                client.send_template_with_log(
+                    Some(&pool_clone),
+                    phone,
+                    t_name,
+                    &cfg.template_language,
+                    None,
+                    "envio_boletin_plantilla",
+                ).await
+            } else {
+                client.send_text_with_log(Some(&pool_clone), phone, &texto_clone, "envio_boletin_whatsapp").await
+            };
+
+            match send_res {
                 Ok(msg_id) => {
                     let _ = sqlx::query(
                         "UPDATE mensajes_pendientes 
@@ -1336,21 +1351,35 @@ pub async fn aprobar_sintesis_diaria(
 
             let client = KapsoClient::new(cfg.api_key, cfg.phone_number_id);
             let t_name = cfg.template_name.trim();
+
+            use chrono::Datelike;
+            let mes_str = match fecha.month() {
+                1 => "enero", 2 => "febrero", 3 => "marzo", 4 => "abril", 5 => "mayo", 6 => "junio",
+                7 => "julio", 8 => "agosto", 9 => "septiembre", 10 => "octubre", 11 => "noviembre", 12 => "diciembre", _ => ""
+            };
+            let date_str = format!("{} de {} de {}", fecha.day(), mes_str, fecha.year());
+            let date_vars = vec![date_str];
+
             for phone in &targets_clone {
                 if phone == "Sin destinatario configurado" || phone == "5215512345678" {
                     continue;
                 }
-                if !t_name.is_empty() {
-                    let _ = client.send_template_with_log(
+
+                // Fuera de la ventana de 24h, WhatsApp Meta Cloud API exige estrictamente type: "template"
+                let send_res = if !t_name.is_empty() {
+                    client.send_template_with_log(
                         Some(&pool_clone),
                         phone,
                         t_name,
                         &cfg.template_language,
-                        None,
+                        Some(&date_vars),
                         "envio_sintesis_diaria_plantilla",
-                    ).await;
-                }
-                match client.send_text_with_log(Some(&pool_clone), phone, &texto_clone, "envio_sintesis_diaria_whatsapp").await {
+                    ).await
+                } else {
+                    client.send_text_with_log(Some(&pool_clone), phone, &texto_clone, "envio_sintesis_diaria_whatsapp").await
+                };
+
+                match send_res {
                     Ok(msg_id) => {
                         let _ = sqlx::query(
                             "UPDATE mensajes_pendientes SET estado = 'confirmado', kapso_message_id = $1, meta_status = 'sent', confirmado_en = now() WHERE referencia_id = $2 AND destinatario = $3"
