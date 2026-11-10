@@ -63,12 +63,12 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       SURYA_OCR_URL: http://host.docker.internal:5000/ocr
       DIRECTOR_WHATSAPP_PHONE: ${DIRECTOR_WHATSAPP_PHONE:-}
-      LIGHTPANDA_CDP_URL: http://lightpanda:9222
+      LIGHTPANDA_CDP_URL: ${LIGHTPANDA_CDP_URL:-}
     ports:
       - "127.0.0.1:8181:8001"
     depends_on:
       - postgres
-      - lightpanda
+      # - lightpanda (opcional si se usa CDP)
     volumes:
       - uploads_data:/app/uploads
     networks:
