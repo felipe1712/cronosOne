@@ -1103,6 +1103,18 @@ pub async fn webhook_kapso(
                 "⚠️ Petición a webhook de Kapso rechazada: firma HMAC o secreto inválido. Headers presentes: {:?}",
                 headers.keys().map(|k| k.as_str()).collect::<Vec<_>>()
             );
+            let raw_str = String::from_utf8_lossy(&raw_body);
+            crate::services::kapso::log_whatsapp_api(
+                &pool,
+                "webhook:rechazado",
+                "",
+                "error",
+                Some(401),
+                Some(0),
+                &raw_str,
+                r#"{"error": "Unauthorized: invalid webhook signature", "detalle": "Firma HMAC-SHA256 no coincide o secreto ausente"}"#,
+                Some("Firma HMAC-SHA256 inválida o secreto no coincide"),
+            ).await;
             return (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized: invalid webhook signature"})));
         }
     }
@@ -1111,6 +1123,18 @@ pub async fn webhook_kapso(
         Ok(v) => v,
         Err(e) => {
             warn!("Error deserializando payload JSON del webhook de Kapso: {}", e);
+            let raw_str = String::from_utf8_lossy(&raw_body);
+            crate::services::kapso::log_whatsapp_api(
+                &pool,
+                "webhook:json_invalido",
+                "",
+                "error",
+                Some(400),
+                Some(0),
+                &raw_str,
+                r#"{"error": "Invalid JSON"}"#,
+                Some(&e.to_string()),
+            ).await;
             return (StatusCode::BAD_REQUEST, Json(json!({"error": "Invalid JSON"})));
         }
     };
@@ -1126,6 +1150,18 @@ pub async fn webhook_kapso(
             .unwrap_or(None);
 
         if exists.unwrap_or(false) {
+            let raw_str = String::from_utf8_lossy(&raw_body);
+            crate::services::kapso::log_whatsapp_api(
+                &pool,
+                &format!("webhook:{}", event_type),
+                event_id,
+                "ok",
+                Some(200),
+                Some(0),
+                &raw_str,
+                r#"{"resultado_portal": "Evento duplicado ignorado (idempotencia)"}"#,
+                None,
+            ).await;
             return (StatusCode::OK, Json(json!({"status": "duplicate_ignored"})));
         }
 
@@ -1148,11 +1184,20 @@ pub async fn webhook_kapso(
         .await;
     }
 
+    let mut resultado_portal = json!({
+        "estado_procesamiento": "exitoso",
+        "evento": event_type,
+        "event_id": event_id
+    });
+    let mut dest_val = String::new();
+    let mut err_msg_log: Option<String> = None;
+
     match event_type {
         // A. Gestión de Bajas y Consentimiento (STOP)
         "whatsapp.contact.marketing_preference_changed" => {
             let wa_id = payload.get("contact").and_then(|c| c.get("wa_id")).and_then(|w| w.as_str()).unwrap_or("");
             let pref_status = payload.get("marketing_preference").and_then(|m| m.get("status")).and_then(|s| s.as_str()).unwrap_or("");
+            dest_val = wa_id.to_string();
 
             if !wa_id.is_empty() {
                 let clean_phone = KapsoClient::sanitize_e164(wa_id);
@@ -1167,6 +1212,7 @@ pub async fn webhook_kapso(
                     .bind(wa_id)
                     .execute(&pool)
                     .await;
+                    resultado_portal["detalle"] = json!(format!("Suscripción marcada como unsubscribed para {}", clean_phone));
                 } else if pref_status == "resumed" {
                     info!("🟢 Usuario {} reanudó suscripción de marketing.", clean_phone);
                     let _ = sqlx::query(
@@ -1178,6 +1224,7 @@ pub async fn webhook_kapso(
                     .bind(wa_id)
                     .execute(&pool)
                     .await;
+                    resultado_portal["detalle"] = json!(format!("Suscripción reanudada para {}", clean_phone));
                 }
             }
         }
@@ -1185,6 +1232,9 @@ pub async fn webhook_kapso(
         // B. Telemetría de Entrega y Lectura
         "whatsapp.message.sent" | "whatsapp.message.delivered" | "whatsapp.message.read" | "whatsapp.message.failed" => {
             let wamid = payload.get("message").and_then(|m| m.get("id")).and_then(|i| i.as_str()).unwrap_or("");
+            let recipient = payload.get("message").and_then(|m| m.get("recipient")).and_then(|r| r.as_str()).unwrap_or("");
+            dest_val = if !recipient.is_empty() { recipient.to_string() } else { wamid.to_string() };
+
             if !wamid.is_empty() {
                 let status_name = match event_type {
                     "whatsapp.message.sent" => "sent",
@@ -1196,6 +1246,7 @@ pub async fn webhook_kapso(
 
                 let err_code = payload.get("error").and_then(|e| e.get("code")).map(|c| c.to_string());
                 let err_msg = payload.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()).map(|s| s.to_string());
+                err_msg_log = err_msg.clone();
 
                 let _ = sqlx::query(
                     "UPDATE whatsapp_broadcast_recipients
@@ -1209,16 +1260,39 @@ pub async fn webhook_kapso(
                      WHERE wamid = $4"
                 )
                 .bind(status_name)
-                .bind(err_code)
-                .bind(err_msg)
+                .bind(err_code.clone())
+                .bind(err_msg.clone())
                 .bind(wamid)
                 .execute(&pool)
                 .await;
+
+                resultado_portal["detalle"] = json!(format!("Actualizado estado a '{}' en whatsapp_broadcast_recipients para wamid {}", status_name, wamid));
+                if let Some(ref c) = err_code {
+                    resultado_portal["codigo_error"] = json!(c);
+                }
+                if let Some(ref m) = err_msg {
+                    resultado_portal["mensaje_error"] = json!(m);
+                }
             }
         }
 
-        _ => {}
+        _ => {
+            resultado_portal["detalle"] = json!("Evento recibido y archivado sin acciones adicionales requeridas");
+        }
     }
+
+    let raw_str = String::from_utf8_lossy(&raw_body);
+    crate::services::kapso::log_whatsapp_api(
+        &pool,
+        &format!("webhook:{}", event_type),
+        &dest_val,
+        if event_type.ends_with(".failed") { "error" } else { "ok" },
+        Some(200),
+        Some(0),
+        &raw_str,
+        &resultado_portal.to_string(),
+        err_msg_log.as_deref(),
+    ).await;
 
     (StatusCode::OK, Json(json!({"received": true})))
 }

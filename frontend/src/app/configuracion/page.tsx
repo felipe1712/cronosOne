@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   Box,
   Card,
@@ -158,6 +158,17 @@ export default function ConfiguracionPage() {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [clearLogsConfirmOpen, setClearLogsConfirmOpen] = useState<boolean>(false);
   const [clearingLogs, setClearingLogs] = useState<boolean>(false);
+  const [kapsoEventsFilter, setKapsoEventsFilter] = useState<"todos" | "webhooks" | "despachos" | "errores">("todos");
+
+  const whatsappLogs = useMemo(() => {
+    return apiLogs.filter((log) => {
+      if (log.servicio !== "whatsapp") return false;
+      if (kapsoEventsFilter === "webhooks") return log.accion.startsWith("webhook");
+      if (kapsoEventsFilter === "despachos") return !log.accion.startsWith("webhook");
+      if (kapsoEventsFilter === "errores") return log.estado === "error";
+      return true;
+    });
+  }, [apiLogs, kapsoEventsFilter]);
 
   // Estados generales
   const [loading, setLoading] = useState<boolean>(true);
@@ -669,7 +680,9 @@ export default function ConfiguracionPage() {
   };
 
   useEffect(() => {
-    if (tabIndex === 4) {
+    if (tabIndex === 2) {
+      loadApiLogs("whatsapp", "todos");
+    } else if (tabIndex === 4) {
       loadApiLogs(apiLogsServiceTab, apiLogsStatusFilter);
     }
   }, [tabIndex, apiLogsServiceTab, apiLogsStatusFilter]);
@@ -1586,6 +1599,165 @@ export default function ConfiguracionPage() {
                     <Typography variant="body2" sx={{ color: "#14532d", lineHeight: 1.5 }}>
                       4. Pégalos aquí y haz clic en <strong>"Probar Envío de Plantilla Oficial"</strong>.
                     </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+
+              {/* Apartado: Trazabilidad en Tiempo Real de Eventos Kapso y Procesamiento en Portal */}
+              <Grid size={{ xs: 12 }}>
+                <Card sx={{ borderRadius: "12px", boxShadow: "0 2px 8px rgba(0,0,0,0.06)", mt: 1, border: "1px solid #e2e8f0" }}>
+                  <CardContent sx={{ p: { xs: 2, md: 3 } }}>
+                    <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", mb: 2.5, flexWrap: "wrap", gap: 2 }}>
+                      <Box>
+                        <Typography variant="h6" sx={{ fontWeight: 700, color: "#1e293b", display: "flex", alignItems: "center", gap: 1 }}>
+                          <WhatsAppIcon sx={{ color: "#25D366" }} />
+                          Trazabilidad de Eventos Kapso y Procesamiento en el Portal
+                        </Typography>
+                        <Typography variant="body2" sx={{ color: "#64748b", mt: 0.5 }}>
+                          Monitorea lo que llega desde Kapso (webhooks de entrega, lectura, fallos y bajas STOP) y cómo fue procesado en nuestra base de datos.
+                        </Typography>
+                      </Box>
+
+                      <Box sx={{ display: "flex", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          startIcon={loadingApiLogs ? <CircularProgress size={14} /> : <RefreshIcon />}
+                          onClick={() => loadApiLogs("whatsapp", "todos")}
+                          disabled={loadingApiLogs}
+                          sx={{ textTransform: "none", fontWeight: 600, borderRadius: "8px" }}
+                        >
+                          Refrescar Eventos
+                        </Button>
+                      </Box>
+                    </Box>
+
+                    {/* Filtros rápidos */}
+                    <Box sx={{ display: "flex", gap: 1, mb: 2.5, flexWrap: "wrap" }}>
+                      {[
+                        { id: "todos", label: "Todos los Eventos" },
+                        { id: "webhooks", label: "📥 Solo Webhooks Entrantes" },
+                        { id: "despachos", label: "📤 Despachos Salientes" },
+                        { id: "errores", label: "⚠️ Fallos / Rechazos" },
+                      ].map((f) => (
+                        <Chip
+                          key={f.id}
+                          label={f.label}
+                          clickable
+                          color={kapsoEventsFilter === f.id ? "primary" : "default"}
+                          variant={kapsoEventsFilter === f.id ? "filled" : "outlined"}
+                          onClick={() => setKapsoEventsFilter(f.id as any)}
+                          sx={{ fontWeight: 600 }}
+                        />
+                      ))}
+                    </Box>
+
+                    {/* Tabla de Eventos */}
+                    <TableContainer component={Paper} variant="outlined" sx={{ borderRadius: "8px", maxHeight: 420 }}>
+                      <Table size="small" stickyHeader>
+                        <TableHead>
+                          <TableRow sx={{ backgroundColor: "#f8fafc" }}>
+                            <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Fecha / Hora</TableCell>
+                            <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Origen / Acción</TableCell>
+                            <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Destinatario / ID</TableCell>
+                            <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Estado Portal</TableCell>
+                            <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Procesamiento en Nuestro Portal</TableCell>
+                            <TableCell align="center" sx={{ fontWeight: 700, color: "#475569" }}>Detalle JSON</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {loadingApiLogs && whatsappLogs.length === 0 ? (
+                            <TableRow>
+                              <TableCell colSpan={6} align="center" sx={{ py: 4 }}>
+                                <CircularProgress size={24} sx={{ mb: 1 }} />
+                                <Typography variant="body2" sx={{ color: "#64748b" }}>Cargando eventos de Kapso...</Typography>
+                              </TableCell>
+                            </TableRow>
+                          ) : whatsappLogs.length === 0 ? (
+                            <TableRow>
+                              <TableCell colSpan={6} align="center" sx={{ py: 4 }}>
+                                <Typography variant="body2" sx={{ color: "#64748b", fontWeight: 600 }}>
+                                  No hay eventos de WhatsApp registrados todavía.
+                                </Typography>
+                                <Typography variant="caption" sx={{ color: "#94a3b8" }}>
+                                  Al enviar una plantilla o al recibir un webhook de Kapso, el registro y su resultado se mostrarán aquí en tiempo real.
+                                </Typography>
+                              </TableCell>
+                            </TableRow>
+                          ) : (
+                            whatsappLogs.slice(0, 50).map((log) => {
+                              const isWebhook = log.accion.startsWith("webhook");
+                              const isOk = log.estado === "ok" || log.estado === "exitoso";
+                              return (
+                                <TableRow key={log.id} hover>
+                                  <TableCell sx={{ whiteSpace: "nowrap", fontSize: "0.82rem" }}>
+                                    {new Date(log.creado_en).toLocaleString("es-MX", {
+                                      month: "short",
+                                      day: "numeric",
+                                      hour: "2-digit",
+                                      minute: "2-digit",
+                                      second: "2-digit",
+                                    })}
+                                  </TableCell>
+                                  <TableCell>
+                                    <Chip
+                                      size="small"
+                                      label={log.accion}
+                                      variant={isWebhook ? "filled" : "outlined"}
+                                      color={isWebhook ? "info" : "default"}
+                                      sx={{ fontWeight: 600, fontSize: "0.75rem", fontFamily: "monospace" }}
+                                    />
+                                  </TableCell>
+                                  <TableCell sx={{ fontFamily: "monospace", fontSize: "0.82rem" }}>
+                                    {log.destinatario || "—"}
+                                  </TableCell>
+                                  <TableCell>
+                                    <Chip
+                                      size="small"
+                                      label={isOk ? `${log.codigo_http || 200} OK` : `Error ${log.codigo_http || 500}`}
+                                      color={isOk ? "success" : "error"}
+                                      sx={{ fontWeight: 700, fontSize: "0.75rem" }}
+                                    />
+                                  </TableCell>
+                                  <TableCell sx={{ maxWidth: 320, fontSize: "0.82rem", color: "#334155" }}>
+                                    {log.error_mensaje ? (
+                                      <Typography variant="caption" sx={{ color: "#dc2626", fontWeight: 600, display: "block" }}>
+                                        ⚠️ {log.error_mensaje}
+                                      </Typography>
+                                    ) : null}
+                                    <Typography variant="caption" sx={{ display: "block", color: "#475569" }} noWrap>
+                                      {(() => {
+                                        try {
+                                          if (!log.respuesta_payload) return "—";
+                                          const parsed = JSON.parse(log.respuesta_payload);
+                                          return parsed.detalle || parsed.resultado_portal || parsed.mensaje || log.respuesta_payload.slice(0, 90);
+                                        } catch {
+                                          return log.respuesta_payload ? log.respuesta_payload.slice(0, 90) : "—";
+                                        }
+                                      })()}
+                                    </Typography>
+                                  </TableCell>
+                                  <TableCell align="center">
+                                    <Tooltip title="Inspeccionar lo que envió Kapso y la respuesta del portal">
+                                      <IconButton
+                                        size="small"
+                                        color="primary"
+                                        onClick={() => {
+                                          setSelectedLogForModal(log);
+                                          setModalLogTab(0);
+                                        }}
+                                      >
+                                        <VisibilityIcon fontSize="small" />
+                                      </IconButton>
+                                    </Tooltip>
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            })
+                          )}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
                   </CardContent>
                 </Card>
               </Grid>
