@@ -8,7 +8,7 @@ Evasión de WAF / Imperva Incapsula:
 - Simulación de comportamiento humano (movimiento de cursor y tiempos de respuesta).
 - Resolución y confirmación de cookies de sesión WAF (___utmvc, incap_ses_*, reese84).
 - Descarga en contexto del navegador vía fetch() interno con conversión Base64.
-- Soporte para proxy residencial opcional (SCRAPER_PROXY_URL) para IPs de datacenter bloqueadas por ASN.
+- Integración nativa con proxies residenciales (Geonode) mediante auto-alineación geoip (WebRTC, timezone y geolocalización sincronizados con la IP del proxy).
 """
 
 import os
@@ -19,6 +19,7 @@ import traceback
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
+from urllib.parse import urlparse
 import httpx
 from playwright.async_api import async_playwright, Browser, BrowserContext
 
@@ -105,6 +106,7 @@ scraper_status: Dict[str, Any] = {
     "en_progreso": False,
     "fecha_objetivo": None,
     "navegador_usado": None,
+    "proxy_usado": None,
     "archivos_descargados": [],
     "archivos_procesados": [],
     "errores": [],
@@ -116,6 +118,40 @@ scraper_status: Dict[str, Any] = {
 
 def get_scraper_status() -> Dict[str, Any]:
     return scraper_status
+
+def get_resolved_proxy_config() -> Optional[Dict[str, str]]:
+    """
+    Construye la configuración de proxy validada para Playwright / Camoufox a partir de:
+    1. SCRAPER_PROXY_URL (cadena completa ej. http://user:pass@premium-residential.geonode.com:9000)
+    2. O variables individuales (HOST, PORT, USERNAME, PASSWORD)
+    """
+    raw_url = settings.scraper_proxy_url.strip() if settings.scraper_proxy_url else ""
+    if raw_url:
+        if not (raw_url.startswith("http://") or raw_url.startswith("https://") or raw_url.startswith("socks5://")):
+            raw_url = f"http://{raw_url}"
+        p = urlparse(raw_url)
+        server = f"{p.scheme}://{p.hostname}"
+        if p.port:
+            server = f"{server}:{p.port}"
+        cfg = {"server": server}
+        if p.username:
+            cfg["username"] = p.username
+        if p.password:
+            cfg["password"] = p.password
+        return cfg
+
+    if settings.scraper_proxy_host and settings.scraper_proxy_host.strip():
+        host = settings.scraper_proxy_host.strip()
+        port = settings.scraper_proxy_port.strip() if settings.scraper_proxy_port else "9000"
+        server = f"http://{host}:{port}"
+        cfg = {"server": server}
+        if settings.scraper_proxy_username:
+            cfg["username"] = settings.scraper_proxy_username.strip()
+        if settings.scraper_proxy_password:
+            cfg["password"] = settings.scraper_proxy_password.strip()
+        return cfg
+
+    return None
 
 def build_candidate_urls(sec: Dict[str, Any], fecha_slash: str, dom_links: Optional[Dict[str, str]] = None) -> List[str]:
     """
@@ -177,6 +213,16 @@ async def acquire_browser_session():
     2. Fallback a Lightpanda si se configuró explícitamente y Camoufox no está disponible.
     3. Fallback a Chromium Headless estándar de Playwright.
     """
+    proxy_cfg = get_resolved_proxy_config()
+    proxy_str_log = None
+    if proxy_cfg:
+        proxy_str_log = proxy_cfg["server"]
+        user_lbl = f" (usuario: {proxy_cfg['username']})" if "username" in proxy_cfg else ""
+        print(f"[Scraper Senado] 🌐 Proxy residencial configurado: {proxy_str_log}{user_lbl}")
+        scraper_status["proxy_usado"] = proxy_str_log
+    else:
+        scraper_status["proxy_usado"] = "directo (sin proxy)"
+
     camoufox_err = None
     try:
         from camoufox.async_api import AsyncCamoufox
@@ -193,14 +239,15 @@ async def acquire_browser_session():
             print(f"[Scraper Senado] Aviso parche VirtualDisplay: {vd_err}")
 
         proxy_args = {}
-        if settings.scraper_proxy_url and settings.scraper_proxy_url.strip():
-            proxy_args["proxy"] = {"server": settings.scraper_proxy_url.strip()}
-            print(f"[Scraper Senado] 🌐 Configurado proxy para navegación: {settings.scraper_proxy_url.split('@')[-1]}")
+        use_geoip = False
+        if proxy_cfg:
+            proxy_args["proxy"] = proxy_cfg
+            use_geoip = True  # Camoufox alineará automáticamente timezone, WebRTC y geolocalización con el proxy
 
         camoufox = AsyncCamoufox(
             headless="virtual",
             humanize=True,
-            geoip=False,
+            geoip=use_geoip,
             os="windows",
             **proxy_args
         )
@@ -250,9 +297,6 @@ async def acquire_browser_session():
                 "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage"
             ]
-            proxy_cfg = None
-            if settings.scraper_proxy_url and settings.scraper_proxy_url.strip():
-                proxy_cfg = {"server": settings.scraper_proxy_url.strip()}
 
             browser = await p.chromium.launch(
                 headless=True,
@@ -432,12 +476,20 @@ async def fetch_pdf_content(page, context, url_pdf: str, http_client: Optional[h
     except Exception as e:
         last_err_msg = f"Error en context request: {e}"
 
-    # Intento 3: curl_cffi con suplantación de huella TLS
+    # Intento 3: curl_cffi con suplantación de huella TLS y proxy
     try:
         from curl_cffi.requests import AsyncSession
         cookies = await context.cookies()
         cookie_dict = {c["name"]: c["value"] for c in cookies}
-        proxy_str = settings.scraper_proxy_url.strip() if settings.scraper_proxy_url else None
+        proxy_cfg = get_resolved_proxy_config()
+        proxy_str = None
+        if proxy_cfg:
+            user_part = ""
+            if "username" in proxy_cfg and "password" in proxy_cfg:
+                user_part = f"{proxy_cfg['username']}:{proxy_cfg['password']}@"
+            srv = proxy_cfg["server"].replace("http://", "").replace("https://", "")
+            proxy_str = f"http://{user_part}{srv}"
+
         async with AsyncSession(impersonate="chrome124", timeout=30.0, proxy=proxy_str) as session:
             resp = await session.get(
                 target_url,
@@ -537,7 +589,7 @@ async def run_senado_scraper_pipeline(fecha_param: Optional[str] = None, seccion
     """
     Ejecuta el ciclo completo de descarga del Senado:
     1. Resuelve la fecha objetivo (YYYY-MM-DD).
-    2. Inicia el navegador anti-detección (Camoufox en Xvfb).
+    2. Inicia el navegador anti-detección (Camoufox en Xvfb con proxy residencial si existe).
     3. Resuelve el reto WAF de Incapsula y extrae enlaces del DOM.
     4. Descarga las secciones seleccionadas de PDF (excluyendo Cartones).
     5. Guarda los archivos en disco.

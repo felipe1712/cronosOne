@@ -20,7 +20,14 @@ class Settings(BaseSettings):
     world_intel_mcp_url: str = os.getenv("WORLD_INTEL_MCP_URL", "http://127.0.0.1:8095")
     senado_sintesis_url: str = os.getenv("SENADO_SINTESIS_URL", "https://comunicacionsocial.senado.gob.mx/sintesiss")
     lightpanda_cdp_url: str = os.getenv("LIGHTPANDA_CDP_URL", "")
+    
+    # Configuración de Proxy Residencial (ej. Geonode, BrightData, IPRoyal)
     scraper_proxy_url: str = os.getenv("SCRAPER_PROXY_URL", "")
+    scraper_proxy_host: str = os.getenv("SCRAPER_PROXY_HOST", "")
+    scraper_proxy_port: str = os.getenv("SCRAPER_PROXY_PORT", "")
+    scraper_proxy_username: str = os.getenv("SCRAPER_PROXY_USERNAME", "")
+    scraper_proxy_password: str = os.getenv("SCRAPER_PROXY_PASSWORD", "")
+    
     auto_ingest_dir: str = os.getenv("AUTO_INGEST_DIR", "")
 
 settings = Settings()
