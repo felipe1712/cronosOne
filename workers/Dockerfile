@@ -5,7 +5,7 @@ WORKDIR /app
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 
-# Dependencias completas del sistema para Firefox/Camoufox y Xvfb (Virtual Display)
+# Dependencias del sistema para Firefox/Camoufox y Xvfb (Virtual Display)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libpq-dev \
@@ -44,4 +44,4 @@ RUN python -m camoufox fetch || true
 COPY . .
 
 EXPOSE 8001
-CMD ["xvfb-run", "--server-args=-screen 0 1920x1080x24", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]
