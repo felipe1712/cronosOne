@@ -232,7 +232,40 @@ pub async fn enviar_mensaje_directo(
     };
 
     let client = KapsoClient::new(api_key, phone_number_id);
-    match client.send_text(&target_phone, &m.texto).await {
+    let t_name = cfg.template_name.trim();
+
+    use chrono::Datelike;
+    let now = Utc::now().date_naive();
+    let dias_semana = match now.weekday() {
+        chrono::Weekday::Mon => "lunes",
+        chrono::Weekday::Tue => "martes",
+        chrono::Weekday::Wed => "miércoles",
+        chrono::Weekday::Thu => "jueves",
+        chrono::Weekday::Fri => "viernes",
+        chrono::Weekday::Sat => "sábado",
+        chrono::Weekday::Sun => "domingo",
+    };
+    let mes_str = match now.month() {
+        1 => "enero", 2 => "febrero", 3 => "marzo", 4 => "abril", 5 => "mayo", 6 => "junio",
+        7 => "julio", 8 => "agosto", 9 => "septiembre", 10 => "octubre", 11 => "noviembre", 12 => "diciembre", _ => ""
+    };
+    let date_str = format!("{} {} de {} de {}", dias_semana, now.day(), mes_str, now.year());
+    let date_vars = vec![date_str];
+
+    let send_res = if !t_name.is_empty() {
+        client.send_template_with_log(
+            Some(&pool),
+            &target_phone,
+            t_name,
+            &cfg.template_language,
+            Some(&date_vars),
+            "despacho_mensaje_directo_plantilla",
+        ).await
+    } else {
+        client.send_text_with_log(Some(&pool), &target_phone, &m.texto, "despacho_mensaje_directo_whatsapp").await
+    };
+
+    match send_res {
         Ok(msg_id) => {
             let _ = sqlx::query(
                 "UPDATE mensajes_pendientes 
@@ -326,6 +359,26 @@ pub async fn despachar_cola(
     let mut enviados = 0;
     let mut errores = 0;
 
+    let t_name = cfg.template_name.trim();
+
+    use chrono::Datelike;
+    let now = Utc::now().date_naive();
+    let dias_semana = match now.weekday() {
+        chrono::Weekday::Mon => "lunes",
+        chrono::Weekday::Tue => "martes",
+        chrono::Weekday::Wed => "miércoles",
+        chrono::Weekday::Thu => "jueves",
+        chrono::Weekday::Fri => "viernes",
+        chrono::Weekday::Sat => "sábado",
+        chrono::Weekday::Sun => "domingo",
+    };
+    let mes_str = match now.month() {
+        1 => "enero", 2 => "febrero", 3 => "marzo", 4 => "abril", 5 => "mayo", 6 => "junio",
+        7 => "julio", 8 => "agosto", 9 => "septiembre", 10 => "octubre", 11 => "noviembre", 12 => "diciembre", _ => ""
+    };
+    let date_str = format!("{} {} de {} de {}", dias_semana, now.day(), mes_str, now.year());
+    let date_vars = vec![date_str];
+
     for m in pendientes {
         let target_phone = if !m.destinatario.trim().is_empty() && m.destinatario.trim() != "5215512345678" {
             m.destinatario.clone()
@@ -335,7 +388,20 @@ pub async fn despachar_cola(
             continue;
         };
 
-        match client.send_text(&target_phone, &m.texto).await {
+        let send_res = if !t_name.is_empty() {
+            client.send_template_with_log(
+                Some(&pool),
+                &target_phone,
+                t_name,
+                &cfg.template_language,
+                Some(&date_vars),
+                "despacho_cola_plantilla",
+            ).await
+        } else {
+            client.send_text_with_log(Some(&pool), &target_phone, &m.texto, "despacho_cola_whatsapp").await
+        };
+
+        match send_res {
             Ok(msg_id) => {
                 let _ = sqlx::query(
                     "UPDATE mensajes_pendientes 

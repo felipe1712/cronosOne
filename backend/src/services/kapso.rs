@@ -179,6 +179,46 @@ impl KapsoClient {
 
         if !status.is_success() {
             let err_detail = extract_error_detail(status, &body);
+            let err_lower = err_detail.to_lowercase();
+
+            // Si Meta rechazó por ventana de 24h (Error 131047 Re-engagement message),
+            // intentar fallback automático inmediato enviando la plantilla oficial aprobada
+            if (err_lower.contains("131047") || err_lower.contains("24-hour") || err_lower.contains("re-engagement")) && pool.is_some() {
+                if let Some(p) = pool {
+                    let cfg = get_whatsapp_config(p).await;
+                    let t_name = cfg.template_name.trim();
+                    if !t_name.is_empty() {
+                        tracing::warn!("⚠️ Envío de texto rechazado por ventana de 24h (Meta 131047). Activando fallback automático a plantilla oficial '{}'...", t_name);
+                        use chrono::{Datelike, Utc};
+                        let now = Utc::now().date_naive();
+                        let dias_semana = match now.weekday() {
+                            chrono::Weekday::Mon => "lunes",
+                            chrono::Weekday::Tue => "martes",
+                            chrono::Weekday::Wed => "miércoles",
+                            chrono::Weekday::Thu => "jueves",
+                            chrono::Weekday::Fri => "viernes",
+                            chrono::Weekday::Sat => "sábado",
+                            chrono::Weekday::Sun => "domingo",
+                        };
+                        let mes_str = match now.month() {
+                            1 => "enero", 2 => "febrero", 3 => "marzo", 4 => "abril", 5 => "mayo", 6 => "junio",
+                            7 => "julio", 8 => "agosto", 9 => "septiembre", 10 => "octubre", 11 => "noviembre", 12 => "diciembre", _ => ""
+                        };
+                        let date_str = format!("{} {} de {} de {}", dias_semana, now.day(), mes_str, now.year());
+                        let date_vars = vec![date_str];
+
+                        return Box::pin(self.send_template_with_log(
+                            Some(p),
+                            clean_phone,
+                            t_name,
+                            &cfg.template_language,
+                            Some(&date_vars),
+                            &format!("{}_fallback_plantilla_24h", accion),
+                        )).await;
+                    }
+                }
+            }
+
             error!("Error en Kapso API (HTTP {}): {:?}", status, body);
             if let Some(p) = pool {
                 log_whatsapp_api(p, accion, clean_phone, "error", Some(status.as_u16() as i32), Some(latency), &payload_str, &body_str, Some(&err_detail)).await;

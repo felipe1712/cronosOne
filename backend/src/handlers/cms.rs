@@ -1394,11 +1394,20 @@ async fn execute_daily_broadcast(
     } else {
         // Opción 1: Envío directo de plantilla aprobada Meta Cloud API a la audiencia
         use chrono::Datelike;
+        let dias_semana = match target_date.weekday() {
+            chrono::Weekday::Mon => "lunes",
+            chrono::Weekday::Tue => "martes",
+            chrono::Weekday::Wed => "miércoles",
+            chrono::Weekday::Thu => "jueves",
+            chrono::Weekday::Fri => "viernes",
+            chrono::Weekday::Sat => "sábado",
+            chrono::Weekday::Sun => "domingo",
+        };
         let mes_str = match target_date.month() {
             1 => "enero", 2 => "febrero", 3 => "marzo", 4 => "abril", 5 => "mayo", 6 => "junio",
             7 => "julio", 8 => "agosto", 9 => "septiembre", 10 => "octubre", 11 => "noviembre", 12 => "diciembre", _ => ""
         };
-        let date_str = format!("{} de {} de {}", target_date.day(), mes_str, target_date.year());
+        let date_str = format!("{} {} de {} de {}", dias_semana, target_date.day(), mes_str, target_date.year());
         let date_vars = vec![date_str];
 
         let mut sent_count = 0;
