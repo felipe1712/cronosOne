@@ -1037,43 +1037,83 @@ pub async fn webhook_kapso(
     State((pool, _)): State<(DbPool, Arc<Config>)>,
     Query(query_params): Query<std::collections::HashMap<String, String>>,
     headers: axum::http::HeaderMap,
-    Json(payload): Json<serde_json::Value>,
+    raw_body: axum::body::Bytes,
 ) -> impl IntoResponse {
     let configured_secret = get_webhook_secret(&pool).await;
 
     if let Some(ref sec) = configured_secret {
-        let incoming_secret = headers
-            .get("X-Webhook-Secret")
-            .or_else(|| headers.get("x-webhook-secret"))
-            .or_else(|| headers.get("X-Kapso-Secret"))
-            .or_else(|| headers.get("x-kapso-secret"))
-            .or_else(|| headers.get("X-Webhook-Token"))
-            .or_else(|| headers.get("x-webhook-token"))
-            .or_else(|| headers.get("X-Api-Key"))
-            .or_else(|| headers.get("x-api-key"))
-            .or_else(|| headers.get("Authorization"))
+        use hmac::{Hmac, Mac};
+        use sha2::Sha256;
+        type HmacSha256 = Hmac<Sha256>;
+
+        // 1. Obtener la firma HMAC enviada por Kapso en los encabezados
+        let received_sig = headers
+            .get("X-Webhook-Signature")
+            .or_else(|| headers.get("x-webhook-signature"))
+            .or_else(|| headers.get("X-Hub-Signature-256"))
+            .or_else(|| headers.get("x-hub-signature-256"))
             .and_then(|h| h.to_str().ok())
-            .map(|s| s.trim_start_matches("Bearer ").trim());
+            .map(|s| s.trim_start_matches("sha256=").trim());
 
-        let query_secret = query_params
-            .get("secret")
-            .or_else(|| query_params.get("token"))
-            .or_else(|| query_params.get("key"))
-            .or_else(|| query_params.get("hub.verify_token"))
-            .map(|s| s.trim());
+        let mut is_valid = false;
 
-        let matches = incoming_secret.map(|s| s == sec).unwrap_or(false)
-            || query_secret.map(|s| s == sec).unwrap_or(false);
+        // Validar firma HMAC-SHA256 sobre el body crudo (Bytes/Buffer)
+        if let Some(sig_hex) = received_sig {
+            if let Ok(mut mac) = HmacSha256::new_from_slice(sec.as_bytes()) {
+                mac.update(&raw_body);
+                let expected_bytes = mac.finalize().into_bytes();
+                let expected_hex = hex::encode(expected_bytes);
+                if sig_hex.eq_ignore_ascii_case(&expected_hex) {
+                    is_valid = true;
+                } else {
+                    warn!("⚠️ Firma HMAC-SHA256 del webhook de Kapso no coincide. Recibida: {}, Calculada: {}", sig_hex, expected_hex);
+                }
+            }
+        }
 
-        if !matches {
+        // 2. Si no hubo firma HMAC, validar si Kapso envió token en texto plano (retrocompatibilidad)
+        if !is_valid {
+            let plain_token = headers
+                .get("X-Webhook-Secret")
+                .or_else(|| headers.get("x-webhook-secret"))
+                .or_else(|| headers.get("X-Kapso-Secret"))
+                .or_else(|| headers.get("x-kapso-secret"))
+                .or_else(|| headers.get("X-Webhook-Token"))
+                .or_else(|| headers.get("x-webhook-token"))
+                .or_else(|| headers.get("X-Api-Key"))
+                .or_else(|| headers.get("x-api-key"))
+                .or_else(|| headers.get("Authorization"))
+                .and_then(|h| h.to_str().ok())
+                .map(|s| s.trim_start_matches("Bearer ").trim());
+
+            let query_token = query_params
+                .get("secret")
+                .or_else(|| query_params.get("token"))
+                .or_else(|| query_params.get("key"))
+                .or_else(|| query_params.get("hub.verify_token"))
+                .map(|s| s.trim());
+
+            if plain_token.map(|t| t == sec).unwrap_or(false) || query_token.map(|t| t == sec).unwrap_or(false) {
+                is_valid = true;
+            }
+        }
+
+        if !is_valid {
             warn!(
-                "⚠️ Petición a webhook de Kapso rechazada: secreto inválido o ausente. Headers: {:?}, Query params: {:?}",
-                headers.keys().map(|k| k.as_str()).collect::<Vec<_>>(),
-                query_params.keys().collect::<Vec<_>>()
+                "⚠️ Petición a webhook de Kapso rechazada: firma HMAC o secreto inválido. Headers presentes: {:?}",
+                headers.keys().map(|k| k.as_str()).collect::<Vec<_>>()
             );
-            return (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized: invalid webhook secret"})));
+            return (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized: invalid webhook signature"})));
         }
     }
+
+    let payload: serde_json::Value = match serde_json::from_slice(&raw_body) {
+        Ok(v) => v,
+        Err(e) => {
+            warn!("Error deserializando payload JSON del webhook de Kapso: {}", e);
+            return (StatusCode::BAD_REQUEST, Json(json!({"error": "Invalid JSON"})));
+        }
+    };
     let event_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("unknown");
     let event_id = payload.get("id").and_then(|v| v.as_str()).unwrap_or("");
 
@@ -1290,30 +1330,35 @@ async fn execute_daily_broadcast(
         return Err("No hay suscriptores con consentimiento activo ('subscribed') para enviar la síntesis".to_string());
     }
 
-    // 4. Determinar si template_id es un UUID de Kapso Platform (Broadcast) o nombre de plantilla Meta (Envío Directo)
+    // 4. Determinar si template_id es un UUID de Kapso Platform (Broadcast) o nombre de plantilla Meta
     let is_uuid = Uuid::parse_str(&template_id).is_ok();
-    let mut broadcast_via_kapso = is_uuid;
+    let mut broadcast_via_kapso = false;
     let mut kapso_b_id = String::new();
 
-    if is_uuid {
-        info!("Iniciando creación de Broadcast '{}' en Kapso Platform con UUID: {}", broadcast_name, template_id);
-        match client.create_broadcast(&broadcast_name, &template_id).await {
+    // Si no es UUID, intentar resolver su UUID interno en Kapso Platform mediante la API
+    let target_uuid = if is_uuid {
+        Some(template_id.clone())
+    } else {
+        client.find_template_uuid_by_name(&template_id).await
+    };
+
+    if let Some(ref t_uuid) = target_uuid {
+        info!("Iniciando creación de Broadcast '{}' en Kapso Platform con UUID: {}", broadcast_name, t_uuid);
+        match client.create_broadcast(&broadcast_name, t_uuid).await {
             Ok(create_resp) => {
                 if let Some(id) = create_resp.get("data").and_then(|d| d.get("id")).and_then(|i| i.as_str())
                     .or_else(|| create_resp.get("id").and_then(|i| i.as_str())) {
                     kapso_b_id = id.to_string();
-                } else {
-                    broadcast_via_kapso = false;
+                    broadcast_via_kapso = true;
+                    info!("✅ Broadcast creado en Kapso con éxito. Broadcast ID: {}", kapso_b_id);
                 }
             }
             Err(e) => {
                 warn!("Aviso: No se pudo crear broadcast en Kapso ({}). Alternando automáticamente a Opción 1: Envío directo de plantilla...", e);
-                broadcast_via_kapso = false;
             }
         }
     } else {
-        info!("'{}' es un nombre de plantilla Meta Cloud API. Se utilizará Opción 1 (Envío directo de plantilla a cada suscriptor).", template_id);
-        broadcast_via_kapso = false;
+        info!("'{}' se procesará vía Opción 1: Envío directo de plantilla aprobada Meta Cloud API a cada suscriptor.", template_id);
     }
 
     // 5. Registrar registro maestro en base de datos local

@@ -1331,7 +1331,6 @@ pub async fn aprobar_sintesis_diaria(
     // Despacho vía WhatsApp en background
     if enviar_ws && !target_phones.is_empty() {
         let pool_clone = pool.clone();
-        let texto_clone = payload.texto.clone();
         let s_id = sintesis.id;
         let targets_clone = target_phones.clone();
 
@@ -1375,18 +1374,20 @@ pub async fn aprobar_sintesis_diaria(
                 }
 
                 // Fuera de la ventana de 24h, WhatsApp Meta Cloud API exige estrictamente type: "template"
-                let send_res = if !t_name.is_empty() {
-                    client.send_template_with_log(
-                        Some(&pool_clone),
-                        phone,
-                        t_name,
-                        &cfg.template_language,
-                        Some(&date_vars),
-                        "envio_sintesis_diaria_plantilla",
-                    ).await
+                let eff_tpl = if t_name.is_empty() || t_name == "servicio_monitoreo" {
+                    "brief_informativo"
                 } else {
-                    client.send_text_with_log(Some(&pool_clone), phone, &texto_clone, "envio_sintesis_diaria_whatsapp").await
+                    t_name
                 };
+
+                let send_res = client.send_template_with_log(
+                    Some(&pool_clone),
+                    phone,
+                    eff_tpl,
+                    &cfg.template_language,
+                    Some(&date_vars),
+                    "envio_sintesis_diaria_plantilla",
+                ).await;
 
                 match send_res {
                     Ok(msg_id) => {

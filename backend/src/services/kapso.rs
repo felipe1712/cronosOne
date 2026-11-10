@@ -272,6 +272,48 @@ impl KapsoClient {
             return Err(err);
         }
 
+        // SEGURIDAD CRÍTICA: Meta prohíbe terminantemente texto libre para síntesis o fuera de ventana de 24h
+        if text.starts_with("# 📰") || text.contains("SÍNTESIS") || accion.contains("sintesis") || accion.contains("brief") {
+            tracing::warn!("⚠️ Se interceptó intento de enviar síntesis/brief como texto libre ('{}'). Redirigiendo automáticamente a plantilla oficial 'brief_informativo'...", accion);
+            use chrono::{Datelike, Utc};
+            let now = Utc::now().date_naive();
+            let dias_semana = match now.weekday() {
+                chrono::Weekday::Mon => "lunes",
+                chrono::Weekday::Tue => "martes",
+                chrono::Weekday::Wed => "miércoles",
+                chrono::Weekday::Thu => "jueves",
+                chrono::Weekday::Fri => "viernes",
+                chrono::Weekday::Sat => "sábado",
+                chrono::Weekday::Sun => "domingo",
+            };
+            let mes_str = match now.month() {
+                1 => "enero", 2 => "febrero", 3 => "marzo", 4 => "abril", 5 => "mayo", 6 => "junio",
+                7 => "julio", 8 => "agosto", 9 => "septiembre", 10 => "octubre", 11 => "noviembre", 12 => "diciembre", _ => ""
+            };
+            let date_str = format!("{} {} de {} de {}", dias_semana, now.day(), mes_str, now.year());
+            let date_vars = vec![date_str];
+
+            let cfg_tpl = if let Some(p) = pool {
+                let cfg = get_whatsapp_config(p).await;
+                if !cfg.template_name.trim().is_empty() && cfg.template_name.trim() != "servicio_monitoreo" {
+                    cfg.template_name
+                } else {
+                    "brief_informativo".to_string()
+                }
+            } else {
+                "brief_informativo".to_string()
+            };
+
+            return self.send_template_with_log(
+                pool,
+                to,
+                &cfg_tpl,
+                "es_MX",
+                Some(&date_vars),
+                &format!("{}_redireccion_plantilla", accion),
+            ).await;
+        }
+
         // Límite oficial de Meta Cloud API: text.body <= 4096 caracteres
         // Si el texto supera 4096 caracteres, se divide inteligentemente en partes consecutivas
         let chunks = Self::split_text_for_whatsapp(text, 4096);
@@ -312,8 +354,8 @@ impl KapsoClient {
         let start = std::time::Instant::now();
         let clean_phone = Self::sanitize_phone(to);
         let raw_name = template_name.trim();
-        let t_name = if raw_name.is_empty() || raw_name == "hello_world" {
-            "servicio_monitoreo"
+        let t_name = if raw_name.is_empty() || raw_name == "hello_world" || raw_name == "servicio_monitoreo" {
+            "brief_informativo"
         } else {
             raw_name
         };
@@ -524,6 +566,36 @@ impl KapsoClient {
     // ========================================================================
     // Kapso Platform API v1 — Módulo Broadcasts (Campañas Oficiales WhatsApp)
     // ========================================================================
+
+    /// Consulta en Kapso Platform la lista de plantillas sincronizadas y retorna el UUID interno de Kapso para un nombre de plantilla
+    pub async fn find_template_uuid_by_name(&self, template_name: &str) -> Option<String> {
+        let url = "https://api.kapso.ai/platform/v1/whatsapp/templates";
+        let resp = self.client.get(url)
+            .header("X-API-Key", self.api_key.trim())
+            .send()
+            .await
+            .ok()?;
+
+        if !resp.status().is_success() {
+            return None;
+        }
+
+        let body: serde_json::Value = resp.json().await.ok()?;
+        let templates = body.get("data").and_then(|d| d.as_array())
+            .or_else(|| body.get("templates").and_then(|t| t.as_array()))
+            .or_else(|| body.as_array())?;
+
+        let target = template_name.trim().to_lowercase();
+        for item in templates {
+            let name = item.get("name").and_then(|n| n.as_str()).unwrap_or("");
+            if name.to_lowercase() == target {
+                if let Some(id) = item.get("id").and_then(|i| i.as_str()) {
+                    return Some(id.to_string());
+                }
+            }
+        }
+        None
+    }
 
     pub async fn create_broadcast(
         &self,
@@ -810,8 +882,8 @@ pub async fn get_whatsapp_config(pool: &PgPool) -> KapsoConfig {
         }
     }
 
-    if template_name.is_empty() || template_name == "hello_world" {
-        template_name = "servicio_monitoreo".to_string();
+    if template_name.is_empty() || template_name == "hello_world" || template_name == "servicio_monitoreo" {
+        template_name = "brief_informativo".to_string();
     }
     if template_language.is_empty() {
         template_language = "es_MX".to_string();
