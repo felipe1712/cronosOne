@@ -266,7 +266,7 @@ impl KapsoClient {
         to: &str,
         template_name: &str,
         language_code: &str,
-        _variables: Option<&[String]>,
+        variables: Option<&[String]>,
         accion: &str,
     ) -> Result<String, String> {
         let start = std::time::Instant::now();
@@ -283,19 +283,37 @@ impl KapsoClient {
             language_code.trim()
         };
 
-        // Payload oficial para Meta Cloud API (Kapso).
-        // La plantilla 'servicio_monitoreo' fue aprobada SIN variables en Meta.
-        // Jamás incluye 'components'.
+        let mut template_obj = json!({
+            "name": t_name,
+            "language": {
+                "code": lang
+            }
+        });
+
+        // Si se proveen variables (por ejemplo el extracto de la síntesis), se añaden como componentes body
+        if let Some(vars) = variables {
+            let non_empty: Vec<&String> = vars.iter().filter(|v| !v.trim().is_empty()).collect();
+            if !non_empty.is_empty() {
+                let params: Vec<serde_json::Value> = non_empty.iter().map(|v| {
+                    json!({
+                        "type": "text",
+                        "text": v
+                    })
+                }).collect();
+                template_obj["components"] = json!([
+                    {
+                        "type": "body",
+                        "parameters": params
+                    }
+                ]);
+            }
+        }
+
         let payload = json!({
             "messaging_product": "whatsapp",
             "to": clean_phone,
             "type": "template",
-            "template": {
-                "name": t_name,
-                "language": {
-                    "code": lang
-                }
-            }
+            "template": template_obj
         });
         let payload_str = payload.to_string();
 

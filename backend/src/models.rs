@@ -566,9 +566,12 @@ pub struct CreateNewsPageRequest {
     pub section_key: String,
     pub title: String,
     pub subtitle: Option<String>,
+    #[serde(alias = "color_hex")]
     pub color: Option<String>,
+    #[serde(alias = "icon_name")]
     pub icon: Option<String>,
     pub orden: Option<i32>,
+    #[serde(alias = "is_active")]
     pub active: Option<bool>,
 }
 
@@ -576,9 +579,12 @@ pub struct CreateNewsPageRequest {
 pub struct UpdateNewsPageRequest {
     pub title: String,
     pub subtitle: Option<String>,
+    #[serde(alias = "color_hex")]
     pub color: Option<String>,
+    #[serde(alias = "icon_name")]
     pub icon: Option<String>,
     pub orden: Option<i32>,
+    #[serde(alias = "is_active")]
     pub active: Option<bool>,
 }
 

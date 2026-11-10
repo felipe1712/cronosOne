@@ -133,7 +133,13 @@ export default function CmsManagementPage() {
       setPages(pagesRes || []);
       setEditions(editionsRes || []);
       if (editionsRes && editionsRes.length > 0) {
-        setSelectedEdition(editionsRes[0]);
+        try {
+          const fullEd = await ApiService.getCmsEdition(editionsRes[0].edition_date);
+          const normalized = fullEd?.edition ? { ...fullEd.edition, sections: fullEd.sections || [] } : fullEd;
+          setSelectedEdition(normalized || editionsRes[0]);
+        } catch {
+          setSelectedEdition(editionsRes[0]);
+        }
         setBroadcastForm((prev) => ({ ...prev, edition_date: editionsRes[0].edition_date }));
       }
       setSubscribers(subsRes?.subscribers || []);
@@ -160,10 +166,10 @@ export default function CmsManagementPage() {
         section_key: page.section_key,
         title: page.title,
         subtitle: page.subtitle || "",
-        color_hex: page.color_hex || "#605DFF",
-        icon_name: page.icon_name || "article",
+        color_hex: page.color || page.color_hex || "#605DFF",
+        icon_name: page.icon || page.icon_name || "article",
         orden: page.orden || 0,
-        is_active: page.is_active,
+        is_active: page.active ?? page.is_active ?? true,
       });
     } else {
       setEditingPage(null);
@@ -186,11 +192,23 @@ export default function CmsManagementPage() {
         showToast("El slug y el título son obligatorios", "error");
         return;
       }
+      const payload = {
+        section_key: pageForm.section_key.trim().toLowerCase().replace(/\s+/g, "-"),
+        title: pageForm.title.trim(),
+        subtitle: pageForm.subtitle?.trim() || null,
+        color: pageForm.color_hex,
+        icon: pageForm.icon_name,
+        orden: pageForm.orden,
+        active: pageForm.is_active,
+        color_hex: pageForm.color_hex,
+        icon_name: pageForm.icon_name,
+        is_active: pageForm.is_active,
+      };
       if (editingPage) {
-        await ApiService.updateCmsPage(editingPage.id, pageForm);
+        await ApiService.updateCmsPage(editingPage.id, payload);
         showToast("Página actualizada con éxito", "success");
       } else {
-        await ApiService.createCmsPage(pageForm);
+        await ApiService.createCmsPage(payload);
         showToast("Página creada con éxito", "success");
       }
       setPageDialogOpen(false);
@@ -230,7 +248,8 @@ export default function CmsManagementPage() {
   const handleSelectEdition = async (fecha: string) => {
     try {
       const edition = await ApiService.getCmsEdition(fecha);
-      setSelectedEdition(edition);
+      const normalized = edition?.edition ? { ...edition.edition, sections: edition.sections || [] } : edition;
+      setSelectedEdition(normalized);
       setBroadcastForm((prev) => ({ ...prev, edition_date: fecha }));
     } catch (err: any) {
       showToast(err.message || "Error al obtener edición", "error");
@@ -255,7 +274,8 @@ export default function CmsManagementPage() {
       showToast("Sección actualizada correctamente", "success");
       setSectionDialogOpen(false);
       const refreshed = await ApiService.getCmsEdition(selectedEdition.edition_date);
-      setSelectedEdition(refreshed);
+      const normalized = refreshed?.edition ? { ...refreshed.edition, sections: refreshed.sections || [] } : refreshed;
+      setSelectedEdition(normalized);
     } catch (err: any) {
       showToast(err.message || "Error al actualizar sección", "error");
     }
@@ -274,7 +294,8 @@ export default function CmsManagementPage() {
         ApiService.getCmsEdition(selectedEdition.edition_date),
         ApiService.listBroadcasts(),
       ]);
-      setSelectedEdition(refreshedEd);
+      const normalized = refreshedEd?.edition ? { ...refreshedEd.edition, sections: refreshedEd.sections || [] } : refreshedEd;
+      setSelectedEdition(normalized);
       setBroadcasts(bcasts || []);
       const eds = await ApiService.listCmsEditions();
       setEditions(eds || []);
@@ -477,6 +498,9 @@ export default function CmsManagementPage() {
                     <TableBody>
                       {pages.map((p) => {
                         const stableUrl = `https://monitoreo.causer.com.mx/brief/${p.section_key}`;
+                        const pActive = p.active ?? p.is_active ?? false;
+                        const pColor = p.color || p.color_hex || "#605DFF";
+                        const pIcon = p.icon || p.icon_name || "article";
                         return (
                           <TableRow key={p.id} hover>
                             <TableCell>
@@ -486,8 +510,8 @@ export default function CmsManagementPage() {
                                     width: 36,
                                     height: 36,
                                     borderRadius: 2,
-                                    bgcolor: (p.color_hex || "#605DFF") + "15",
-                                    color: p.color_hex || "#605DFF",
+                                    bgcolor: pColor + "15",
+                                    color: pColor,
                                     display: "flex",
                                     alignItems: "center",
                                     justifyContent: "center",
@@ -495,7 +519,7 @@ export default function CmsManagementPage() {
                                   }}
                                 >
                                   <i className="material-symbols-outlined" style={{ fontSize: 20 }}>
-                                    {p.icon_name || "article"}
+                                    {pIcon}
                                   </i>
                                 </Box>
                                 <Box>
@@ -543,13 +567,13 @@ export default function CmsManagementPage() {
                                     width: 16,
                                     height: 16,
                                     borderRadius: "50%",
-                                    bgcolor: p.color_hex || "#605DFF",
+                                    bgcolor: pColor,
                                     border: "2px solid #fff",
                                     boxShadow: "0 0 0 1px #cbd5e1",
                                   }}
                                 />
                                 <Typography variant="caption" sx={{ fontFamily: "monospace", color: "#64748b" }}>
-                                  {p.color_hex}
+                                  {pColor}
                                 </Typography>
                               </Box>
                             </TableCell>
@@ -560,20 +584,20 @@ export default function CmsManagementPage() {
                             </TableCell>
                             <TableCell>
                               <Chip
-                                label={p.is_active ? "Activa" : "Inactiva"}
+                                label={pActive ? "Activa" : "Inactiva"}
                                 size="small"
                                 sx={{
-                                  bgcolor: p.is_active ? "#dcfce7" : "#f1f5f9",
-                                  color: p.is_active ? "#15803d" : "#64748b",
+                                  bgcolor: pActive ? "#dcfce7" : "#f1f5f9",
+                                  color: pActive ? "#15803d" : "#64748b",
                                   fontWeight: 600,
                                 }}
                               />
                             </TableCell>
                             <TableCell align="right">
                               <Box sx={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 0.5 }}>
-                                <Tooltip title={p.is_active ? "Desactivar" : "Activar"}>
+                                <Tooltip title={pActive ? "Desactivar" : "Activar"}>
                                   <Switch
-                                    checked={p.is_active}
+                                    checked={Boolean(pActive)}
                                     onChange={() => handleTogglePage(p.id)}
                                     color="primary"
                                     size="small"

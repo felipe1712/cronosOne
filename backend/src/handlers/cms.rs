@@ -367,7 +367,7 @@ pub async fn get_edition(
     };
 
     // Obtener las secciones de la edición
-    let sections = sqlx::query_as::<_, NewsSection>(
+    let mut sections = sqlx::query_as::<_, NewsSection>(
         "SELECT s.id, s.edition_id, s.section_key, s.title, s.summary, s.full_content, s.public_slug, s.published, s.created_at, s.updated_at
          FROM news_sections s
          JOIN news_pages p ON p.section_key = s.section_key
@@ -379,7 +379,82 @@ pub async fn get_edition(
     .await
     .unwrap_or_default();
 
+    // Si la edición no cuenta con secciones generadas, intentar sincronizarlas automáticamente desde sintesis_diarias
+    if sections.is_empty() {
+        #[derive(sqlx::FromRow)]
+        struct SintRow {
+            texto: String,
+        }
+
+        let sint_opt = sqlx::query_as::<_, SintRow>(
+            "SELECT texto FROM sintesis_diarias WHERE fecha = $1 AND trim(texto) != ''"
+        )
+        .bind(date)
+        .fetch_optional(&pool)
+        .await
+        .unwrap_or(None);
+
+        if let Some(sint) = sint_opt {
+            let brief_texto = sint.texto;
+            let active_pages = sqlx::query_as::<_, NewsPage>(
+                "SELECT id, section_key, title, subtitle, color, icon, orden, active, created_at, updated_at
+                 FROM news_pages WHERE active = true ORDER BY orden ASC"
+            )
+            .fetch_all(&pool)
+            .await
+            .unwrap_or_default();
+
+            for page in &active_pages {
+                let s_title = format!("{} — {}", page.title, date);
+                let s_summary = if brief_texto.chars().count() > 280 {
+                    format!("{}...", brief_texto.chars().take(280).collect::<String>())
+                } else {
+                    brief_texto.clone()
+                };
+
+                let _ = sqlx::query(
+                    "INSERT INTO news_sections (edition_id, section_key, title, summary, full_content, public_slug, published, created_at, updated_at)
+                     VALUES ($1, $2, $3, $4, $5, $6, true, now(), now())
+                     ON CONFLICT (edition_id, section_key) DO UPDATE
+                     SET title = EXCLUDED.title,
+                         summary = EXCLUDED.summary,
+                         full_content = EXCLUDED.full_content,
+                         published = true,
+                         updated_at = now()"
+                )
+                .bind(edition.id)
+                .bind(&page.section_key)
+                .bind(&s_title)
+                .bind(&s_summary)
+                .bind(&brief_texto)
+                .bind(&page.section_key)
+                .execute(&pool)
+                .await;
+            }
+
+            // Recargar secciones recién generadas
+            sections = sqlx::query_as::<_, NewsSection>(
+                "SELECT s.id, s.edition_id, s.section_key, s.title, s.summary, s.full_content, s.public_slug, s.published, s.created_at, s.updated_at
+                 FROM news_sections s
+                 JOIN news_pages p ON p.section_key = s.section_key
+                 WHERE s.edition_id = $1
+                 ORDER BY p.orden ASC, s.created_at ASC"
+            )
+            .bind(edition.id)
+            .fetch_all(&pool)
+            .await
+            .unwrap_or_default();
+        }
+    }
+
     Ok((StatusCode::OK, Json(json!({
+        "id": edition.id,
+        "edition_date": edition.edition_date,
+        "status": edition.status,
+        "generated_at": edition.generated_at,
+        "published_at": edition.published_at,
+        "created_at": edition.created_at,
+        "updated_at": edition.updated_at,
         "edition": edition,
         "sections": sections
     }))))
@@ -1111,15 +1186,15 @@ async fn execute_daily_broadcast(
 
     let client = KapsoClient::new(kapso_cfg.api_key.clone(), kapso_cfg.phone_number_id.clone());
 
-    // Obtener template id o name configurado
+    // Obtener template id o name configurado (prioriza plantilla de Canal WhatsApp)
     let template_id = if let Ok(env_tpl) = std::env::var("KAPSO_TEMPLATE_ID") {
         env_tpl
     } else if let Ok(env_tpl) = std::env::var("WHATSAPP_BRIEF_TEMPLATE") {
         env_tpl
-    } else if !kapso_cfg.template_name.trim().is_empty() && kapso_cfg.template_name != "servicio_monitoreo" {
+    } else if !kapso_cfg.template_name.trim().is_empty() {
         kapso_cfg.template_name.clone()
     } else {
-        "brief_informativo_diario".to_string()
+        "servicio_monitoreo".to_string()
     };
 
     // 1. Obtener la edición
@@ -1165,7 +1240,33 @@ async fn execute_daily_broadcast(
         .ok_or_else(|| "Respuesta de Kapso no incluye id de broadcast".to_string())?
         .to_string();
 
-    // 3. Obtener destinatarios (suscriptores activos)
+    // 3. Sincronizar automáticamente cualquier contacto activo de lista_distribucion hacia subscribers
+    let _ = sqlx::query(
+        "INSERT INTO subscribers (phone_number, display_name, consent_status, consent_source, consent_text_version, consented_at, created_at, updated_at)
+         SELECT 
+            CASE 
+                WHEN telefono LIKE '+%' THEN telefono
+                WHEN telefono LIKE '52%' THEN '+' || telefono
+                ELSE '+52' || regexp_replace(telefono, '\\D', '', 'g')
+            END AS phone_number,
+            nombre AS display_name,
+            'subscribed' AS consent_status,
+            'sync_lista_distribucion' AS consent_source,
+            'whatsapp_news_v1' AS consent_text_version,
+            now() AS consented_at,
+            now() AS created_at,
+            now() AS updated_at
+         FROM lista_distribucion
+         WHERE activo = true AND length(regexp_replace(telefono, '\\D', '', 'g')) >= 10
+         ON CONFLICT (phone_number) DO UPDATE
+         SET display_name = EXCLUDED.display_name,
+             consent_status = 'subscribed',
+             updated_at = now()"
+    )
+    .execute(pool)
+    .await;
+
+    // Obtener destinatarios (suscriptores activos)
     let recipients_data: Vec<(Uuid, String)> = if let Some(ref t_phone) = test_phone {
         let clean = KapsoClient::sanitize_e164(t_phone);
         vec![(Uuid::new_v4(), clean)]

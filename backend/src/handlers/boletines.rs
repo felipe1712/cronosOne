@@ -1143,7 +1143,64 @@ pub async fn actualizar_sintesis_diaria(
         )
     })?;
 
+    sync_sintesis_to_cms(&pool, fecha, &payload.texto).await;
+
     Ok((StatusCode::OK, Json(json!(sintesis))))
+}
+
+async fn sync_sintesis_to_cms(pool: &DbPool, fecha: NaiveDate, texto: &str) {
+    if texto.trim().is_empty() {
+        return;
+    }
+
+    let ed_id: Option<Uuid> = sqlx::query_scalar(
+        "INSERT INTO news_editions (edition_date, status, generated_at, updated_at)
+         VALUES ($1, 'published', now(), now())
+         ON CONFLICT (edition_date) DO UPDATE SET updated_at = now()
+         RETURNING id",
+    )
+    .bind(fecha)
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None);
+
+    if let Some(edition_id) = ed_id {
+        let pages = sqlx::query_as::<_, crate::models::NewsPage>(
+            "SELECT id, section_key, title, subtitle, color, icon, orden, active, created_at, updated_at
+             FROM news_pages WHERE active = true ORDER BY orden ASC",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+
+        for page in pages {
+            let s_title = format!("{} — {}", page.title, fecha);
+            let s_summary = if texto.chars().count() > 280 {
+                format!("{}...", texto.chars().take(280).collect::<String>())
+            } else {
+                texto.to_string()
+            };
+
+            let _ = sqlx::query(
+                "INSERT INTO news_sections (edition_id, section_key, title, summary, full_content, public_slug, published, created_at, updated_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, true, now(), now())
+                 ON CONFLICT (edition_id, section_key) DO UPDATE
+                 SET title = EXCLUDED.title,
+                     summary = EXCLUDED.summary,
+                     full_content = EXCLUDED.full_content,
+                     published = true,
+                     updated_at = now()",
+            )
+            .bind(edition_id)
+            .bind(&page.section_key)
+            .bind(&s_title)
+            .bind(&s_summary)
+            .bind(texto)
+            .bind(&page.section_key)
+            .execute(pool)
+            .await;
+        }
+    }
 }
 
 pub async fn aprobar_sintesis_diaria(
@@ -1253,6 +1310,9 @@ pub async fn aprobar_sintesis_diaria(
         )
     })?;
 
+    // Sincronizar síntesis aprobada hacia el CMS de noticias
+    sync_sintesis_to_cms(&pool, fecha, &payload.texto).await;
+
     // Despacho vía WhatsApp en background
     if enviar_ws && !target_phones.is_empty() {
         let pool_clone = pool.clone();
@@ -1275,9 +1335,20 @@ pub async fn aprobar_sintesis_diaria(
             }
 
             let client = KapsoClient::new(cfg.api_key, cfg.phone_number_id);
+            let t_name = cfg.template_name.trim();
             for phone in &targets_clone {
                 if phone == "Sin destinatario configurado" || phone == "5215512345678" {
                     continue;
+                }
+                if !t_name.is_empty() {
+                    let _ = client.send_template_with_log(
+                        Some(&pool_clone),
+                        phone,
+                        t_name,
+                        &cfg.template_language,
+                        None,
+                        "envio_sintesis_diaria_plantilla",
+                    ).await;
                 }
                 match client.send_text_with_log(Some(&pool_clone), phone, &texto_clone, "envio_sintesis_diaria_whatsapp").await {
                     Ok(msg_id) => {
