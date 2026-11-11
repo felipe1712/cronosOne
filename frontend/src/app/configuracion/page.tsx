@@ -73,6 +73,7 @@ import FilterListIcon from "@mui/icons-material/FilterList";
 import DataUsageIcon from "@mui/icons-material/DataUsage";
 import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
 import LayersIcon from "@mui/icons-material/Layers";
+import SendIcon from "@mui/icons-material/Send";
 import { ApiService, Destinatario, GrupoDistribucion, ApiLogItem, ApiLogStats, WhatsappPlantilla } from "@/lib/api";
 
 interface AvailableModel {
