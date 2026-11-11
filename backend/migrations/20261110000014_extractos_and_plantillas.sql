@@ -79,7 +79,7 @@ ON CONFLICT (nombre, idioma) DO UPDATE
 SET activa = true,
     tope_extracto = EXCLUDED.tope_extracto,
     parametros = EXCLUDED.parametros,
-    updated_at = now();
+    actualizado_en = now();
 
 -- Actualizar valor de configuración activa si existe la tabla configuraciones_sistema
 UPDATE configuraciones_sistema
