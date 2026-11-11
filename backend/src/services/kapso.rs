@@ -91,6 +91,49 @@ impl KapsoClient {
         }
     }
 
+    /// Normaliza cualquier texto de parámetro de plantilla para cumplir estrictamente con la regla #132018 de Meta:
+    /// "Param text cannot have new-line/tab characters or more than 4 consecutive spaces"
+    pub fn sanitize_template_param(text: &str, max_chars: usize) -> String {
+        let lines: Vec<String> = text
+            .lines()
+            .map(|line| {
+                line.chars()
+                    .map(|c| {
+                        if c == '\t' || c == '\r' || c == '\n' || c == '\u{2028}' || c == '\u{2029}' {
+                            ' '
+                        } else {
+                            c
+                        }
+                    })
+                    .collect::<String>()
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .filter(|line| !line.is_empty())
+            .collect();
+
+        let mut combined = String::new();
+        for (idx, line) in lines.iter().enumerate() {
+            if idx > 0 {
+                let first_char = line.chars().next().unwrap_or(' ');
+                if !first_char.is_ascii_alphanumeric() && first_char != '*' && first_char != '_' {
+                    combined.push_str("  ");
+                } else {
+                    combined.push_str(" • ");
+                }
+            }
+            combined.push_str(line);
+        }
+
+        if combined.is_empty() {
+            return "Actualización informativa ExposureIQ.".to_string();
+        }
+
+        let truncated: String = combined.chars().take(max_chars).collect();
+        truncated.trim().to_string()
+    }
+
     pub async fn send_text_with_log(
         &self,
         pool: Option<&PgPool>,
@@ -290,9 +333,10 @@ impl KapsoClient {
                 let params: Vec<serde_json::Value> = non_empty
                     .iter()
                     .map(|v| {
+                        let clean_val = Self::sanitize_template_param(v, 900);
                         json!({
                             "type": "text",
-                            "text": v
+                            "text": clean_val
                         })
                     })
                     .collect();
@@ -348,12 +392,11 @@ impl KapsoClient {
             }
         }
 
-        // Normalizar extracto: \r\n -> \n, UTF-8 seguro hasta tope caracteres
-        let clean_extracto = extracto.replace("\r\n", "\n").trim().to_string();
-        let safe_extracto: String = clean_extracto.chars().take(tope as usize).collect();
+        // Normalizar extracto según regla #132018 de Meta (sin \n, \t ni >4 espacios consecutivos) y tope de caracteres
+        let safe_extracto = Self::sanitize_template_param(extracto, tope as usize);
 
-        let fecha_corta = format_fecha_header(fecha);
-        let fecha_larga = format_fecha_larga_es(fecha);
+        let fecha_corta = Self::sanitize_template_param(&format_fecha_header(fecha), 60);
+        let fecha_larga = Self::sanitize_template_param(&format_fecha_larga_es(fecha), 60);
 
         let mut header_params: Vec<serde_json::Value> = Vec::new();
         let mut body_params: Vec<serde_json::Value> = Vec::new();
@@ -407,7 +450,10 @@ impl KapsoClient {
                         }
                     }
                     "extracto" => safe_extracto.clone(),
-                    "fijo" => param.get("valor").or_else(|| param.get("value")).and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    "fijo" => Self::sanitize_template_param(
+                        param.get("valor").or_else(|| param.get("value")).and_then(|v| v.as_str()).unwrap_or(""),
+                        tope as usize,
+                    ),
                     _ => safe_extracto.clone(),
                 };
 

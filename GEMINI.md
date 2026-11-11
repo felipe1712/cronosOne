@@ -54,9 +54,10 @@
    - Utiliza **parámetros nombrados (`parameter_name`)**:
      - Componente `header`: `parameter_name: "date"` (ej. `"11 de Noviembre"`).
      - Componente `body`: `parameter_name: "primeras_planas"` (contenido de la tabla `extractos`).
-3. **Tabla `extractos` y Límite de Caracteres**:
+3. **Tabla `extractos`, Límite de Caracteres y Regla `#132018` de Meta**:
    - El cuerpo total de la plantilla en Meta no puede superar los **1,024 caracteres** (tope por defecto del extracto: `900` caracteres).
-   - Se conserva el formato exacto del editor: saltos de línea (`\n`), emojis UTF-8 y negritas (`*texto*`).
+   - **Regla crítica `#132018` de Meta Graph API**: Los valores dentro de `template.components[].parameters[].text` **NO pueden contener saltos de línea (`\n`), tabuladores (`\t`) ni más de 4 espacios consecutivos** (`Param text cannot have new-line/tab characters or more than 4 consecutive spaces`).
+   - Aunque el editor en la UI permita editar con saltos de línea para comodidad visual, `KapsoClient::sanitize_template_param` aplana automáticamente los saltos de línea a separadores en línea (`  ` o ` • `), conserva los emojis UTF-8 y negritas (`*texto*`), y colapsa espacios múltiples antes de enviar a Meta.
 
 ---
 
