@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 Herramienta Forense de Diagnóstico de Configuración en PostgreSQL
 Ejecutar en el servidor con:

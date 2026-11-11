@@ -1,4 +1,4 @@
-import * as React from "react";
+﻿import * as React from "react";
  
 import SignUpForm from "@/components/Authentication/SignUpForm";
 

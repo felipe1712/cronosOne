@@ -13,8 +13,9 @@ use crate::{
     config::Config,
     db::DbPool,
     models::{
-        CreateDestinatarioRequest, CreateGrupoRequest, Destinatario, DestinatarioRow,
-        GrupoDistribucion, GrupoResumen, UpdateDestinatarioRequest, UpdateGrupoRequest,
+        CreateDestinatarioRequest, CreateGrupoRequest, CreatePlantillaRequest, Destinatario,
+        DestinatarioRow, GrupoDistribucion, GrupoResumen, ProbarPlantillaRequest,
+        UpdateDestinatarioRequest, UpdateGrupoRequest, UpdatePlantillaRequest, WhatsappPlantilla,
     },
 };
 
@@ -1725,5 +1726,361 @@ pub async fn clear_api_logs(
     match affected {
         Ok(res) => Ok((StatusCode::OK, Json(json!({"ok": true, "eliminados": res.rows_affected()})))),
         Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"ok": false, "error": e.to_string()})))),
+    }
+}
+
+// ============================================================================
+// 10. CRUD & Operaciones del Administrador de Plantillas WhatsApp
+// ============================================================================
+
+pub async fn list_plantillas(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let rows = sqlx::query_as::<_, WhatsappPlantilla>(
+        "SELECT id, nombre, idioma, activa, texto_fijo_body, tope_extracto, parametros, kapso_template_id, creado_en, actualizado_en
+         FROM whatsapp_plantillas
+         ORDER BY activa DESC, creado_en DESC"
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+
+    Ok((StatusCode::OK, Json(json!(rows))))
+}
+
+pub async fn create_plantilla(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+    Json(payload): Json<CreatePlantillaRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let nombre = payload.nombre.trim().to_string();
+    if nombre.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(json!({"error": "El nombre de la plantilla es obligatorio"}))));
+    }
+    let idioma = payload.idioma.unwrap_or_else(|| "es_MX".to_string()).trim().to_string();
+    let activa = payload.activa.unwrap_or(false);
+    let texto_fijo = payload.texto_fijo_body.unwrap_or_default();
+    let tope = payload.tope_extracto.unwrap_or(900).clamp(100, 1024);
+    let parametros = payload.parametros.unwrap_or_else(|| json!([]));
+
+    let mut tx = pool.begin().await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+
+    if activa {
+        let _ = sqlx::query("UPDATE whatsapp_plantillas SET activa = false").execute(&mut *tx).await;
+    }
+
+    let p = sqlx::query_as::<_, WhatsappPlantilla>(
+        "INSERT INTO whatsapp_plantillas (nombre, idioma, activa, texto_fijo_body, tope_extracto, parametros, kapso_template_id, creado_en, actualizado_en)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, now(), now())
+         ON CONFLICT (nombre, idioma) DO UPDATE
+         SET activa = EXCLUDED.activa,
+             texto_fijo_body = EXCLUDED.texto_fijo_body,
+             tope_extracto = EXCLUDED.tope_extracto,
+             parametros = EXCLUDED.parametros,
+             kapso_template_id = COALESCE(EXCLUDED.kapso_template_id, whatsapp_plantillas.kapso_template_id),
+             actualizado_en = now()
+         RETURNING id, nombre, idioma, activa, texto_fijo_body, tope_extracto, parametros, kapso_template_id, creado_en, actualizado_en"
+    )
+    .bind(&nombre)
+    .bind(&idioma)
+    .bind(activa)
+    .bind(&texto_fijo)
+    .bind(tope)
+    .bind(&parametros)
+    .bind(&payload.kapso_template_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": format!("Error creando plantilla: {}", e)}))))?;
+
+    if activa {
+        let _ = sqlx::query("UPDATE configuraciones_sistema SET valor = $1, actualizado_en = now() WHERE clave = 'WHATSAPP_TEMPLATE_NAME'")
+            .bind(&nombre)
+            .execute(&mut *tx)
+            .await;
+    }
+
+    tx.commit().await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+
+    Ok((StatusCode::CREATED, Json(json!(p))))
+}
+
+pub async fn update_plantilla(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+    Path(id): Path<Uuid>,
+    Json(payload): Json<UpdatePlantillaRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let mut tx = pool.begin().await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+
+    let existing = sqlx::query_as::<_, WhatsappPlantilla>(
+        "SELECT id, nombre, idioma, activa, texto_fijo_body, tope_extracto, parametros, kapso_template_id, creado_en, actualizado_en
+         FROM whatsapp_plantillas WHERE id = $1"
+    )
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+
+    let existing = match existing {
+        Some(p) => p,
+        None => return Err((StatusCode::NOT_FOUND, Json(json!({"error": "Plantilla no encontrada"})))),
+    };
+
+    let nombre = payload.nombre.unwrap_or(existing.nombre);
+    let idioma = payload.idioma.unwrap_or(existing.idioma);
+    let activa = payload.activa.unwrap_or(existing.activa);
+    let texto_fijo = payload.texto_fijo_body.unwrap_or(existing.texto_fijo_body);
+    let tope = payload.tope_extracto.unwrap_or(existing.tope_extracto).clamp(100, 1024);
+    let parametros = payload.parametros.unwrap_or(existing.parametros);
+    let kapso_id = payload.kapso_template_id.or(existing.kapso_template_id);
+
+    if activa {
+        let _ = sqlx::query("UPDATE whatsapp_plantillas SET activa = false WHERE id != $1").bind(id).execute(&mut *tx).await;
+        let _ = sqlx::query("UPDATE configuraciones_sistema SET valor = $1, actualizado_en = now() WHERE clave = 'WHATSAPP_TEMPLATE_NAME'")
+            .bind(&nombre)
+            .execute(&mut *tx)
+            .await;
+    }
+
+    let updated = sqlx::query_as::<_, WhatsappPlantilla>(
+        "UPDATE whatsapp_plantillas
+         SET nombre = $1, idioma = $2, activa = $3, texto_fijo_body = $4, tope_extracto = $5,
+             parametros = $6, kapso_template_id = $7, actualizado_en = now()
+         WHERE id = $8
+         RETURNING id, nombre, idioma, activa, texto_fijo_body, tope_extracto, parametros, kapso_template_id, creado_en, actualizado_en"
+    )
+    .bind(&nombre)
+    .bind(&idioma)
+    .bind(activa)
+    .bind(&texto_fijo)
+    .bind(tope)
+    .bind(&parametros)
+    .bind(&kapso_id)
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": format!("Error actualizando plantilla: {}", e)}))))?;
+
+    tx.commit().await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+
+    Ok((StatusCode::OK, Json(json!(updated))))
+}
+
+pub async fn delete_plantilla(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+    Path(id): Path<Uuid>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let res = sqlx::query("DELETE FROM whatsapp_plantillas WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": format!("Error eliminando plantilla: {}", e)}))))?;
+
+    if res.rows_affected() == 0 {
+        return Err((StatusCode::NOT_FOUND, Json(json!({"error": "Plantilla no encontrada"}))));
+    }
+
+    Ok((StatusCode::OK, Json(json!({"ok": true, "mensaje": "Plantilla eliminada"}))))
+}
+
+pub async fn activar_plantilla(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+    Path(id): Path<Uuid>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let mut tx = pool.begin().await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+
+    let target = sqlx::query_as::<_, WhatsappPlantilla>(
+        "SELECT id, nombre, idioma, activa, texto_fijo_body, tope_extracto, parametros, kapso_template_id, creado_en, actualizado_en
+         FROM whatsapp_plantillas WHERE id = $1"
+    )
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+
+    let target = match target {
+        Some(p) => p,
+        None => return Err((StatusCode::NOT_FOUND, Json(json!({"error": "Plantilla no encontrada"})))),
+    };
+
+    let _ = sqlx::query("UPDATE whatsapp_plantillas SET activa = false WHERE id != $1").bind(id).execute(&mut *tx).await;
+    let _ = sqlx::query("UPDATE whatsapp_plantillas SET activa = true, actualizado_en = now() WHERE id = $1").bind(id).execute(&mut *tx).await;
+
+    let _ = sqlx::query("UPDATE configuraciones_sistema SET valor = $1, actualizado_en = now() WHERE clave = 'WHATSAPP_TEMPLATE_NAME'")
+        .bind(&target.nombre)
+        .execute(&mut *tx)
+        .await;
+
+    tx.commit().await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+
+    Ok((StatusCode::OK, Json(json!({
+        "ok": true,
+        "mensaje": format!("Plantilla '{}' ({}) marcada como activa para todos los envíos de WhatsApp", target.nombre, target.idioma),
+        "id": id,
+        "nombre": target.nombre
+    }))))
+}
+
+pub async fn importar_plantillas_kapso(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    use crate::services::kapso::get_whatsapp_config;
+    let cfg = get_whatsapp_config(&pool).await;
+
+    if cfg.api_key.trim().is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(json!({"error": "KAPSO_API_KEY no configurada"}))));
+    }
+
+    let url = "https://api.kapso.ai/platform/v1/whatsapp/templates";
+    let client = reqwest::Client::new();
+    let resp = client.get(url)
+        .header("X-API-Key", cfg.api_key.trim())
+        .send()
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, Json(json!({"error": format!("Error conectando con Kapso: {}", e)}))))?;
+
+    if !resp.status().is_success() {
+        let err_txt = resp.text().await.unwrap_or_default();
+        return Err((StatusCode::BAD_GATEWAY, Json(json!({"error": format!("Error de Kapso API: {}", err_txt)}))));
+    }
+
+    let body: serde_json::Value = resp.json().await.unwrap_or_default();
+    let raw_list = body.get("data").and_then(|d| d.as_array())
+        .or_else(|| body.get("templates").and_then(|t| t.as_array()))
+        .or_else(|| body.as_array());
+
+    let template_items = match raw_list {
+        Some(list) => list,
+        None => return Ok((StatusCode::OK, Json(json!({"importadas": 0, "mensaje": "No se encontraron plantillas en Kapso"})))),
+    };
+
+    let mut importadas = 0;
+    for item in template_items {
+        let nombre = item.get("name").and_then(|n| n.as_str()).unwrap_or("").trim();
+        if nombre.is_empty() {
+            continue;
+        }
+        let idioma = item.get("language").and_then(|l| l.as_str()).unwrap_or("es_MX").trim();
+        let kapso_id = item.get("id").and_then(|i| i.as_str());
+
+        // Extraer componentes e inferir parámetros
+        let components = item.get("components").and_then(|c| c.as_array());
+        let mut params = Vec::new();
+        let mut body_text = String::new();
+
+        if let Some(comps) = components {
+            for comp in comps {
+                let comp_type = comp.get("type").and_then(|t| t.as_str()).unwrap_or("").to_lowercase();
+                let text = comp.get("text").and_then(|t| t.as_str()).unwrap_or("");
+                if comp_type == "body" {
+                    body_text = text.to_string();
+                }
+
+                // Extraer parámetros nombrados {{name}}
+                let mut start_idx = 0;
+                while let Some(open) = text[start_idx..].find("{{") {
+                    let open_idx = start_idx + open + 2;
+                    if let Some(close) = text[open_idx..].find("}}") {
+                        let p_name = text[open_idx..open_idx + close].trim();
+                        if !p_name.is_empty() {
+                            let fuente = if p_name.contains("date") || p_name.contains("fecha") {
+                                "fecha"
+                            } else if p_name.contains("plana") || p_name.contains("extracto") || p_name.contains("summary") {
+                                "extracto"
+                            } else {
+                                "fijo"
+                            };
+                            params.push(json!({
+                                "componente": comp_type,
+                                "nombre": p_name,
+                                "fuente": fuente,
+                                "formato": if fuente == "fecha" { "D de Mes" } else { "normal" }
+                            }));
+                        }
+                        start_idx = open_idx + close + 2;
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+
+        let is_target = nombre == "brief_informativo_cp_v2";
+        let tope = if body_text.len() < 1024 { (1024 - body_text.len()).clamp(300, 1024) as i32 } else { 900 };
+
+        let _ = sqlx::query(
+            "INSERT INTO whatsapp_plantillas (nombre, idioma, activa, texto_fijo_body, tope_extracto, parametros, kapso_template_id, creado_en, actualizado_en)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, now(), now())
+             ON CONFLICT (nombre, idioma) DO UPDATE
+             SET kapso_template_id = COALESCE(EXCLUDED.kapso_template_id, whatsapp_plantillas.kapso_template_id),
+                 texto_fijo_body = EXCLUDED.texto_fijo_body,
+                 parametros = CASE WHEN jsonb_array_length(whatsapp_plantillas.parametros) = 0 THEN EXCLUDED.parametros ELSE whatsapp_plantillas.parametros END,
+                 updated_at = now()"
+        )
+        .bind(nombre)
+        .bind(idioma)
+        .bind(is_target)
+        .bind(&body_text)
+        .bind(tope)
+        .bind(json!(params))
+        .bind(kapso_id)
+        .execute(&pool)
+        .await;
+
+        importadas += 1;
+    }
+
+    Ok((StatusCode::OK, Json(json!({
+        "ok": true,
+        "importadas": importadas,
+        "mensaje": format!("{} plantillas sincronizadas desde Kapso Platform", importadas)
+    }))))
+}
+
+pub async fn probar_plantilla(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+    Path(id): Path<Uuid>,
+    Json(payload): Json<ProbarPlantillaRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    use crate::services::kapso::{get_whatsapp_config, KapsoClient};
+    let cfg = get_whatsapp_config(&pool).await;
+
+    let plantilla = sqlx::query_as::<_, WhatsappPlantilla>(
+        "SELECT id, nombre, idioma, activa, texto_fijo_body, tope_extracto, parametros, kapso_template_id, creado_en, actualizado_en
+         FROM whatsapp_plantillas WHERE id = $1"
+    )
+    .bind(id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+
+    let plantilla = match plantilla {
+        Some(p) => p,
+        None => return Err((StatusCode::NOT_FOUND, Json(json!({"error": "Plantilla no encontrada"})))),
+    };
+
+    let client = KapsoClient::new(cfg.api_key, cfg.phone_number_id);
+    let sample_extract = payload.extracto_prueba.unwrap_or_else(|| {
+        "🇲🇽 *PRIMERAS PLANAS NACIONALES*\n🔴 *Seguridad:* Operativos conjuntos en autopistas federales.\n📈 *Economía:* Tipo de cambio y tasas estables ante el inicio de jornada legislativa.".to_string()
+    });
+
+    let today = chrono::Utc::now().date_naive();
+    let res = client.send_brief_template(
+        Some(&pool),
+        &payload.telefono,
+        today,
+        &sample_extract,
+        "test_plantilla_admin",
+    ).await;
+
+    match res {
+        Ok(msg_id) => Ok((StatusCode::OK, Json(json!({
+            "ok": true,
+            "mensaje": format!("Plantilla '{}' enviada exitosamente a {}", plantilla.nombre, payload.telefono),
+            "message_id": msg_id
+        })))),
+        Err(e) => Ok((StatusCode::OK, Json(json!({
+            "ok": false,
+            "error": e,
+            "mensaje": "Fallo al enviar plantilla de prueba"
+        })))),
     }
 }

@@ -19,6 +19,7 @@ import { ApiService } from "@/lib/api";
 export default function BriefLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [sections, setSections] = useState<any[]>([
+    { section_key: "primeras_planas", title: "Primeras Planas", icon: "newspaper", color: "#7c3aed" },
     { section_key: "politica", title: "Política y Gobierno", icon: "account_balance", color: "#0284c7" },
     { section_key: "economia", title: "Economía y Finanzas", icon: "trending_up", color: "#16a34a" },
     { section_key: "seguridad", title: "Seguridad Nacional", icon: "security", color: "#dc2626" },
@@ -144,14 +145,16 @@ export default function BriefLayout({ children }: { children: React.ReactNode })
                             color: isActive ? "#ffffff" : sec.color || "#0284c7",
                           }}
                         >
-                          {sec.icon === "trending-up"
+                          {sec.icon === "newspaper"
+                            ? "newspaper"
+                            : sec.icon === "trending-up"
                             ? "trending_up"
                             : sec.icon === "shield-alert"
                             ? "security"
                             : "account_balance"}
                         </span>
                       }
-                      label={sec.title.split(" ")[0]} // 'Política', 'Economía', 'Seguridad'
+                      label={sec.section_key === "primeras_planas" ? "Primeras Planas" : sec.title.split(" ")[0]}
                       sx={{
                         fontWeight: 700,
                         fontSize: "0.85rem",

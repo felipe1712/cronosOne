@@ -221,12 +221,38 @@ export interface SintesisDiaria {
   actualizado_en: string;
 }
 
+export interface Extracto {
+  id: string;
+  sintesis_id?: string;
+  fecha: string;
+  texto: string;
+  origen: 'corte' | 'claude' | 'manual';
+  modelo_usado?: string;
+  tokens_usados?: number;
+  creado_en: string;
+  actualizado_en: string;
+}
+
 export interface WorkspaceFechaResponse {
   fecha: string;
   documentos: BoletinEnWorkspace[];
   sintesis?: SintesisDiaria;
+  extracto?: Extracto;
   total_documentos: number;
   documentos_incluidos: number;
+}
+
+export interface WhatsappPlantilla {
+  id: string;
+  nombre: string;
+  idioma: string;
+  activa: boolean;
+  texto_fijo_body: string;
+  tope_extracto: number;
+  parametros: any[];
+  kapso_template_id?: string;
+  creado_en: string;
+  actualizado_en: string;
 }
 
 export interface SeccionSenado {
@@ -509,20 +535,58 @@ export const ApiService = {
       body: JSON.stringify({ documentos_ids }),
     }),
 
-  actualizarSintesisDiaria: (fecha: string, texto: string) =>
+  actualizarSintesisDiaria: (fecha: string, texto: string, extracto?: string) =>
     apiFetch<SintesisDiaria>(`/sintesis-diarias/${fecha}`, {
       method: 'PUT',
-      body: JSON.stringify({ texto }),
+      body: JSON.stringify({ texto, extracto }),
     }),
 
-  aprobarSintesisDiaria: (fecha: string, texto: string, enviar_whatsapp = true) =>
-    apiFetch<{ mensaje: string; sintesis: SintesisDiaria; destinatarios_notificados: number }>(
+  aprobarSintesisDiaria: (fecha: string, texto: string, enviar_whatsapp = true, extracto?: string) =>
+    apiFetch<{ mensaje: string; sintesis: SintesisDiaria; extracto?: string; destinatarios_notificados: number }>(
       `/sintesis-diarias/${fecha}/aprobar`,
       {
         method: 'POST',
-        body: JSON.stringify({ texto, enviar_whatsapp }),
+        body: JSON.stringify({ texto, enviar_whatsapp, extracto }),
       }
     ),
+
+  getExtracto: (fecha: string) =>
+    apiFetch<{ fecha: string; extracto?: Extracto; sugerencia: string; tope: number }>(
+      `/sintesis-diarias/${fecha}/extracto`
+    ),
+
+  guardarExtracto: (fecha: string, texto: string, origen = 'manual') =>
+    apiFetch<any>(`/sintesis-diarias/${fecha}/extracto`, {
+      method: 'PUT',
+      body: JSON.stringify({ texto, origen }),
+    }),
+
+  resumirExtracto: (fecha: string, texto?: string, max_chars?: number) =>
+    apiFetch<{ extracto: string; origen: string; modelo_usado?: string; tokens_usados?: number }>(
+      `/sintesis-diarias/${fecha}/extracto/resumir`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ texto, max_chars }),
+      }
+    ),
+
+  // Administrador de Plantillas WhatsApp
+  listPlantillasWhatsApp: () => apiFetch<WhatsappPlantilla[]>('/whatsapp/plantillas'),
+  createPlantillaWhatsApp: (data: Partial<WhatsappPlantilla>) =>
+    apiFetch<WhatsappPlantilla>('/whatsapp/plantillas', { method: 'POST', body: JSON.stringify(data) }),
+  updatePlantillaWhatsApp: (id: string, data: Partial<WhatsappPlantilla>) =>
+    apiFetch<WhatsappPlantilla>(`/whatsapp/plantillas/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deletePlantillaWhatsApp: (id: string) =>
+    apiFetch<{ ok: boolean; mensaje: string }>(`/whatsapp/plantillas/${id}`, { method: 'DELETE' }),
+  activarPlantillaWhatsApp: (id: string) =>
+    apiFetch<{ ok: boolean; mensaje: string; id: string; nombre: string }>(`/whatsapp/plantillas/${id}/activar`, { method: 'POST' }),
+  importarPlantillasKapso: () =>
+    apiFetch<{ ok: boolean; importadas: number; mensaje: string }>('/whatsapp/plantillas/importar-kapso', { method: 'POST' }),
+  probarPlantillaWhatsApp: (id: string, telefono: string, extracto_prueba?: string) =>
+    apiFetch<{ ok: boolean; mensaje: string; message_id?: string; error?: string }>(`/whatsapp/plantillas/${id}/probar`, {
+      method: 'POST',
+      body: JSON.stringify({ telefono, extracto_prueba }),
+    }),
 
   eliminarBoletin: (id: string) =>
     apiFetch<{ mensaje: string; id: string; nombre_archivo: string }>(`/boletines/${id}`, {

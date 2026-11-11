@@ -8,7 +8,7 @@ export default function BriefRootPage() {
   const router = useRouter();
 
   useEffect(() => {
-    router.replace("/brief/politica");
+    router.replace("/brief/primeras_planas");
   }, [router]);
 
   return (

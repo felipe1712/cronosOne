@@ -1,4 +1,4 @@
-import "swiper/css";
+﻿import "swiper/css";
 import "swiper/css/bundle";
 import 'remixicon/fonts/remixicon.css';
 import 'react-datetime-picker/dist/DateTimePicker.css';

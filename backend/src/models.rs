@@ -419,6 +419,7 @@ pub struct WorkspaceFechaResponse {
     pub fecha: NaiveDate,
     pub documentos: Vec<BoletinEnWorkspace>,
     pub sintesis: Option<SintesisDiaria>,
+    pub extracto: Option<Extracto>,
     pub total_documentos: usize,
     pub documentos_incluidos: usize,
 }
@@ -436,12 +437,49 @@ pub struct ConsolidarSintesisFechaRequest {
 #[derive(Debug, Deserialize)]
 pub struct ActualizarSintesisDiariaRequest {
     pub texto: String,
+    pub extracto: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct AprobarSintesisDiariaRequest {
     pub texto: String,
+    pub extracto: Option<String>,
     pub enviar_whatsapp: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Extracto {
+    pub id: Uuid,
+    pub sintesis_id: Option<Uuid>,
+    pub fecha: NaiveDate,
+    pub texto: String,
+    pub origen: String,
+    pub modelo_usado: Option<String>,
+    pub tokens_usados: Option<i32>,
+    pub editado_por: Option<Uuid>,
+    pub creado_en: DateTime<Utc>,
+    pub actualizado_en: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GuardarExtractoRequest {
+    pub texto: String,
+    pub origen: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResumirExtractoRequest {
+    pub texto: Option<String>,
+    pub max_chars: Option<usize>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ResumirExtractoResponse {
+    pub extracto: String,
+    pub origen: String,
+    pub modelo_usado: Option<String>,
+    pub tokens_usados: Option<i32>,
 }
 
 // ============================================================================
@@ -725,4 +763,50 @@ pub struct TriggerBroadcastRequest {
     pub edition_date: Option<NaiveDate>,
     pub send_immediately: Option<bool>,
     pub test_phone: Option<String>,
+}
+
+// ============================================================================
+// 9. Administrador de Plantillas WhatsApp (Kapso)
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct WhatsappPlantilla {
+    pub id: Uuid,
+    pub nombre: String,
+    pub idioma: String,
+    pub activa: bool,
+    pub texto_fijo_body: String,
+    pub tope_extracto: i32,
+    pub parametros: serde_json::Value,
+    pub kapso_template_id: Option<String>,
+    pub creado_en: DateTime<Utc>,
+    pub actualizado_en: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreatePlantillaRequest {
+    pub nombre: String,
+    pub idioma: Option<String>,
+    pub activa: Option<bool>,
+    pub texto_fijo_body: Option<String>,
+    pub tope_extracto: Option<i32>,
+    pub parametros: Option<serde_json::Value>,
+    pub kapso_template_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdatePlantillaRequest {
+    pub nombre: Option<String>,
+    pub idioma: Option<String>,
+    pub activa: Option<bool>,
+    pub texto_fijo_body: Option<String>,
+    pub tope_extracto: Option<i32>,
+    pub parametros: Option<serde_json::Value>,
+    pub kapso_template_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProbarPlantillaRequest {
+    pub telefono: String,
+    pub extracto_prueba: Option<String>,
 }

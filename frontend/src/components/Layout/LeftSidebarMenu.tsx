@@ -125,6 +125,8 @@ const LeftSidebarMenu: React.FC<LeftSidebarProps> = ({ toggleActive }) => {
                     Boletines Coparmex
                   </Link>
                 </li>
+                {/* Módulo OSINT temporalmente oculto a solicitud del usuario */}
+                {/*
                 <li className="sidemenu-item">
                   <Link
                     href="/osint"
@@ -135,6 +137,7 @@ const LeftSidebarMenu: React.FC<LeftSidebarProps> = ({ toggleActive }) => {
                     Inteligencia & OSINT
                   </Link>
                 </li>
+                */}
                 <li className="sidemenu-item">
                   <Link
                     href="/waha"

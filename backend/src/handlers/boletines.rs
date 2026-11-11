@@ -19,6 +19,7 @@ use crate::{
     models::{
         ActualizarSintesisDiariaRequest, AprobarBoletinRequest, AprobarSintesisDiariaRequest,
         Boletin, BoletinDetailResponse, BoletinEnWorkspace, ConsolidarSintesisFechaRequest,
+        Extracto, GuardarExtractoRequest, ResumirExtractoRequest,
         Seccion, SintesisDiaria, SintesisDiariaResumen, SintesisGenerada,
         ToggleDocumentoSeleccionRequest, UpdateSintesisRequest, WorkspaceFechaResponse,
     },
@@ -438,26 +439,29 @@ pub async fn aprobar_boletin(
         }
 
         let client = KapsoClient::new(cfg.api_key, cfg.phone_number_id);
-        let t_name = cfg.template_name.trim();
+
+        let fecha_b: NaiveDate = sqlx::query_scalar("SELECT fecha_boletin FROM boletines WHERE id = $1")
+            .bind(b_id)
+            .fetch_optional(&pool_clone)
+            .await
+            .unwrap_or(None)
+            .unwrap_or_else(|| chrono::Utc::now().date_naive());
+
+        let clean_snippet: String = texto_clone.chars().take(900).collect();
 
         for phone in &targets_clone {
             if phone == "Sin destinatario configurado" || phone == "5215512345678" {
                 continue;
             }
 
-            // Fuera de la ventana de 24h, WhatsApp Meta Cloud API exige estrictamente type: "template"
-            let send_res = if !t_name.is_empty() {
-                client.send_template_with_log(
-                    Some(&pool_clone),
-                    phone,
-                    t_name,
-                    &cfg.template_language,
-                    None,
-                    "envio_boletin_plantilla",
-                ).await
-            } else {
-                client.send_text_with_log(Some(&pool_clone), phone, &texto_clone, "envio_boletin_whatsapp").await
-            };
+            // Exigir exclusivamente plantilla oficial aprobada por Meta (type: template)
+            let send_res = client.send_brief_template(
+                Some(&pool_clone),
+                phone,
+                fecha_b,
+                &clean_snippet,
+                "envio_boletin_plantilla",
+            ).await;
 
             match send_res {
                 Ok(msg_id) => {
@@ -587,6 +591,70 @@ pub async fn ensure_sintesis_diarias_schema(pool: &DbPool) {
                 ALTER TABLE boletines ADD COLUMN origen VARCHAR(50) NOT NULL DEFAULT 'manual';
             END IF;
         END $$;"
+    )
+    .execute(pool)
+    .await;
+
+    // Asegurar tabla extractos para WhatsApp
+    let _ = sqlx::query(
+        "CREATE TABLE IF NOT EXISTS extractos (
+            id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            sintesis_id     UUID REFERENCES sintesis_diarias(id) ON DELETE CASCADE,
+            fecha           DATE UNIQUE NOT NULL,
+            texto           TEXT NOT NULL CHECK (char_length(texto) <= 1024),
+            origen          VARCHAR(20) NOT NULL DEFAULT 'corte'
+                            CHECK (origen IN ('corte', 'claude', 'manual')),
+            modelo_usado    VARCHAR(80),
+            tokens_usados   INT,
+            editado_por     UUID REFERENCES usuarios(id) ON DELETE SET NULL,
+            creado_en       TIMESTAMPTZ NOT NULL DEFAULT now(),
+            actualizado_en  TIMESTAMPTZ NOT NULL DEFAULT now()
+        )"
+    )
+    .execute(pool)
+    .await;
+
+    let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_extractos_fecha ON extractos (fecha DESC)")
+        .execute(pool)
+        .await;
+
+    // Asegurar página de Primeras Planas en el CMS
+    let _ = sqlx::query(
+        "INSERT INTO news_pages (section_key, title, subtitle, color, icon, orden, active)
+         VALUES ('primeras_planas', 'Primeras Planas', 'Lo más relevante de las portadas nacionales del día', '#7c3aed', 'newspaper', 0, true)
+         ON CONFLICT (section_key) DO NOTHING"
+    )
+    .execute(pool)
+    .await;
+
+    // Asegurar tabla whatsapp_plantillas y plantilla activa por defecto
+    let _ = sqlx::query(
+        "CREATE TABLE IF NOT EXISTS whatsapp_plantillas (
+            id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            nombre              VARCHAR(512) NOT NULL,
+            idioma              VARCHAR(10) NOT NULL DEFAULT 'es_MX',
+            activa              BOOLEAN NOT NULL DEFAULT false,
+            texto_fijo_body     TEXT NOT NULL DEFAULT '',
+            tope_extracto       INT NOT NULL DEFAULT 900 CHECK (tope_extracto BETWEEN 1 AND 1024),
+            parametros          JSONB NOT NULL DEFAULT '[]',
+            kapso_template_id   VARCHAR(100),
+            creado_en           TIMESTAMPTZ NOT NULL DEFAULT now(),
+            actualizado_en      TIMESTAMPTZ NOT NULL DEFAULT now(),
+            CONSTRAINT uq_plantilla_nombre_idioma UNIQUE (nombre, idioma)
+        )"
+    )
+    .execute(pool)
+    .await;
+
+    let _ = sqlx::query("CREATE UNIQUE INDEX IF NOT EXISTS uq_plantilla_activa ON whatsapp_plantillas (activa) WHERE activa = true")
+        .execute(pool)
+        .await;
+
+    let _ = sqlx::query(
+        "INSERT INTO whatsapp_plantillas (nombre, idioma, activa, texto_fijo_body, tope_extracto, parametros)
+         VALUES ('brief_informativo_cp_v2', 'es_MX', true, 'PRIMERAS PLANAS \\n\\n .\\n\\n Si no deseas seguir recibiendo estos mensajes manda la palabra \"STOP\"', 900,
+         '[{\"componente\": \"header\", \"nombre\": \"date\", \"fuente\": \"fecha\", \"formato\": \"D de Mes\"}, {\"componente\": \"body\", \"nombre\": \"primeras_planas\", \"fuente\": \"extracto\"}]'::jsonb)
+         ON CONFLICT (nombre, idioma) DO UPDATE SET activa = true"
     )
     .execute(pool)
     .await;
@@ -860,12 +928,22 @@ pub async fn get_workspace_fecha(
         })
         .collect();
 
+    let extracto = sqlx::query_as::<_, Extracto>(
+        "SELECT id, sintesis_id, fecha, texto, origen, modelo_usado, tokens_usados, editado_por, creado_en, actualizado_en
+         FROM extractos WHERE fecha = $1"
+    )
+    .bind(fecha)
+    .fetch_optional(&pool)
+    .await
+    .unwrap_or(None);
+
     let resp = WorkspaceFechaResponse {
         fecha,
         total_documentos: documentos.len(),
         documentos_incluidos: total_incluidos,
         documentos,
         sintesis,
+        extracto,
     };
 
     Ok((StatusCode::OK, Json(json!(resp))))
@@ -1130,6 +1208,7 @@ pub async fn consolidar_sintesis_fecha(
 
 pub async fn actualizar_sintesis_diaria(
     State((pool, _)): State<(DbPool, Arc<Config>)>,
+    Extension(auth_ctx): Extension<AuthContext>,
     Path(fecha_str): Path<String>,
     Json(payload): Json<ActualizarSintesisDiariaRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
@@ -1159,6 +1238,28 @@ pub async fn actualizar_sintesis_diaria(
         )
     })?;
 
+    if let Some(ref ext) = payload.extracto {
+        let clean_ext = ext.replace("\r\n", "\n").trim().to_string();
+        let safe_ext: String = clean_ext.chars().take(1024).collect();
+        if !safe_ext.is_empty() {
+            let _ = sqlx::query(
+                "INSERT INTO extractos (sintesis_id, fecha, texto, origen, editado_por, actualizado_en)
+                 VALUES ($1, $2, $3, 'manual', $4, now())
+                 ON CONFLICT (fecha) DO UPDATE
+                 SET texto = EXCLUDED.texto,
+                     origen = 'manual',
+                     editado_por = EXCLUDED.editado_por,
+                     actualizado_en = now()"
+            )
+            .bind(sintesis.id)
+            .bind(fecha)
+            .bind(&safe_ext)
+            .bind(auth_ctx.user_id)
+            .execute(&pool)
+            .await;
+        }
+    }
+
     sync_sintesis_to_cms(&pool, fecha, &payload.texto).await;
 
     Ok((StatusCode::OK, Json(json!(sintesis))))
@@ -1181,41 +1282,31 @@ async fn sync_sintesis_to_cms(pool: &DbPool, fecha: NaiveDate, texto: &str) {
     .unwrap_or(None);
 
     if let Some(edition_id) = ed_id {
-        let pages = sqlx::query_as::<_, crate::models::NewsPage>(
-            "SELECT id, section_key, title, subtitle, color, icon, orden, active, created_at, updated_at
-             FROM news_pages WHERE active = true ORDER BY orden ASC",
+        let s_title = format!("Primeras Planas — {}", fecha);
+        let s_summary = if texto.chars().count() > 280 {
+            format!("{}...", texto.chars().take(280).collect::<String>())
+        } else {
+            texto.to_string()
+        };
+
+        // La síntesis diaria consolidada se publica EXCLUSIVAMENTE en la página 'primeras_planas'
+        // protegiendo y aislando las secciones de Política, Economía y Seguridad.
+        let _ = sqlx::query(
+            "INSERT INTO news_sections (edition_id, section_key, title, summary, full_content, public_slug, published, created_at, updated_at)
+             VALUES ($1, 'primeras_planas', $2, $3, $4, 'primeras_planas', true, now(), now())
+             ON CONFLICT (edition_id, section_key) DO UPDATE
+             SET title = EXCLUDED.title,
+                 summary = EXCLUDED.summary,
+                 full_content = EXCLUDED.full_content,
+                 published = true,
+                 updated_at = now()",
         )
-        .fetch_all(pool)
-        .await
-        .unwrap_or_default();
-
-        for page in pages {
-            let s_title = format!("{} — {}", page.title, fecha);
-            let s_summary = if texto.chars().count() > 280 {
-                format!("{}...", texto.chars().take(280).collect::<String>())
-            } else {
-                texto.to_string()
-            };
-
-            let _ = sqlx::query(
-                "INSERT INTO news_sections (edition_id, section_key, title, summary, full_content, public_slug, published, created_at, updated_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, true, now(), now())
-                 ON CONFLICT (edition_id, section_key) DO UPDATE
-                 SET title = EXCLUDED.title,
-                     summary = EXCLUDED.summary,
-                     full_content = EXCLUDED.full_content,
-                     published = true,
-                     updated_at = now()",
-            )
-            .bind(edition_id)
-            .bind(&page.section_key)
-            .bind(&s_title)
-            .bind(&s_summary)
-            .bind(texto)
-            .bind(&page.section_key)
-            .execute(pool)
-            .await;
-        }
+        .bind(edition_id)
+        .bind(&s_title)
+        .bind(&s_summary)
+        .bind(texto)
+        .execute(pool)
+        .await;
     }
 }
 
@@ -1231,6 +1322,26 @@ pub async fn aprobar_sintesis_diaria(
             Json(json!({"error": "Formato de fecha inválido. Utilice YYYY-MM-DD"})),
         )
     })?;
+
+    // Determinar extracto final a persistir y despachar por WhatsApp
+    let final_extracto: String = if let Some(ref ext) = payload.extracto.as_ref().filter(|e| !e.trim().is_empty()) {
+        ext.replace("\r\n", "\n").trim().chars().take(1024).collect()
+    } else {
+        // Consultar extracto previo guardado
+        let prev_ext: Option<String> = sqlx::query_scalar("SELECT texto FROM extractos WHERE fecha = $1")
+            .bind(fecha)
+            .fetch_optional(&pool)
+            .await
+            .unwrap_or(None);
+
+        if let Some(pe) = prev_ext.filter(|p| !p.trim().is_empty()) {
+            pe
+        } else {
+            // Corte seguro inicial de la síntesis
+            let clean_sint = payload.texto.replace("\r\n", "\n").trim().to_string();
+            clean_sint.chars().take(900).collect()
+        }
+    };
 
     let mut tx = pool.begin().await.map_err(|e| {
         (
@@ -1262,7 +1373,23 @@ pub async fn aprobar_sintesis_diaria(
         )
     })?;
 
-    // 2. Marcar todos los boletines de esa fecha que están incluidos como 'aprobado'
+    // 2. Guardar extracto definitivo en tabla extractos
+    let _ = sqlx::query(
+        "INSERT INTO extractos (sintesis_id, fecha, texto, origen, editado_por, actualizado_en)
+         VALUES ($1, $2, $3, 'manual', $4, now())
+         ON CONFLICT (fecha) DO UPDATE
+         SET texto = EXCLUDED.texto,
+             editado_por = EXCLUDED.editado_por,
+             actualizado_en = now()"
+    )
+    .bind(sintesis.id)
+    .bind(fecha)
+    .bind(&final_extracto)
+    .bind(auth_ctx.user_id)
+    .execute(&mut *tx)
+    .await;
+
+    // 3. Marcar todos los boletines de esa fecha que están incluidos como 'aprobado'
     let _ = sqlx::query(
         "UPDATE boletines SET estado = 'aprobado', actualizado_en = now() WHERE fecha_boletin = $1 AND (incluido_en_sintesis = TRUE OR incluido_en_sintesis IS NULL)",
     )
@@ -1270,7 +1397,7 @@ pub async fn aprobar_sintesis_diaria(
     .execute(&mut *tx)
     .await;
 
-    // 3. Encolar y despachar mensaje WhatsApp si enviar_whatsapp != Some(false)
+    // 4. Encolar y despachar mensaje WhatsApp si enviar_whatsapp != Some(false)
     let enviar_ws = payload.enviar_whatsapp.unwrap_or(true);
     let mut target_phones: Vec<String> = Vec::new();
 
@@ -1313,7 +1440,7 @@ pub async fn aprobar_sintesis_diaria(
                  VALUES ('brief', $1, $2, $3, 'pendiente', 'kapso')",
             )
             .bind(sintesis.id)
-            .bind(&payload.texto)
+            .bind(&final_extracto)
             .bind(phone)
             .execute(&mut *tx)
             .await;
@@ -1327,14 +1454,15 @@ pub async fn aprobar_sintesis_diaria(
         )
     })?;
 
-    // Sincronizar síntesis aprobada hacia el CMS de noticias
+    // Sincronizar síntesis aprobada hacia el CMS en Primeras Planas
     sync_sintesis_to_cms(&pool, fecha, &payload.texto).await;
 
-    // Despacho vía WhatsApp en background
+    // Despacho vía WhatsApp en background exclusivamente por plantilla oficial
     if enviar_ws && !target_phones.is_empty() {
         let pool_clone = pool.clone();
         let s_id = sintesis.id;
         let targets_clone = target_phones.clone();
+        let extracto_clone = final_extracto.clone();
 
         tokio::spawn(async move {
             use crate::services::kapso::{get_whatsapp_config, KapsoClient};
@@ -1351,43 +1479,17 @@ pub async fn aprobar_sintesis_diaria(
             }
 
             let client = KapsoClient::new(cfg.api_key, cfg.phone_number_id);
-            let t_name = cfg.template_name.trim();
-
-            use chrono::Datelike;
-            let dias_semana = match fecha.weekday() {
-                chrono::Weekday::Mon => "lunes",
-                chrono::Weekday::Tue => "martes",
-                chrono::Weekday::Wed => "miércoles",
-                chrono::Weekday::Thu => "jueves",
-                chrono::Weekday::Fri => "viernes",
-                chrono::Weekday::Sat => "sábado",
-                chrono::Weekday::Sun => "domingo",
-            };
-            let mes_str = match fecha.month() {
-                1 => "enero", 2 => "febrero", 3 => "marzo", 4 => "abril", 5 => "mayo", 6 => "junio",
-                7 => "julio", 8 => "agosto", 9 => "septiembre", 10 => "octubre", 11 => "noviembre", 12 => "diciembre", _ => ""
-            };
-            let date_str = format!("{} {} de {} de {}", dias_semana, fecha.day(), mes_str, fecha.year());
-            let date_vars = vec![date_str];
 
             for phone in &targets_clone {
                 if phone == "Sin destinatario configurado" || phone == "5215512345678" {
                     continue;
                 }
 
-                // Fuera de la ventana de 24h, WhatsApp Meta Cloud API exige estrictamente type: "template"
-                let eff_tpl = if t_name.is_empty() || t_name == "servicio_monitoreo" {
-                    "brief_informativo"
-                } else {
-                    t_name
-                };
-
-                let send_res = client.send_template_with_log(
+                let send_res = client.send_brief_template(
                     Some(&pool_clone),
                     phone,
-                    eff_tpl,
-                    &cfg.template_language,
-                    Some(&date_vars),
+                    fecha,
+                    &extracto_clone,
                     "envio_sintesis_diaria_plantilla",
                 ).await;
 
@@ -1422,9 +1524,215 @@ pub async fn aprobar_sintesis_diaria(
         Json(json!({
             "mensaje": "Síntesis diaria consolidada aprobada exitosamente",
             "sintesis": sintesis,
+            "extracto": final_extracto,
             "destinatarios_notificados": target_phones.len()
         })),
     ))
+}
+
+pub async fn get_extracto_fecha(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+    Path(fecha_str): Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let fecha = NaiveDate::parse_from_str(&fecha_str, "%Y-%m-%d").map_err(|_| {
+        (StatusCode::BAD_REQUEST, Json(json!({"error": "Formato de fecha inválido"})))
+    })?;
+
+    let tope: i32 = sqlx::query_scalar("SELECT tope_extracto FROM whatsapp_plantillas WHERE activa = true LIMIT 1")
+        .fetch_optional(&pool)
+        .await
+        .unwrap_or(None)
+        .unwrap_or(900);
+
+    let extracto = sqlx::query_as::<_, Extracto>(
+        "SELECT id, sintesis_id, fecha, texto, origen, modelo_usado, tokens_usados, editado_por, creado_en, actualizado_en
+         FROM extractos WHERE fecha = $1"
+    )
+    .bind(fecha)
+    .fetch_optional(&pool)
+    .await
+    .unwrap_or(None);
+
+    let sintesis_texto: Option<String> = sqlx::query_scalar("SELECT texto FROM sintesis_diarias WHERE fecha = $1")
+        .bind(fecha)
+        .fetch_optional(&pool)
+        .await
+        .unwrap_or(None);
+
+    let sugerencia = if let Some(ref s_texto) = sintesis_texto {
+        let clean = s_texto.replace("\r\n", "\n").trim().to_string();
+        if clean.chars().count() <= tope as usize {
+            clean
+        } else {
+            // Intentar cortar en el último salto de línea antes del tope
+            let sub: String = clean.chars().take(tope as usize).collect();
+            if let Some(idx) = sub.rfind("\n\n") {
+                sub[..idx].trim().to_string()
+            } else if let Some(idx) = sub.rfind('\n') {
+                sub[..idx].trim().to_string()
+            } else if let Some(idx) = sub.rfind(". ") {
+                sub[..=idx].trim().to_string()
+            } else {
+                sub
+            }
+        }
+    } else {
+        String::new()
+    };
+
+    Ok((
+        StatusCode::OK,
+        Json(json!({
+            "fecha": fecha,
+            "extracto": extracto,
+            "sugerencia": sugerencia,
+            "tope": tope
+        })),
+    ))
+}
+
+pub async fn guardar_extracto_fecha(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+    Extension(auth_ctx): Extension<AuthContext>,
+    Path(fecha_str): Path<String>,
+    Json(payload): Json<GuardarExtractoRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let fecha = NaiveDate::parse_from_str(&fecha_str, "%Y-%m-%d").map_err(|_| {
+        (StatusCode::BAD_REQUEST, Json(json!({"error": "Formato de fecha inválido"})))
+    })?;
+
+    let clean = payload.texto.replace("\r\n", "\n").trim().to_string();
+    if clean.chars().count() > 1024 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": format!("El extracto no puede exceder los 1,024 caracteres permitidos por Meta (actual: {} caracteres)", clean.chars().count())
+            })),
+        ));
+    }
+
+    let sintesis_id: Option<Uuid> = sqlx::query_scalar("SELECT id FROM sintesis_diarias WHERE fecha = $1")
+        .bind(fecha)
+        .fetch_optional(&pool)
+        .await
+        .unwrap_or(None);
+
+    let origen = payload.origen.unwrap_or_else(|| "manual".to_string());
+
+    let ext = sqlx::query_as::<_, Extracto>(
+        "INSERT INTO extractos (sintesis_id, fecha, texto, origen, editado_por, actualizado_en)
+         VALUES ($1, $2, $3, $4, $5, now())
+         ON CONFLICT (fecha) DO UPDATE
+         SET texto = EXCLUDED.texto,
+             origen = EXCLUDED.origen,
+             editado_por = EXCLUDED.editado_por,
+             actualizado_en = now()
+         RETURNING id, sintesis_id, fecha, texto, origen, modelo_usado, tokens_usados, editado_por, creado_en, actualizado_en"
+    )
+    .bind(sintesis_id)
+    .bind(fecha)
+    .bind(&clean)
+    .bind(&origen)
+    .bind(auth_ctx.user_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": format!("Error guardando extracto: {}", e)}))))?;
+
+    Ok((
+        StatusCode::OK,
+        Json(json!({
+            "ok": true,
+            "mensaje": "Extracto guardado correctamente",
+            "extracto": ext
+        })),
+    ))
+}
+
+pub async fn resumir_extracto_fecha(
+    State((pool, config)): State<(DbPool, Arc<Config>)>,
+    Path(fecha_str): Path<String>,
+    Json(payload): Json<ResumirExtractoRequest>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let fecha = NaiveDate::parse_from_str(&fecha_str, "%Y-%m-%d").map_err(|_| {
+        (StatusCode::BAD_REQUEST, Json(json!({"error": "Formato de fecha inválido"})))
+    })?;
+
+    let text_to_summarize = if let Some(t) = payload.texto.filter(|s| !s.trim().is_empty()) {
+        t
+    } else {
+        let sintesis_opt: Option<String> = sqlx::query_scalar("SELECT texto FROM sintesis_diarias WHERE fecha = $1")
+            .bind(fecha)
+            .fetch_optional(&pool)
+            .await
+            .unwrap_or(None);
+
+        match sintesis_opt {
+            Some(t) if !t.trim().is_empty() => t,
+            _ => return Err((StatusCode::BAD_REQUEST, Json(json!({"error": "No hay texto disponible para resumir"})))),
+        }
+    };
+
+    let tope_cfg: i32 = sqlx::query_scalar("SELECT tope_extracto FROM whatsapp_plantillas WHERE activa = true LIMIT 1")
+        .fetch_optional(&pool)
+        .await
+        .unwrap_or(None)
+        .unwrap_or(900);
+
+    let max_chars = payload.max_chars.unwrap_or(tope_cfg as usize);
+
+    // Llamar al worker Python para resumir con Claude
+    let worker_url = format!("{}/api/resumir-extracto", config.worker_base_url);
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(&worker_url)
+        .json(&json!({
+            "texto": text_to_summarize,
+            "max_chars": max_chars
+        }))
+        .send()
+        .await;
+
+    match resp {
+        Ok(r) if r.status().is_success() => {
+            let data: serde_json::Value = r.json().await.unwrap_or_default();
+            let extracto = data.get("extracto").and_then(|e| e.as_str()).unwrap_or("").to_string();
+            let tokens = data.get("tokens_usados").and_then(|t| t.as_i64()).map(|t| t as i32);
+            let modelo = data.get("modelo_usado").and_then(|m| m.as_str()).map(|s| s.to_string());
+
+            Ok((
+                StatusCode::OK,
+                Json(json!({
+                    "extracto": extracto,
+                    "origen": "claude",
+                    "modelo_usado": modelo,
+                    "tokens_usados": tokens
+                })),
+            ))
+        }
+        _ => {
+            // Fallback inteligente en local si el worker no responde
+            let clean = text_to_summarize.replace("\r\n", "\n").trim().to_string();
+            let cut: String = clean.chars().take(max_chars).collect();
+            let fallback_extract = if let Some(idx) = cut.rfind("\n\n") {
+                cut[..idx].trim().to_string()
+            } else if let Some(idx) = cut.rfind('\n') {
+                cut[..idx].trim().to_string()
+            } else {
+                cut
+            };
+
+            Ok((
+                StatusCode::OK,
+                Json(json!({
+                    "extracto": fallback_extract,
+                    "origen": "corte",
+                    "modelo_usado": "fallback_local",
+                    "tokens_usados": 0
+                })),
+            ))
+        }
+    }
 }
 
 pub async fn eliminar_boletin(

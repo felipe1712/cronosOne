@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 Script de Diagnóstico y Depuración de Surya OCR en Servidor
 Ejecutar con:

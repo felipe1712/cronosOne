@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import * as React from "react";
 import styles from "@/components/Layout/TopNavbar/ChooseLanguage/ChooseLanguage.module.css";

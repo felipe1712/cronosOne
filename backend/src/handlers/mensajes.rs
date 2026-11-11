@@ -252,7 +252,15 @@ pub async fn enviar_mensaje_directo(
     let date_str = format!("{} {} de {} de {}", dias_semana, now.day(), mes_str, now.year());
     let date_vars = vec![date_str];
 
-    let send_res = if !t_name.is_empty() {
+    let send_res = if m.tipo == "brief" {
+        client.send_brief_template(
+            Some(&pool),
+            &target_phone,
+            now,
+            &m.texto,
+            "despacho_mensaje_directo_plantilla",
+        ).await
+    } else if !t_name.is_empty() {
         client.send_template_with_log(
             Some(&pool),
             &target_phone,
@@ -388,7 +396,15 @@ pub async fn despachar_cola(
             continue;
         };
 
-        let send_res = if !t_name.is_empty() {
+        let send_res = if m.tipo == "brief" {
+            client.send_brief_template(
+                Some(&pool),
+                &target_phone,
+                now,
+                &m.texto,
+                "despacho_cola_plantilla",
+            ).await
+        } else if !t_name.is_empty() {
             client.send_template_with_log(
                 Some(&pool),
                 &target_phone,

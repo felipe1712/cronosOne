@@ -72,7 +72,8 @@ import SearchIcon from "@mui/icons-material/Search";
 import FilterListIcon from "@mui/icons-material/FilterList";
 import DataUsageIcon from "@mui/icons-material/DataUsage";
 import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
-import { ApiService, Destinatario, GrupoDistribucion, ApiLogItem, ApiLogStats } from "@/lib/api";
+import LayersIcon from "@mui/icons-material/Layers";
+import { ApiService, Destinatario, GrupoDistribucion, ApiLogItem, ApiLogStats, WhatsappPlantilla } from "@/lib/api";
 
 interface AvailableModel {
   id: string;
@@ -119,6 +120,25 @@ export default function ConfiguracionPage() {
   } | null>(null);
   const [formEnviarPlantilla, setFormEnviarPlantilla] = useState<boolean>(true);
   const [sendingTemplateId, setSendingTemplateId] = useState<string | null>(null);
+
+  // Estados para Administrador de Plantillas WhatsApp (Meta / Kapso)
+  const [plantillas, setPlantillas] = useState<WhatsappPlantilla[]>([]);
+  const [loadingPlantillas, setLoadingPlantillas] = useState<boolean>(false);
+  const [modalPlantillaOpen, setModalPlantillaOpen] = useState<boolean>(false);
+  const [editingPlantilla, setEditingPlantilla] = useState<WhatsappPlantilla | null>(null);
+  const [formPlantillaNombre, setFormPlantillaNombre] = useState<string>("");
+  const [formPlantillaIdioma, setFormPlantillaIdioma] = useState<string>("es_MX");
+  const [formPlantillaTope, setFormPlantillaTope] = useState<number>(900);
+  const [formPlantillaTextoFijo, setFormPlantillaTextoFijo] = useState<string>("");
+  const [formPlantillaParametros, setFormPlantillaParametros] = useState<string>("");
+  const [savingPlantilla, setSavingPlantilla] = useState<boolean>(false);
+  const [modalTestPlantillaOpen, setModalTestPlantillaOpen] = useState<boolean>(false);
+  const [testPlantillaTarget, setTestPlantillaTarget] = useState<WhatsappPlantilla | null>(null);
+  const [testPlantillaTelefono, setTestPlantillaTelefono] = useState<string>("");
+  const [testPlantillaExtracto, setTestPlantillaExtracto] = useState<string>("");
+  const [testingPlantillaItem, setTestingPlantillaItem] = useState<boolean>(false);
+  const [importingKapso, setImportingKapso] = useState<boolean>(false);
+  const [activatingPlantillaId, setActivatingPlantillaId] = useState<string | null>(null);
 
   // Estados para Lista de Distribución y Mini Administrador de Grupos
   const [destinatarios, setDestinatarios] = useState<Destinatario[]>([]);
@@ -192,7 +212,7 @@ export default function ConfiguracionPage() {
     try {
       setLoading(true);
       setErrorMsg(null);
-      const [data, dests, grps] = await Promise.all([
+      const [data, dests, grps, plants] = await Promise.all([
         ApiService.getConfiguraciones(),
         ApiService.getDestinatarios().catch((err) => {
           console.warn("Fallo cargando destinatarios:", err);
@@ -200,6 +220,10 @@ export default function ConfiguracionPage() {
         }),
         ApiService.getGrupos().catch((err) => {
           console.warn("Fallo cargando grupos:", err);
+          return null;
+        }),
+        ApiService.listPlantillasWhatsApp().catch((err) => {
+          console.warn("Fallo cargando plantillas:", err);
           return null;
         }),
       ]);
@@ -269,6 +293,9 @@ export default function ConfiguracionPage() {
       }
       if (grps !== null) {
         setGrupos(grps);
+      }
+      if (plants !== null) {
+        setPlantillas(plants);
       }
     } catch (err: any) {
       console.error("Error cargando configuración:", err);
@@ -682,10 +709,174 @@ export default function ConfiguracionPage() {
   useEffect(() => {
     if (tabIndex === 2) {
       loadApiLogs("whatsapp", "todos");
-    } else if (tabIndex === 4) {
+    } else if (tabIndex === 3) {
+      loadPlantillas();
+    } else if (tabIndex === 5) {
       loadApiLogs(apiLogsServiceTab, apiLogsStatusFilter);
     }
   }, [tabIndex, apiLogsServiceTab, apiLogsStatusFilter]);
+
+  const loadPlantillas = async () => {
+    try {
+      setLoadingPlantillas(true);
+      const data = await ApiService.listPlantillasWhatsApp();
+      setPlantillas(data || []);
+    } catch (err: any) {
+      console.error("Error al cargar plantillas:", err);
+      setErrorMsg(err.message || "No se pudieron cargar las plantillas de WhatsApp.");
+    } finally {
+      setLoadingPlantillas(false);
+    }
+  };
+
+  const handleOpenCreatePlantilla = () => {
+    setEditingPlantilla(null);
+    setFormPlantillaNombre("");
+    setFormPlantillaIdioma("es_MX");
+    setFormPlantillaTope(900);
+    setFormPlantillaTextoFijo("PRIMERAS PLANAS \\n\\n {{primeras_planas}} .\\n\\n Si no deseas seguir recibiendo estos mensajes manda la palabra \"STOP\"");
+    setFormPlantillaParametros(JSON.stringify([
+      { component: "header", name: "date", tipo: "text" },
+      { component: "body", name: "primeras_planas", tipo: "text" }
+    ], null, 2));
+    setModalPlantillaOpen(true);
+  };
+
+  const handleOpenEditPlantilla = (p: WhatsappPlantilla) => {
+    setEditingPlantilla(p);
+    setFormPlantillaNombre(p.nombre);
+    setFormPlantillaIdioma(p.idioma || "es_MX");
+    setFormPlantillaTope(p.tope_extracto || 900);
+    setFormPlantillaTextoFijo(p.texto_fijo_body || "");
+    setFormPlantillaParametros(JSON.stringify(p.parametros || [], null, 2));
+    setModalPlantillaOpen(true);
+  };
+
+  const handleSavePlantilla = async () => {
+    if (!formPlantillaNombre.trim()) {
+      setErrorMsg("El nombre de la plantilla es requerido.");
+      return;
+    }
+    let parsedParams: any[] = [];
+    if (formPlantillaParametros.trim()) {
+      try {
+        parsedParams = JSON.parse(formPlantillaParametros);
+        if (!Array.isArray(parsedParams)) {
+          setErrorMsg("Los parámetros deben ser un arreglo JSON válido (ej: [{\"component\": \"header\", \"name\": \"date\"}]).");
+          return;
+        }
+      } catch (e: any) {
+        setErrorMsg("Error de sintaxis JSON en los parámetros: " + e.message);
+        return;
+      }
+    }
+    const tope = Math.min(Math.max(Number(formPlantillaTope) || 900, 100), 1024);
+
+    try {
+      setSavingPlantilla(true);
+      if (editingPlantilla) {
+        await ApiService.updatePlantillaWhatsApp(editingPlantilla.id, {
+          nombre: formPlantillaNombre.trim(),
+          idioma: formPlantillaIdioma.trim(),
+          tope_extracto: tope,
+          texto_fijo_body: formPlantillaTextoFijo,
+          parametros: parsedParams,
+        });
+        setSuccessMsg(`Plantilla "${formPlantillaNombre}" actualizada exitosamente.`);
+      } else {
+        await ApiService.createPlantillaWhatsApp({
+          nombre: formPlantillaNombre.trim(),
+          idioma: formPlantillaIdioma.trim(),
+          tope_extracto: tope,
+          texto_fijo_body: formPlantillaTextoFijo,
+          parametros: parsedParams,
+          activa: false,
+        });
+        setSuccessMsg(`Plantilla "${formPlantillaNombre}" creada exitosamente.`);
+      }
+      setModalPlantillaOpen(false);
+      await loadPlantillas();
+    } catch (err: any) {
+      setErrorMsg(err.message || "Error al guardar la plantilla.");
+    } finally {
+      setSavingPlantilla(false);
+    }
+  };
+
+  const handleDeletePlantilla = async (id: string, nombre: string) => {
+    if (!confirm(`¿Eliminar la plantilla "${nombre}"?`)) return;
+    try {
+      await ApiService.deletePlantillaWhatsApp(id);
+      setSuccessMsg(`Plantilla "${nombre}" eliminada exitosamente.`);
+      await loadPlantillas();
+    } catch (err: any) {
+      setErrorMsg(err.message || "Error al eliminar plantilla.");
+    }
+  };
+
+  const handleActivarPlantilla = async (id: string, nombre: string) => {
+    try {
+      setActivatingPlantillaId(id);
+      await ApiService.activarPlantillaWhatsApp(id);
+      setSuccessMsg(`Plantilla "${nombre}" activada como plantilla oficial para el despacho.`);
+      await loadPlantillas();
+    } catch (err: any) {
+      setErrorMsg(err.message || "Error al activar plantilla.");
+    } finally {
+      setActivatingPlantillaId(null);
+    }
+  };
+
+  const handleImportarKapso = async () => {
+    try {
+      setImportingKapso(true);
+      const res = await ApiService.importarPlantillasKapso();
+      setSuccessMsg(res.mensaje || "Plantillas sincronizadas desde Kapso.");
+      await loadPlantillas();
+    } catch (err: any) {
+      setErrorMsg(err.message || "Error al importar plantillas desde Kapso.");
+    } finally {
+      setImportingKapso(false);
+    }
+  };
+
+  const handleOpenTestPlantilla = (p: WhatsappPlantilla) => {
+    setTestPlantillaTarget(p);
+    setTestPlantillaTelefono(directorWhatsappPhone || "");
+    setTestPlantillaExtracto(
+      "🇲🇽 *PRIMERAS PLANAS NACIONALES*\\n\\n" +
+      "🔴 *Reforma Judicial:* SCJN define criterios para comités de evaluación y ternas.\\n\\n" +
+      "💼 *Economía:* Banxico analiza expectativas inflacionarias y tasa objetivo.\\n\\n" +
+      "📌 *Coparmex:* Llama al diálogo constructivo en el sector productivo."
+    );
+    setModalTestPlantillaOpen(true);
+  };
+
+  const handleSendTestPlantilla = async () => {
+    if (!testPlantillaTarget) return;
+    if (!testPlantillaTelefono.trim()) {
+      setErrorMsg("Debe especificar un teléfono de destino.");
+      return;
+    }
+    try {
+      setTestingPlantillaItem(true);
+      const res = await ApiService.probarPlantillaWhatsApp(
+        testPlantillaTarget.id,
+        testPlantillaTelefono.trim(),
+        testPlantillaExtracto
+      );
+      if (res.ok) {
+        setSuccessMsg(`✅ Plantilla probada exitosamente. ID de mensaje: ${res.message_id || "OK"}`);
+        setModalTestPlantillaOpen(false);
+      } else {
+        setErrorMsg(res.error || res.mensaje || "Fallo en la prueba de la plantilla.");
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || "Error al probar plantilla.");
+    } finally {
+      setTestingPlantillaItem(false);
+    }
+  };
 
   const handleClearApiLogs = async () => {
     try {
@@ -842,6 +1033,12 @@ export default function ConfiguracionPage() {
             icon={<WhatsAppIcon sx={{ color: "#25D366" }} />}
             iconPosition="start"
             label="Canal WhatsApp"
+            sx={{ fontWeight: 600, textTransform: "none", fontSize: "0.95rem" }}
+          />
+          <Tab
+            icon={<LayersIcon sx={{ color: "#10b981" }} />}
+            iconPosition="start"
+            label="Plantillas WhatsApp"
             sx={{ fontWeight: 600, textTransform: "none", fontSize: "0.95rem" }}
           />
           <Tab
@@ -1447,17 +1644,30 @@ export default function ConfiguracionPage() {
                         </Box>
                       </Grid>
 
-                      {/* Plantilla Oficial de Apertura (Meta WABA / Ventana 24h) */}
+                      {/* Plantilla Oficial de Apertura y Despacho (Meta WABA / Kapso) */}
                       <Grid size={{ xs: 12 }}>
                         <Box sx={{ p: 2.5, bgcolor: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "10px" }}>
-                          <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5 }}>
-                            <WhatsAppIcon sx={{ color: "#16a34a", fontSize: 20 }} />
-                            <Typography variant="subtitle2" sx={{ fontWeight: 700, color: "#166534" }}>
-                              Plantilla Oficial de Apertura (Meta Cloud API / WABA)
-                            </Typography>
+                          <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 1, flexWrap: "wrap", gap: 1 }}>
+                            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                              <WhatsAppIcon sx={{ color: "#16a34a", fontSize: 20 }} />
+                              <Typography variant="subtitle2" sx={{ fontWeight: 700, color: "#166534" }}>
+                                Plantilla Oficial Activa para Despacho (Meta Cloud API / WABA)
+                              </Typography>
+                            </Box>
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              color="success"
+                              startIcon={<LayersIcon />}
+                              onClick={() => setTabIndex(3)}
+                              sx={{ textTransform: "none", fontWeight: 700, fontSize: "0.8rem", borderRadius: "6px" }}
+                            >
+                              Abrir Administrador de Plantillas →
+                            </Button>
                           </Box>
+
                           <Typography variant="caption" sx={{ color: "#15803d", display: "block", mb: 2, lineHeight: 1.4 }}>
-                            Meta exige que el primer mensaje a cualquier contacto —o a contactos inactivos por más de 24 horas— sea una <strong>plantilla pre-aprobada</strong>. Una vez que el contacto responda, se abre la ventana de 24 horas para recibir briefings y alertas en texto libre.
+                            Meta exige que el envío masivo sea mediante una <strong>plantilla pre-aprobada</strong> (<code>type: &quot;template&quot;</code>). Para el despacho matutino de Primeras Planas se utiliza la plantilla activa con parámetros nombrados (<code>date</code> y <code>primeras_planas</code>).
                           </Typography>
                           <Grid container spacing={2}>
                             <Grid size={{ xs: 12, sm: 8 }}>
@@ -1465,11 +1675,11 @@ export default function ConfiguracionPage() {
                                 fullWidth
                                 size="small"
                                 label="Nombre Exacto de la Plantilla WABA"
-                                value={whatsappTemplateName}
+                                value={whatsappTemplateName || "brief_informativo_cp_v2"}
                                 onChange={(e) => setWhatsappTemplateName(e.target.value)}
                                 onBlur={() => handleSaveWhatsapp()}
-                                placeholder="servicio_monitoreo"
-                                helperText="Nombre exacto aprobado en Meta/Kapso (ej: servicio_monitoreo)"
+                                placeholder="brief_informativo_cp_v2"
+                                helperText="Nombre exacto aprobado en Meta/Kapso (ej: brief_informativo_cp_v2)"
                               />
                             </Grid>
                             <Grid size={{ xs: 12, sm: 4 }}>
@@ -1477,7 +1687,7 @@ export default function ConfiguracionPage() {
                                 fullWidth
                                 size="small"
                                 label="Código de Idioma"
-                                value={whatsappTemplateLanguage}
+                                value={whatsappTemplateLanguage || "es_MX"}
                                 onChange={(e) => setWhatsappTemplateLanguage(e.target.value)}
                                 onBlur={() => handleSaveWhatsapp()}
                                 placeholder="es_MX"
@@ -1765,9 +1975,199 @@ export default function ConfiguracionPage() {
           )}
 
           {/* ================================================================= */}
-          {/* PESTAÑA 3: LISTA DE DISTRIBUCIÓN WHATSAPP                         */}
+          {/* PESTAÑA 3: MINI ADMINISTRADOR DE PLANTILLAS WHATSAPP (KAPSO/META) */}
           {/* ================================================================= */}
           {tabIndex === 3 && (
+            <Box>
+              {/* Header de la sección */}
+              <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 3, flexWrap: "wrap", gap: 2 }}>
+                <Box>
+                  <Typography variant="h6" sx={{ fontWeight: 700, color: "#1e293b", display: "flex", alignItems: "center", gap: 1 }}>
+                    <LayersIcon sx={{ color: "#10b981" }} />
+                    Administrador de Plantillas WhatsApp (Meta Cloud API / Kapso)
+                  </Typography>
+                  <Typography variant="body2" sx={{ color: "#64748b" }}>
+                    Configure las plantillas pre-aprobadas en Meta. La plantilla marcada como <strong>ACTIVA</strong> será utilizada para despachar el extracto diario de Primeras Planas.
+                  </Typography>
+                </Box>
+
+                <Box sx={{ display: "flex", gap: 1.5, flexWrap: "wrap" }}>
+                  <Button
+                    variant="outlined"
+                    startIcon={importingKapso ? <CircularProgress size={16} /> : <RefreshIcon />}
+                    onClick={handleImportarKapso}
+                    disabled={importingKapso || loadingPlantillas}
+                    sx={{ textTransform: "none", fontWeight: 600 }}
+                  >
+                    {importingKapso ? "Sincronizando..." : "Sincronizar desde Kapso"}
+                  </Button>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    startIcon={<AddIcon />}
+                    onClick={handleOpenCreatePlantilla}
+                    sx={{ textTransform: "none", fontWeight: 700, borderRadius: "8px" }}
+                  >
+                    Nueva Plantilla
+                  </Button>
+                </Box>
+              </Box>
+
+              {/* Card explicativo de Meta Guidelines */}
+              <Alert severity="info" sx={{ mb: 3, borderRadius: "10px" }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
+                  Guía de Parámetros y Límites Oficiales de Meta (WhatsApp Cloud API)
+                </Typography>
+                <Typography variant="body2" sx={{ fontSize: "0.85rem", lineHeight: 1.5 }}>
+                  • <strong>Plantilla recomendada:</strong> <code>brief_informativo_cp_v2</code> con idioma <code>es_MX</code>.<br />
+                  • <strong>Header:</strong> Parámetro de texto <code>date</code> (ej. &quot;12 de Noviembre&quot;).<br />
+                  • <strong>Body:</strong> Texto fijo <code>PRIMERAS PLANAS \n\n {"{{primeras_planas}}"} .\n\n Si no deseas seguir recibiendo estos mensajes manda la palabra &quot;STOP&quot;</code>.<br />
+                  • <strong>Límite de Meta:</strong> Todo el cuerpo de la plantilla debe mantenerse estrictamente dentro de los <strong>1,024 caracteres</strong>.
+                </Typography>
+              </Alert>
+
+              {/* Tabla de Plantillas */}
+              <Card sx={{ borderRadius: "12px", boxShadow: "0 2px 6px rgba(0,0,0,0.04)", overflow: "hidden" }}>
+                <TableContainer>
+                  <Table>
+                    <TableHead sx={{ backgroundColor: "#f8fafc" }}>
+                      <TableRow>
+                        <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Estado / Uso</TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Nombre de la Plantilla</TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Idioma</TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Tope Extracto</TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Parámetros Mapeados</TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: "#475569" }} align="right">Acciones</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {loadingPlantillas ? (
+                        <TableRow>
+                          <TableCell colSpan={6} sx={{ textAlign: "center", py: 4 }}>
+                            <CircularProgress size={28} />
+                          </TableCell>
+                        </TableRow>
+                      ) : plantillas.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={6} sx={{ textAlign: "center", py: 4, color: "#64748b" }}>
+                            No hay plantillas registradas. Haga clic en &quot;Nueva Plantilla&quot; o &quot;Sincronizar desde Kapso&quot;.
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        plantillas.map((p) => {
+                          const isActiva = p.activa;
+                          const paramList = Array.isArray(p.parametros) ? p.parametros : [];
+                          return (
+                            <TableRow key={p.id} hover sx={{ backgroundColor: isActiva ? "#f0fdf4" : "inherit" }}>
+                              <TableCell>
+                                {isActiva ? (
+                                  <Chip
+                                    label="ACTIVA PARA DESPACHO"
+                                    color="success"
+                                    size="small"
+                                    icon={<CheckCircleIcon />}
+                                    sx={{ fontWeight: 700, fontSize: "0.72rem" }}
+                                  />
+                                ) : (
+                                  <Button
+                                    size="small"
+                                    variant="outlined"
+                                    color="inherit"
+                                    disabled={activatingPlantillaId === p.id}
+                                    onClick={() => handleActivarPlantilla(p.id, p.nombre)}
+                                    sx={{ textTransform: "none", fontSize: "0.75rem", fontWeight: 600 }}
+                                  >
+                                    {activatingPlantillaId === p.id ? "Activando..." : "Activar"}
+                                  </Button>
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                <Typography variant="subtitle2" sx={{ fontWeight: 700, color: "#0f172a", fontFamily: "monospace" }}>
+                                  {p.nombre}
+                                </Typography>
+                                {p.texto_fijo_body && (
+                                  <Typography variant="caption" sx={{ color: "#64748b", display: "block", maxWidth: 280 }} noWrap>
+                                    {p.texto_fijo_body}
+                                  </Typography>
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                <Chip label={p.idioma || "es_MX"} size="small" variant="outlined" sx={{ fontWeight: 600, fontSize: "0.75rem" }} />
+                              </TableCell>
+                              <TableCell>
+                                <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+                                  <Typography variant="body2" sx={{ fontWeight: 700, color: p.tope_extracto > 1024 ? "#dc2626" : "#1e293b" }}>
+                                    {p.tope_extracto} chars
+                                  </Typography>
+                                  <Typography variant="caption" sx={{ color: "#64748b" }}>
+                                    (Meta: 1,024)
+                                  </Typography>
+                                </Box>
+                              </TableCell>
+                              <TableCell>
+                                <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap", maxWidth: 260 }}>
+                                  {paramList.map((param: any, idx: number) => (
+                                    <Chip
+                                      key={idx}
+                                      label={`${param.component || "body"}:${param.name || param}`}
+                                      size="small"
+                                      sx={{ fontSize: "0.7rem", height: 22, backgroundColor: "#f1f5f9" }}
+                                    />
+                                  ))}
+                                  {paramList.length === 0 && (
+                                    <Typography variant="caption" sx={{ color: "#94a3b8" }}>Sin parámetros</Typography>
+                                  )}
+                                </Box>
+                              </TableCell>
+                              <TableCell align="right">
+                                <Box sx={{ display: "flex", justifyContent: "flex-end", gap: 0.5 }}>
+                                  <Tooltip title="Probar Envío de Plantilla">
+                                    <IconButton
+                                      size="small"
+                                      color="success"
+                                      onClick={() => handleOpenTestPlantilla(p)}
+                                    >
+                                      <WhatsAppIcon fontSize="small" />
+                                    </IconButton>
+                                  </Tooltip>
+                                  <Tooltip title="Editar Plantilla">
+                                    <IconButton
+                                      size="small"
+                                      color="primary"
+                                      onClick={() => handleOpenEditPlantilla(p)}
+                                    >
+                                      <EditIcon fontSize="small" />
+                                    </IconButton>
+                                  </Tooltip>
+                                  <Tooltip title={isActiva ? "No se puede eliminar la plantilla activa" : "Eliminar Plantilla"}>
+                                    <span>
+                                      <IconButton
+                                        size="small"
+                                        color="error"
+                                        disabled={isActiva}
+                                        onClick={() => handleDeletePlantilla(p.id, p.nombre)}
+                                      >
+                                        <DeleteOutlineIcon fontSize="small" />
+                                      </IconButton>
+                                    </span>
+                                  </Tooltip>
+                                </Box>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })
+                      )}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              </Card>
+            </Box>
+          )}
+
+          {/* ================================================================= */}
+          {/* PESTAÑA 4: LISTA DE DISTRIBUCIÓN WHATSAPP                         */}
+          {/* ================================================================= */}
+          {tabIndex === 4 && (
             <Box>
               {/* Barra superior de acciones */}
               <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 3, flexWrap: "wrap", gap: 2 }}>
@@ -2133,9 +2533,9 @@ export default function ConfiguracionPage() {
           )}
 
           {/* ================================================================= */}
-          {/* PESTAÑA 4: LOGS DE APIS (CLAUDE Y WHATSAPP)                       */}
+          {/* PESTAÑA 5: LOGS DE APIS (CLAUDE Y WHATSAPP)                       */}
           {/* ================================================================= */}
-          {tabIndex === 4 && (
+          {tabIndex === 5 && (
             <Box>
               {/* Encabezado de la pestaña y Acciones */}
               <Card sx={{ borderRadius: "12px", boxShadow: "0 2px 6px rgba(0,0,0,0.04)", mb: 3 }}>
@@ -3300,6 +3700,172 @@ export default function ConfiguracionPage() {
             sx={{ textTransform: "none", fontWeight: 600 }}
           >
             {clearingLogs ? "Limpiando..." : "Confirmar y Limpiar"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Modal Crear / Editar Plantilla WhatsApp */}
+      <Dialog
+        open={modalPlantillaOpen}
+        onClose={() => !savingPlantilla && setModalPlantillaOpen(false)}
+        maxWidth="sm"
+        fullWidth
+        PaperProps={{ sx: { borderRadius: "12px" } }}
+      >
+        <DialogTitle sx={{ fontWeight: 700, display: "flex", alignItems: "center", gap: 1 }}>
+          <LayersIcon sx={{ color: "#10b981" }} />
+          {editingPlantilla ? `Editar Plantilla: ${editingPlantilla.nombre}` : "Nueva Plantilla WhatsApp"}
+        </DialogTitle>
+        <DialogContent dividers>
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 2.5, pt: 1 }}>
+            <TextField
+              fullWidth
+              label="Nombre de la Plantilla en Meta"
+              value={formPlantillaNombre}
+              onChange={(e) => setFormPlantillaNombre(e.target.value)}
+              placeholder="brief_informativo_cp_v2"
+              helperText="Nombre exacto registrado y aprobado en Meta/Kapso"
+            />
+
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  fullWidth
+                  label="Código de Idioma"
+                  value={formPlantillaIdioma}
+                  onChange={(e) => setFormPlantillaIdioma(e.target.value)}
+                  placeholder="es_MX"
+                  helperText="Generalmente 'es_MX' o 'en_US'"
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  fullWidth
+                  type="number"
+                  label="Tope de Caracteres del Extracto"
+                  value={formPlantillaTope}
+                  onChange={(e) => setFormPlantillaTope(Number(e.target.value))}
+                  inputProps={{ min: 100, max: 1024 }}
+                  helperText="Límite máximo permitido por Meta: 1,024 caracteres"
+                />
+              </Grid>
+            </Grid>
+
+            <TextField
+              fullWidth
+              multiline
+              rows={2}
+              label="Texto fijo del Body (Referencia)"
+              value={formPlantillaTextoFijo}
+              onChange={(e) => setFormPlantillaTextoFijo(e.target.value)}
+              placeholder='PRIMERAS PLANAS \n\n {{primeras_planas}} .\n\n Si no deseas seguir recibiendo estos mensajes manda la palabra "STOP"'
+              helperText="Texto tal cual fue registrado en Meta para previsualización"
+            />
+
+            <Box>
+              <Typography variant="caption" sx={{ fontWeight: 700, color: "#475569", mb: 0.5, display: "block" }}>
+                Parámetros Mapeados (JSON)
+              </Typography>
+              <TextField
+                fullWidth
+                multiline
+                rows={5}
+                value={formPlantillaParametros}
+                onChange={(e) => setFormPlantillaParametros(e.target.value)}
+                placeholder='[\n  {"component": "header", "name": "date", "tipo": "text"},\n  {"component": "body", "name": "primeras_planas", "tipo": "text"}\n]'
+                helperText="Arreglo de parámetros con 'component' ('header' o 'body') y 'name'"
+                sx={{
+                  "& .MuiOutlinedInput-root": {
+                    fontFamily: "monospace",
+                    fontSize: "0.85rem",
+                  },
+                }}
+              />
+            </Box>
+          </Box>
+        </DialogContent>
+        <DialogActions sx={{ p: 2 }}>
+          <Button
+            onClick={() => setModalPlantillaOpen(false)}
+            disabled={savingPlantilla}
+            sx={{ textTransform: "none", color: "#64748b" }}
+          >
+            Cancelar
+          </Button>
+          <Button
+            variant="contained"
+            color="primary"
+            onClick={handleSavePlantilla}
+            disabled={savingPlantilla || !formPlantillaNombre.trim()}
+            startIcon={savingPlantilla ? <CircularProgress size={16} color="inherit" /> : <SaveIcon />}
+            sx={{ textTransform: "none", fontWeight: 700 }}
+          >
+            {savingPlantilla ? "Guardando..." : "Guardar Plantilla"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Modal Probar Envío de Plantilla */}
+      <Dialog
+        open={modalTestPlantillaOpen}
+        onClose={() => !testingPlantillaItem && setModalTestPlantillaOpen(false)}
+        maxWidth="sm"
+        fullWidth
+        PaperProps={{ sx: { borderRadius: "12px" } }}
+      >
+        <DialogTitle sx={{ fontWeight: 700, display: "flex", alignItems: "center", gap: 1 }}>
+          <WhatsAppIcon sx={{ color: "#25D366" }} />
+          Probar Envío: {testPlantillaTarget?.nombre}
+        </DialogTitle>
+        <DialogContent dividers>
+          <Typography variant="body2" sx={{ color: "#64748b", mb: 2 }}>
+            Se enviará una llamada de prueba vía Kapso Cloud API con la plantilla <strong>{testPlantillaTarget?.nombre}</strong> [{testPlantillaTarget?.idioma}].
+          </Typography>
+
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <TextField
+              fullWidth
+              label="Teléfono WhatsApp de Destino"
+              value={testPlantillaTelefono}
+              onChange={(e) => setTestPlantillaTelefono(e.target.value)}
+              placeholder="52XXXXXXXXXX"
+              helperText="Formato internacional E.164 sin signos (+ o -) ni espacios"
+            />
+
+            <TextField
+              fullWidth
+              multiline
+              rows={6}
+              label="Texto del Parámetro Extracto (Prueba)"
+              value={testPlantillaExtracto}
+              onChange={(e) => setTestPlantillaExtracto(e.target.value)}
+              helperText={`Longitud: ${testPlantillaExtracto.length} caracteres (Tope: ${testPlantillaTarget?.tope_extracto || 900})`}
+              sx={{
+                "& .MuiOutlinedInput-root": {
+                  fontFamily: "monospace",
+                  fontSize: "0.85rem",
+                },
+              }}
+            />
+          </Box>
+        </DialogContent>
+        <DialogActions sx={{ p: 2 }}>
+          <Button
+            onClick={() => setModalTestPlantillaOpen(false)}
+            disabled={testingPlantillaItem}
+            sx={{ textTransform: "none", color: "#64748b" }}
+          >
+            Cancelar
+          </Button>
+          <Button
+            variant="contained"
+            color="success"
+            onClick={handleSendTestPlantilla}
+            disabled={testingPlantillaItem || !testPlantillaTelefono.trim()}
+            startIcon={testingPlantillaItem ? <CircularProgress size={16} color="inherit" /> : <SendIcon />}
+            sx={{ textTransform: "none", fontWeight: 700 }}
+          >
+            {testingPlantillaItem ? "Enviando Prueba..." : "Enviar Prueba vía Kapso"}
           </Button>
         </DialogActions>
       </Dialog>

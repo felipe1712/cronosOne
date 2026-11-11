@@ -396,41 +396,29 @@ pub async fn get_edition(
 
         if let Some(sint) = sint_opt {
             let brief_texto = sint.texto;
-            let active_pages = sqlx::query_as::<_, NewsPage>(
-                "SELECT id, section_key, title, subtitle, color, icon, orden, active, created_at, updated_at
-                 FROM news_pages WHERE active = true ORDER BY orden ASC"
+            let s_title = format!("Primeras Planas — {}", date);
+            let s_summary = if brief_texto.chars().count() > 280 {
+                format!("{}...", brief_texto.chars().take(280).collect::<String>())
+            } else {
+                brief_texto.clone()
+            };
+
+            let _ = sqlx::query(
+                "INSERT INTO news_sections (edition_id, section_key, title, summary, full_content, public_slug, published, created_at, updated_at)
+                 VALUES ($1, 'primeras_planas', $2, $3, $4, 'primeras_planas', true, now(), now())
+                 ON CONFLICT (edition_id, section_key) DO UPDATE
+                 SET title = EXCLUDED.title,
+                     summary = EXCLUDED.summary,
+                     full_content = EXCLUDED.full_content,
+                     published = true,
+                     updated_at = now()"
             )
-            .fetch_all(&pool)
-            .await
-            .unwrap_or_default();
-
-            for page in &active_pages {
-                let s_title = format!("{} — {}", page.title, date);
-                let s_summary = if brief_texto.chars().count() > 280 {
-                    format!("{}...", brief_texto.chars().take(280).collect::<String>())
-                } else {
-                    brief_texto.clone()
-                };
-
-                let _ = sqlx::query(
-                    "INSERT INTO news_sections (edition_id, section_key, title, summary, full_content, public_slug, published, created_at, updated_at)
-                     VALUES ($1, $2, $3, $4, $5, $6, true, now(), now())
-                     ON CONFLICT (edition_id, section_key) DO UPDATE
-                     SET title = EXCLUDED.title,
-                         summary = EXCLUDED.summary,
-                         full_content = EXCLUDED.full_content,
-                         published = true,
-                         updated_at = now()"
-                )
-                .bind(edition.id)
-                .bind(&page.section_key)
-                .bind(&s_title)
-                .bind(&s_summary)
-                .bind(&brief_texto)
-                .bind(&page.section_key)
-                .execute(&pool)
-                .await;
-            }
+            .bind(edition.id)
+            .bind(&s_title)
+            .bind(&s_summary)
+            .bind(&brief_texto)
+            .execute(&pool)
+            .await;
 
             // Recargar secciones recién generadas
             sections = sqlx::query_as::<_, NewsSection>(
@@ -1512,33 +1500,33 @@ async fn execute_daily_broadcast(
         }))
     } else {
         // Opción 1: Envío directo de plantilla aprobada Meta Cloud API a la audiencia
-        use chrono::Datelike;
-        let dias_semana = match target_date.weekday() {
-            chrono::Weekday::Mon => "lunes",
-            chrono::Weekday::Tue => "martes",
-            chrono::Weekday::Wed => "miércoles",
-            chrono::Weekday::Thu => "jueves",
-            chrono::Weekday::Fri => "viernes",
-            chrono::Weekday::Sat => "sábado",
-            chrono::Weekday::Sun => "domingo",
+        let extracto_txt: Option<String> = sqlx::query_scalar("SELECT texto FROM extractos WHERE fecha = $1")
+            .bind(target_date)
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None);
+
+        let extracto_final = if let Some(e) = extracto_txt.filter(|s| !s.trim().is_empty()) {
+            e
+        } else {
+            let s_txt: String = sqlx::query_scalar("SELECT texto FROM sintesis_diarias WHERE fecha = $1")
+                .bind(target_date)
+                .fetch_optional(pool)
+                .await
+                .unwrap_or(None)
+                .unwrap_or_default();
+            s_txt.chars().take(900).collect()
         };
-        let mes_str = match target_date.month() {
-            1 => "enero", 2 => "febrero", 3 => "marzo", 4 => "abril", 5 => "mayo", 6 => "junio",
-            7 => "julio", 8 => "agosto", 9 => "septiembre", 10 => "octubre", 11 => "noviembre", 12 => "diciembre", _ => ""
-        };
-        let date_str = format!("{} {} de {} de {}", dias_semana, target_date.day(), mes_str, target_date.year());
-        let date_vars = vec![date_str];
 
         let mut sent_count = 0;
         let mut failed_count = 0;
 
         for (sub_id, phone) in &recipients_data {
-            let res = client.send_template_with_log(
+            let res = client.send_brief_template(
                 Some(pool),
                 phone,
-                &kapso_cfg.template_name,
-                &kapso_cfg.template_language,
-                Some(date_vars.as_slice()),
+                target_date,
+                &extracto_final,
                 "despacho_cms_plantilla_directa",
             ).await;
 

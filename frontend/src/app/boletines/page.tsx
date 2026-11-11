@@ -140,6 +140,13 @@ export default function BoletinesPage() {
   const [confirmApproveOpen, setConfirmApproveOpen] = useState<boolean>(false);
   const [enviarWhatsAppCheck, setEnviarWhatsAppCheck] = useState<boolean>(true);
 
+  // Extracto de Primeras Planas para Plantilla WhatsApp
+  const [extractoText, setExtractoText] = useState<string>("");
+  const [extractoOrigen, setExtractoOrigen] = useState<'corte' | 'claude' | 'manual'>('corte');
+  const [extractoTope, setExtractoTope] = useState<number>(900);
+  const [resumiendoExtracto, setResumiendoExtracto] = useState<boolean>(false);
+  const [guardandoExtracto, setGuardandoExtracto] = useState<boolean>(false);
+
   // Previsualización de Documento Individual
   const [previewDocModalOpen, setPreviewDocModalOpen] = useState<boolean>(false);
   const [previewDocDetail, setPreviewDocDetail] = useState<any | null>(null);
@@ -199,6 +206,26 @@ export default function BoletinesPage() {
       } else if (!preserveExistingText) {
         setEditedText("");
       }
+
+      if (resp.extracto && resp.extracto.texto) {
+        setExtractoText(resp.extracto.texto);
+        setExtractoOrigen(resp.extracto.origen || "manual");
+      } else if (resp.sintesis && resp.sintesis.texto) {
+        const clean = resp.sintesis.texto.trim();
+        const sub = clean.slice(0, extractoTope);
+        const cutIdx = sub.lastIndexOf("\n\n") !== -1 ? sub.lastIndexOf("\n\n") : (sub.lastIndexOf("\n") !== -1 ? sub.lastIndexOf("\n") : sub.length);
+        setExtractoText(sub.slice(0, cutIdx).trim() || sub);
+        setExtractoOrigen("corte");
+      } else if (!preserveExistingText) {
+        setExtractoText("");
+        setExtractoOrigen("corte");
+      }
+
+      ApiService.getExtracto(targetFecha).then((ex) => {
+        if (ex && ex.tope) {
+          setExtractoTope(ex.tope);
+        }
+      }).catch(() => {});
     } catch (err: any) {
       setError(err.message || "Error al cargar los documentos de la fecha.");
     } finally {
@@ -586,8 +613,8 @@ export default function BoletinesPage() {
   const handleSaveDraft = async () => {
     try {
       setSavingDraft(true);
-      await ApiService.actualizarSintesisDiaria(fechaTrabajo, editedText);
-      setSuccess("Borrador de síntesis consolidada guardado exitosamente.");
+      await ApiService.actualizarSintesisDiaria(fechaTrabajo, editedText, extractoText);
+      setSuccess("Borrador de síntesis consolidada y extracto guardados exitosamente.");
       fetchWorkspace(fechaTrabajo);
       fetchHistorial();
     } catch (err: any) {
@@ -598,9 +625,13 @@ export default function BoletinesPage() {
   };
 
   const handleApproveAndDispatch = async () => {
+    if (extractoText.length > extractoTope) {
+      setError(`El extracto no puede exceder el límite de ${extractoTope} caracteres de la plantilla.`);
+      return;
+    }
     try {
       setApproving(true);
-      const res = await ApiService.aprobarSintesisDiaria(fechaTrabajo, editedText, enviarWhatsAppCheck);
+      const res = await ApiService.aprobarSintesisDiaria(fechaTrabajo, editedText, enviarWhatsAppCheck, extractoText);
       setSuccess(
         `✅ ${res.mensaje}. Destinatarios notificados: ${res.destinatarios_notificados}`
       );
@@ -611,6 +642,52 @@ export default function BoletinesPage() {
       setError(err.message || "Error al aprobar y despachar la síntesis diaria.");
     } finally {
       setApproving(false);
+    }
+  };
+
+  const handleRegenerarExtracto = () => {
+    const clean = editedText.trim();
+    if (!clean) return;
+    const sub = clean.slice(0, extractoTope);
+    const cutIdx = sub.lastIndexOf("\n\n") !== -1 ? sub.lastIndexOf("\n\n") : (sub.lastIndexOf("\n") !== -1 ? sub.lastIndexOf("\n") : sub.length);
+    setExtractoText(sub.slice(0, cutIdx).trim() || sub);
+    setExtractoOrigen("corte");
+    setSuccess("Extracto regenerado a partir de la síntesis actual.");
+  };
+
+  const handleResumirConClaude = async () => {
+    if (!editedText.trim()) {
+      setError("No hay texto de síntesis disponible para resumir.");
+      return;
+    }
+    try {
+      setResumiendoExtracto(true);
+      const res = await ApiService.resumirExtracto(fechaTrabajo, editedText, extractoTope);
+      if (res && res.extracto) {
+        setExtractoText(res.extracto);
+        setExtractoOrigen("claude");
+        setSuccess("Extracto ejecutivo de Primeras Planas generado con Claude.");
+      }
+    } catch (err: any) {
+      setError(err.message || "Error al resumir extracto con Claude.");
+    } finally {
+      setResumiendoExtracto(false);
+    }
+  };
+
+  const handleGuardarSoloExtracto = async () => {
+    if (extractoText.length > extractoTope) {
+      setError(`El extracto excede el límite de ${extractoTope} caracteres.`);
+      return;
+    }
+    try {
+      setGuardandoExtracto(true);
+      await ApiService.guardarExtracto(fechaTrabajo, extractoText, extractoOrigen);
+      setSuccess("Extracto guardado en base de datos correctamente.");
+    } catch (err: any) {
+      setError(err.message || "Error al guardar extracto.");
+    } finally {
+      setGuardandoExtracto(false);
     }
   };
 
@@ -1509,6 +1586,389 @@ export default function BoletinesPage() {
       </Grid>
 
       {/* ===================================================================== */}
+      {/* SECCIÓN 2.5: EXTRACTO OFICIAL PARA PLANTILLA WHATSAPP (PRIMERAS PLANAS) */}
+      {/* ===================================================================== */}
+      <Box sx={{ mb: 4 }}>
+        <Card sx={{ borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden" }}>
+          {/* Header */}
+          <Box
+            sx={{
+              p: 2,
+              backgroundColor: "#f8fafc",
+              borderBottom: "1px solid #e2e8f0",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: 1.5,
+            }}
+          >
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+              <Box
+                sx={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: "10px",
+                  backgroundColor: "#25D366",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "#ffffff",
+                }}
+              >
+                <WhatsAppIcon />
+              </Box>
+              <Box>
+                <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                  <Typography variant="h6" sx={{ fontWeight: 700, color: "#1e293b", fontSize: "1.05rem" }}>
+                    Extracto para WhatsApp — Primeras Planas
+                  </Typography>
+                  <Chip
+                    label={
+                      extractoOrigen === "claude"
+                        ? "✨ Resumen Claude"
+                        : extractoOrigen === "corte"
+                        ? "✂️ Corte Automático"
+                        : "✍️ Editado Manual"
+                    }
+                    size="small"
+                    color={extractoOrigen === "claude" ? "secondary" : extractoOrigen === "manual" ? "primary" : "default"}
+                    sx={{ fontWeight: 600, fontSize: "0.72rem" }}
+                  />
+                </Box>
+                <Typography variant="caption" sx={{ color: "#64748b" }}>
+                  Parámetro <code>{"{{primeras_planas}}"}</code> para plantilla oficial <strong>brief_informativo_cp_v2</strong>. Límite: {extractoTope} caracteres (Meta máx: 1,024).
+                </Typography>
+              </Box>
+            </Box>
+
+            <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={<RefreshIcon />}
+                onClick={handleRegenerarExtracto}
+                disabled={!editedText.trim()}
+                sx={{ textTransform: "none", fontWeight: 600 }}
+              >
+                Regenerar desde Síntesis
+              </Button>
+              <Button
+                size="small"
+                variant="contained"
+                color="secondary"
+                startIcon={resumiendoExtracto ? <CircularProgress size={16} color="inherit" /> : <AutoAwesomeIcon />}
+                onClick={handleResumirConClaude}
+                disabled={resumiendoExtracto || !editedText.trim()}
+                sx={{ textTransform: "none", fontWeight: 700 }}
+              >
+                {resumiendoExtracto ? "Resumiendo..." : "✨ Resumir con Claude"}
+              </Button>
+              <Button
+                size="small"
+                variant="contained"
+                color="primary"
+                startIcon={guardandoExtracto ? <CircularProgress size={16} color="inherit" /> : <SaveIcon />}
+                onClick={handleGuardarSoloExtracto}
+                disabled={guardandoExtracto || !extractoText.trim() || extractoText.length > extractoTope}
+                sx={{ textTransform: "none", fontWeight: 600 }}
+              >
+                {guardandoExtracto ? "Guardando..." : "Guardar Extracto"}
+              </Button>
+            </Box>
+          </Box>
+
+          <CardContent sx={{ p: 2.5 }}>
+            <Grid container spacing={3}>
+              {/* Columna Izquierda: Editor del Extracto */}
+              <Grid size={{ xs: 12, lg: 7 }}>
+                <Alert severity="info" sx={{ mb: 2, "& .MuiAlert-message": { fontSize: "0.82rem" } }}>
+                  <strong>Formato compatible con Meta:</strong> Use saltos de línea normales (<code>\n</code>), emojis directos (🇲🇽, 🔴, 📌) y <code>*texto*</code> para negritas. Evite encabezados markdown (<code>##</code>).
+                </Alert>
+
+                <TextField
+                  multiline
+                  rows={14}
+                  fullWidth
+                  placeholder="Extracto oficial de Primeras Planas que se enviará en la plantilla de WhatsApp..."
+                  value={extractoText}
+                  onChange={(e) => {
+                    setExtractoText(e.target.value);
+                    setExtractoOrigen("manual");
+                  }}
+                  sx={{
+                    "& .MuiOutlinedInput-root": {
+                      fontFamily: "monospace",
+                      fontSize: "0.88rem",
+                      lineHeight: 1.6,
+                      backgroundColor: "#fafafa",
+                    },
+                  }}
+                />
+
+                <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mt: 1.5, flexWrap: "wrap", gap: 1 }}>
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        fontWeight: 700,
+                        color: extractoText.length > extractoTope ? "#dc2626" : "#16a34a",
+                        fontFamily: "monospace",
+                      }}
+                    >
+                      {extractoText.length} / {extractoTope} caracteres
+                    </Typography>
+                    <Typography variant="caption" sx={{ color: "#64748b" }}>
+                      (Tope plantilla: {extractoTope} | Meta límite: 1,024)
+                    </Typography>
+                  </Box>
+
+                  {extractoText.length > extractoTope ? (
+                    <Chip
+                      label={`⚠️ Excede tope por ${extractoText.length - extractoTope} caracteres`}
+                      size="small"
+                      color="error"
+                      sx={{ fontWeight: 700 }}
+                    />
+                  ) : extractoText.length === 0 ? (
+                    <Chip label="Vacío" size="small" sx={{ color: "#64748b" }} />
+                  ) : (
+                    <Chip
+                      label="✅ Tamaño válido para Meta Cloud API"
+                      size="small"
+                      color="success"
+                      sx={{ fontWeight: 600 }}
+                    />
+                  )}
+                </Box>
+              </Grid>
+
+              {/* Columna Derecha: Previsualización de Plantilla Meta / Kapso */}
+              <Grid size={{ xs: 12, lg: 5 }}>
+                <Box
+                  sx={{
+                    borderRadius: "14px",
+                    border: "1px solid #cbd5e1",
+                    backgroundColor: "#efeae2",
+                    overflow: "hidden",
+                    display: "flex",
+                    flexDirection: "column",
+                    boxShadow: "0 4px 14px rgba(0,0,0,0.06)",
+                  }}
+                >
+                  {/* Header WhatsApp Bar */}
+                  <Box
+                    sx={{
+                      backgroundColor: "#075e54",
+                      color: "#ffffff",
+                      p: 1.5,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 1.5,
+                    }}
+                  >
+                    <Box
+                      sx={{
+                        width: 38,
+                        height: 38,
+                        borderRadius: "50%",
+                        backgroundColor: "#25d366",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      <WhatsAppIcon sx={{ color: "#ffffff", fontSize: 24 }} />
+                    </Box>
+                    <Box sx={{ flex: 1 }}>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
+                        Coparmex — Monitoreo Ejecutivo
+                      </Typography>
+                      <Typography variant="caption" sx={{ opacity: 0.9, fontSize: "0.72rem" }}>
+                        Plantilla: <strong>brief_informativo_cp_v2</strong> [es_MX]
+                      </Typography>
+                    </Box>
+                  </Box>
+
+                  {/* Chat Area */}
+                  <Box
+                    sx={{
+                      p: 2,
+                      backgroundImage: "radial-gradient(#cbd5e1 0.75px, transparent 0.75px)",
+                      backgroundSize: "16px 16px",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 1.5,
+                    }}
+                  >
+                    {/* Burbuja Principal de la Plantilla */}
+                    <Box
+                      sx={{
+                        backgroundColor: "#ffffff",
+                        borderRadius: "8px",
+                        p: 2,
+                        boxShadow: "0 1px 3px rgba(0,0,0,0.12)",
+                        border: "1px solid #e2e8f0",
+                      }}
+                    >
+                      {/* Header de la Plantilla: Resumen informativo {{date}} */}
+                      <Typography
+                        variant="subtitle2"
+                        sx={{
+                          fontWeight: 800,
+                          color: "#111b21",
+                          fontSize: "0.95rem",
+                          borderBottom: "1px solid #f1f5f9",
+                          pb: 1,
+                          mb: 1.5,
+                        }}
+                      >
+                        Resumen informativo{" "}
+                        {(() => {
+                          try {
+                            const [y, m, d] = fechaTrabajo.split("-").map(Number);
+                            const meses = [
+                              "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+                              "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+                            ];
+                            return `${d} de ${meses[m - 1] || ""}`;
+                          } catch {
+                            return fechaTrabajo;
+                          }
+                        })()}
+                      </Typography>
+
+                      {/* Título de la Sección en el Body */}
+                      <Typography
+                        variant="body2"
+                        sx={{ fontWeight: 800, color: "#111b21", letterSpacing: 0.5, mb: 1 }}
+                      >
+                        PRIMERAS PLANAS
+                      </Typography>
+
+                      {/* Parámetro {{primeras_planas}}: El Extracto */}
+                      <Box
+                        sx={{
+                          color: "#111b21",
+                          fontSize: "0.88rem",
+                          lineHeight: 1.55,
+                          whiteSpace: "pre-wrap",
+                          wordBreak: "break-word",
+                          "& strong": { fontWeight: 700 },
+                          "& em": { fontStyle: "italic" },
+                        }}
+                        dangerouslySetInnerHTML={{
+                          __html: formatWhatsAppText(extractoText || "Aquí se visualizará el extracto..."),
+                        }}
+                      />
+
+                      {/* Footer fijo de la Plantilla */}
+                      <Typography
+                        variant="caption"
+                        sx={{
+                          display: "block",
+                          color: "#667781",
+                          mt: 2,
+                          pt: 1,
+                          borderTop: "1px dashed #e2e8f0",
+                          fontSize: "0.75rem",
+                        }}
+                      >
+                        Si no deseas seguir recibiendo estos mensajes manda la palabra &quot;STOP&quot;
+                      </Typography>
+
+                      {/* Hora y Double Check */}
+                      <Box sx={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 0.5, mt: 1 }}>
+                        <Typography variant="caption" sx={{ color: "#667781", fontSize: "0.7rem" }}>
+                          {new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        </Typography>
+                        <DoneAllIcon sx={{ color: "#53bdeb", fontSize: 16 }} />
+                      </Box>
+                    </Box>
+
+                    {/* Botones de Acción de la Plantilla Meta */}
+                    <Box sx={{ display: "flex", flexDirection: "column", gap: 0.8 }}>
+                      <Box
+                        sx={{
+                          backgroundColor: "#ffffff",
+                          borderRadius: "8px",
+                          py: 1,
+                          px: 2,
+                          textAlign: "center",
+                          boxShadow: "0 1px 2px rgba(0,0,0,0.08)",
+                          color: "#00a884",
+                          fontWeight: 600,
+                          fontSize: "0.85rem",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: 0.5,
+                        }}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>open_in_new</span>
+                        Política
+                      </Box>
+                      <Box
+                        sx={{
+                          backgroundColor: "#ffffff",
+                          borderRadius: "8px",
+                          py: 1,
+                          px: 2,
+                          textAlign: "center",
+                          boxShadow: "0 1px 2px rgba(0,0,0,0.08)",
+                          color: "#00a884",
+                          fontWeight: 600,
+                          fontSize: "0.85rem",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: 0.5,
+                        }}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>open_in_new</span>
+                        Economía
+                      </Box>
+                      <Box
+                        component="a"
+                        href="/brief/primeras_planas"
+                        target="_blank"
+                        sx={{
+                          backgroundColor: "#ffffff",
+                          borderRadius: "8px",
+                          py: 1,
+                          px: 2,
+                          textAlign: "center",
+                          boxShadow: "0 1px 2px rgba(0,0,0,0.08)",
+                          color: "#7c3aed",
+                          fontWeight: 700,
+                          fontSize: "0.85rem",
+                          textDecoration: "none",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: 0.5,
+                        }}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>newspaper</span>
+                        Ver en Portal Público (Primeras Planas)
+                      </Box>
+                    </Box>
+                  </Box>
+
+                  {/* Footer Informativo */}
+                  <Box sx={{ p: 1.5, backgroundColor: "#f0f2f5", borderTop: "1px solid #d1d7db", textAlign: "center" }}>
+                    <Typography variant="caption" sx={{ color: "#667781" }}>
+                      Payload estructurado de plantilla: <code>type: &quot;template&quot;</code> · variables <code>date</code> y <code>primeras_planas</code>
+                    </Typography>
+                  </Box>
+                </Box>
+              </Grid>
+            </Grid>
+          </CardContent>
+        </Card>
+      </Box>
+
+      {/* ===================================================================== */}
       {/* SECCIÓN 3: HISTORIAL DE FECHAS DE SÍNTESIS (VISTA PRINCIPAL)          */}
       {/* ===================================================================== */}
       <Card sx={{ borderRadius: "12px", border: "1px solid #e2e8f0" }}>
@@ -2069,15 +2529,67 @@ export default function BoletinesPage() {
       <Dialog
         open={confirmApproveOpen}
         onClose={() => setConfirmApproveOpen(false)}
-        maxWidth="xs"
+        maxWidth="sm"
         fullWidth
         PaperProps={{ sx: { borderRadius: "12px" } }}
       >
-        <DialogTitle sx={{ fontWeight: 700 }}>Confirmar Aprobación y Despacho</DialogTitle>
-        <DialogContent>
-          <Typography variant="body2" sx={{ color: "#475569", mb: 2 }}>
-            ¿Desea aprobar la Síntesis Diaria Consolidada del <strong>{fechaTrabajo}</strong>?
+        <DialogTitle sx={{ fontWeight: 700, display: "flex", alignItems: "center", gap: 1 }}>
+          <WhatsAppIcon sx={{ color: "#25D366" }} />
+          Confirmar Aprobación y Despacho
+        </DialogTitle>
+        <DialogContent dividers>
+          <Typography variant="body2" sx={{ color: "#334155", mb: 2 }}>
+            ¿Desea aprobar y publicar la Síntesis Diaria Consolidada del <strong>{fechaTrabajo}</strong>?
           </Typography>
+
+          <Alert severity="info" sx={{ mb: 2, fontSize: "0.82rem" }}>
+            La síntesis completa se publicará exclusivamente en el portal público bajo la sección <strong>Primeras Planas</strong> (sin alterar Política, Economía o Seguridad).
+          </Alert>
+
+          <Box sx={{ p: 2, backgroundColor: "#f8fafc", borderRadius: "8px", border: "1px solid #e2e8f0", mb: 2 }}>
+            <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 1 }}>
+              <Typography variant="caption" sx={{ fontWeight: 700, color: "#475569" }}>
+                EXTRACTO PARA WHATSAPP (PLANTILLA brief_informativo_cp_v2)
+              </Typography>
+              <Chip
+                label={`${extractoText.length} / ${extractoTope} chars`}
+                size="small"
+                color={extractoText.length > extractoTope ? "error" : extractoText.length === 0 ? "warning" : "success"}
+                sx={{ fontWeight: 700 }}
+              />
+            </Box>
+
+            <Typography
+              variant="body2"
+              sx={{
+                fontFamily: "monospace",
+                fontSize: "0.82rem",
+                color: "#1e293b",
+                backgroundColor: "#ffffff",
+                p: 1.5,
+                borderRadius: "6px",
+                border: "1px solid #cbd5e1",
+                maxHeight: 120,
+                overflowY: "auto",
+                whiteSpace: "pre-wrap",
+              }}
+            >
+              {extractoText || "⚠️ No se ha generado ni redactado ningún extracto aún."}
+            </Typography>
+
+            {extractoText.length > extractoTope && (
+              <Alert severity="error" sx={{ mt: 1.5, py: 0.5 }}>
+                El extracto excede el límite de {extractoTope} caracteres de Meta. Debe recortarlo o resumirlo antes de enviar.
+              </Alert>
+            )}
+
+            {!extractoText.trim() && enviarWhatsAppCheck && (
+              <Alert severity="warning" sx={{ mt: 1.5, py: 0.5 }}>
+                El extracto está vacío. Se requiere contenido para inyectar en el parámetro <code>{"{{primeras_planas}}"}</code>.
+              </Alert>
+            )}
+          </Box>
+
           <FormControlLabel
             control={
               <Checkbox
@@ -2088,7 +2600,7 @@ export default function BoletinesPage() {
             }
             label={
               <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                Despachar plantilla oficial vía WhatsApp a la Audiencia Activa (Suscriptores del Gestor de Páginas)
+                Despachar plantilla oficial vía Kapso WhatsApp Cloud API a la Audiencia Activa
               </Typography>
             }
           />
@@ -2102,10 +2614,13 @@ export default function BoletinesPage() {
             color="success"
             startIcon={approving ? <CircularProgress size={16} color="inherit" /> : <CheckCircleIcon />}
             onClick={handleApproveAndDispatch}
-            disabled={approving}
+            disabled={
+              approving ||
+              (enviarWhatsAppCheck && (extractoText.length > extractoTope || !extractoText.trim()))
+            }
             sx={{ textTransform: "none", fontWeight: 700 }}
           >
-            {approving ? "Enviando..." : "Confirmar & Enviar"}
+            {approving ? "Enviando..." : "Confirmar & Despachar"}
           </Button>
         </DialogActions>
       </Dialog>

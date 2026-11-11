@@ -1,4 +1,4 @@
-import os
+﻿import os
 import json
 from typing import List, Dict, Any, Tuple
 import anthropic
@@ -413,6 +413,93 @@ async def generate_executive_brief(sections: List[Dict[str, Any]], fecha_str: st
         )
         return fallback_brief, detected_topics, 0
 
+async def generate_whatsapp_extract(texto: str, max_chars: int = 900) -> Tuple[str, str, int]:
+    """
+    Resume la síntesis diaria / texto de portadas nacionales con Claude
+    para generar un extracto ejecutivo para WhatsApp dentro de max_chars caracteres.
+    """
+    clean_text = (texto or "").strip()
+    if not clean_text:
+        return "🇲🇽 *PRIMERAS PLANAS NACIONALES*\nSin información disponible para esta fecha.", "local", 0
+
+    if not settings.anthropic_api_key:
+        cut = clean_text[:max_chars]
+        idx = cut.rfind("\n\n")
+        if idx == -1:
+            idx = cut.rfind("\n")
+        if idx == -1:
+            idx = cut.rfind(". ")
+        fallback = cut[:idx].strip() if idx > 0 else cut.strip()
+        return fallback, "fallback_sin_api_key", 0
+
+    configured_model = get_configured_model()
+    client = anthropic.Anthropic(api_key=settings.anthropic_api_key, timeout=90.0)
+
+    prompt = (
+        f"Eres un editor senior de inteligencia de prensa mexicana para canales ejecutivos de WhatsApp.\n"
+        f"Tu objetivo es transformar el siguiente texto en un resumen de PRIMERAS PLANAS sumamente conciso, de alto impacto y fácil de leer en un mensaje de WhatsApp.\n\n"
+        f"REGLAS ESTRICTAS:\n"
+        f"1. Inicia con: 🇲🇽 *PRIMERAS PLANAS NACIONALES*\n"
+        f"2. Incluye de 2 a 4 viñetas clave con emojis representativos (ej: 🔴 *Seguridad:*, 📈 *Economía:*, ⚖️ *Justicia:*, 🏛️ *Congreso:*).\n"
+        f"3. Formato WhatsApp: *negritas* con un asterisco, saltos de línea limpios entre puntos. No uses encabezados Markdown (# ni ##).\n"
+        f"4. LÍMITE DE CARACTERES: El texto COMPLETO debe tener como MÁXIMO {max_chars} caracteres. Esto es un límite técnico estricto de Meta WhatsApp.\n\n"
+        f"Texto fuente a sintetizar:\n"
+        f"{clean_text[:12000]}"
+    )
+
+    t0 = time.time()
+    try:
+        response = client.messages.create(
+            model=configured_model,
+            max_tokens=600,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        latency = int((time.time() - t0) * 1000)
+        extract_text, in_tok, out_tok, _ = extract_text_and_meta(response)
+
+        # Enforzar límite estricto de caracteres
+        extract_text = extract_text.strip()
+        if len(extract_text) > max_chars:
+            cut = extract_text[:max_chars]
+            idx = cut.rfind("\n\n")
+            if idx == -1:
+                idx = cut.rfind("\n")
+            if idx == -1:
+                idx = cut.rfind(". ")
+            extract_text = cut[:idx].strip() if idx > 0 else cut.strip()
+
+        record_api_log(
+            servicio="claude",
+            accion="resumir_extracto_whatsapp",
+            modelo_o_proveedor=configured_model,
+            estado="ok",
+            codigo_http=200,
+            latencia_ms=latency,
+            tokens_input=in_tok,
+            tokens_output=out_tok,
+            max_tokens_configurado=600,
+            peticion_payload=f"[Prompt Extracto WhatsApp max_chars={max_chars}]\n{prompt[:2000]}",
+            respuesta_payload=extract_text
+        )
+        return extract_text, configured_model, in_tok + out_tok
+    except Exception as e:
+        latency = int((time.time() - t0) * 1000)
+        record_api_log(
+            servicio="claude",
+            accion="resumir_extracto_whatsapp",
+            modelo_o_proveedor=configured_model,
+            estado="error",
+            codigo_http=500,
+            latencia_ms=latency,
+            max_tokens_configurado=600,
+            peticion_payload=prompt[:2000],
+            error_mensaje=str(e)
+        )
+        cut = clean_text[:max_chars]
+        idx = cut.rfind("\n")
+        fallback = cut[:idx].strip() if idx > 0 else cut.strip()
+        return fallback, f"error_{configured_model}", 0
+
 def extract_section_text(sec: dict) -> str:
     """Extrae de manera segura el texto completo de una sección, soportando dict, str o JSON string."""
     contenido = sec.get("contenido")
@@ -608,4 +695,91 @@ async def generate_consolidated_daily_brief(documents: List[Dict[str, Any]], fec
             f"_(Nota: Claude API retornó '{str(e)[:70]}...'. Se generó síntesis de respaldo editable)_"
         )
         return fallback_brief, detected_topics, 0
+
+async def generate_whatsapp_extract(texto: str, max_chars: int = 900) -> Tuple[str, str, int]:
+    """
+    Resume la síntesis diaria / texto de portadas nacionales con Claude
+    para generar un extracto ejecutivo para WhatsApp dentro de max_chars caracteres.
+    """
+    clean_text = (texto or "").strip()
+    if not clean_text:
+        return "🇲🇽 *PRIMERAS PLANAS NACIONALES*\nSin información disponible para esta fecha.", "local", 0
+
+    if not settings.anthropic_api_key:
+        cut = clean_text[:max_chars]
+        idx = cut.rfind("\n\n")
+        if idx == -1:
+            idx = cut.rfind("\n")
+        if idx == -1:
+            idx = cut.rfind(". ")
+        fallback = cut[:idx].strip() if idx > 0 else cut.strip()
+        return fallback, "fallback_sin_api_key", 0
+
+    configured_model = get_configured_model()
+    client = anthropic.Anthropic(api_key=settings.anthropic_api_key, timeout=90.0)
+
+    prompt = (
+        f"Eres un editor senior de inteligencia de prensa mexicana para canales ejecutivos de WhatsApp.\n"
+        f"Tu objetivo es transformar el siguiente texto en un resumen de PRIMERAS PLANAS sumamente conciso, de alto impacto y fácil de leer en un mensaje de WhatsApp.\n\n"
+        f"REGLAS ESTRICTAS:\n"
+        f"1. Inicia con: 🇲🇽 *PRIMERAS PLANAS NACIONALES*\n"
+        f"2. Incluye de 2 a 4 viñetas clave con emojis representativos (ej: 🔴 *Seguridad:*, 📈 *Economía:*, ⚖️ *Justicia:*, 🏛️ *Congreso:*).\n"
+        f"3. Formato WhatsApp: *negritas* con un asterisco, saltos de línea limpios entre puntos. No uses encabezados Markdown (# ni ##).\n"
+        f"4. LÍMITE DE CARACTERES: El texto COMPLETO debe tener como MÁXIMO {max_chars} caracteres. Esto es un límite técnico estricto de Meta WhatsApp.\n\n"
+        f"Texto fuente a sintetizar:\n"
+        f"{clean_text[:12000]}"
+    )
+
+    t0 = time.time()
+    try:
+        response = client.messages.create(
+            model=configured_model,
+            max_tokens=600,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        latency = int((time.time() - t0) * 1000)
+        extract_text, in_tok, out_tok, _ = extract_text_and_meta(response)
+
+        # Enforzar límite estricto de caracteres
+        extract_text = extract_text.strip()
+        if len(extract_text) > max_chars:
+            cut = extract_text[:max_chars]
+            idx = cut.rfind("\n\n")
+            if idx == -1:
+                idx = cut.rfind("\n")
+            if idx == -1:
+                idx = cut.rfind(". ")
+            extract_text = cut[:idx].strip() if idx > 0 else cut.strip()
+
+        record_api_log(
+            servicio="claude",
+            accion="resumir_extracto_whatsapp",
+            modelo_o_proveedor=configured_model,
+            estado="ok",
+            codigo_http=200,
+            latencia_ms=latency,
+            tokens_input=in_tok,
+            tokens_output=out_tok,
+            max_tokens_configurado=600,
+            peticion_payload=f"[Prompt Extracto WhatsApp max_chars={max_chars}]\n{prompt[:2000]}",
+            respuesta_payload=extract_text
+        )
+        return extract_text, configured_model, in_tok + out_tok
+    except Exception as e:
+        latency = int((time.time() - t0) * 1000)
+        record_api_log(
+            servicio="claude",
+            accion="resumir_extracto_whatsapp",
+            modelo_o_proveedor=configured_model,
+            estado="error",
+            codigo_http=500,
+            latencia_ms=latency,
+            max_tokens_configurado=600,
+            peticion_payload=prompt[:2000],
+            error_mensaje=str(e)
+        )
+        cut = clean_text[:max_chars]
+        idx = cut.rfind("\n")
+        fallback = cut[:idx].strip() if idx > 0 else cut.strip()
+        return fallback, f"error_{configured_model}", 0
 

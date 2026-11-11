@@ -1,4 +1,4 @@
-import { Box, Typography, Link } from "@mui/material";
+﻿import { Box, Typography, Link } from "@mui/material";
 import Image from "next/image";
  
 export default function NotFound() {

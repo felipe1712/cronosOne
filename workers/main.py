@@ -163,6 +163,23 @@ async def test_claude_endpoint(payload: TestClaudeRequest):
             "mensaje": f"Fallo al conectar con {target_model}: {str(e)}"
         }
 
+class ResumirExtractoPayload(BaseModel):
+    texto: str
+    max_chars: Optional[int] = 900
+
+@app.post("/api/resumir-extracto")
+async def resumir_extracto_endpoint(payload: ResumirExtractoPayload):
+    from llm_synthesis import generate_whatsapp_extract
+    texto = payload.texto or ""
+    max_chars = payload.max_chars or 900
+    extracto, modelo, tokens = await generate_whatsapp_extract(texto, max_chars)
+    return {
+        "ok": True,
+        "extracto": extracto,
+        "modelo_usado": modelo,
+        "tokens_usados": tokens
+    }
+
 class ScrapeSenadoRequest(BaseModel):
     fecha: Optional[str] = None
     secciones: Optional[list[str]] = None

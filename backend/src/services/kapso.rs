@@ -3,6 +3,37 @@ use serde_json::json;
 use sqlx::PgPool;
 use tracing::{error, info};
 
+pub fn format_fecha_header(date: chrono::NaiveDate) -> String {
+    use chrono::Datelike;
+    let mes = match date.month() {
+        1 => "Enero", 2 => "Febrero", 3 => "Marzo", 4 => "Abril",
+        5 => "Mayo", 6 => "Junio", 7 => "Julio", 8 => "Agosto",
+        9 => "Septiembre", 10 => "Octubre", 11 => "Noviembre", 12 => "Diciembre",
+        _ => "Enero",
+    };
+    format!("{} de {}", date.day(), mes)
+}
+
+pub fn format_fecha_larga_es(date: chrono::NaiveDate) -> String {
+    use chrono::Datelike;
+    let dia_sem = match date.weekday() {
+        chrono::Weekday::Mon => "lunes",
+        chrono::Weekday::Tue => "martes",
+        chrono::Weekday::Wed => "miércoles",
+        chrono::Weekday::Thu => "jueves",
+        chrono::Weekday::Fri => "viernes",
+        chrono::Weekday::Sat => "sábado",
+        chrono::Weekday::Sun => "domingo",
+    };
+    let mes = match date.month() {
+        1 => "enero", 2 => "febrero", 3 => "marzo", 4 => "abril",
+        5 => "mayo", 6 => "junio", 7 => "julio", 8 => "agosto",
+        9 => "septiembre", 10 => "octubre", 11 => "noviembre", 12 => "diciembre",
+        _ => "enero",
+    };
+    format!("{} {} de {} de {}", dia_sem, date.day(), mes, date.year())
+}
+
 #[derive(Debug, Clone)]
 pub struct KapsoConfig {
     pub provider: String,
@@ -273,45 +304,16 @@ impl KapsoClient {
         }
 
         // SEGURIDAD CRÍTICA: Meta prohíbe terminantemente texto libre para síntesis o fuera de ventana de 24h
-        if text.starts_with("# 📰") || text.contains("SÍNTESIS") || accion.contains("sintesis") || accion.contains("brief") {
-            tracing::warn!("⚠️ Se interceptó intento de enviar síntesis/brief como texto libre ('{}'). Redirigiendo automáticamente a plantilla oficial 'brief_informativo'...", accion);
-            use chrono::{Datelike, Utc};
-            let now = Utc::now().date_naive();
-            let dias_semana = match now.weekday() {
-                chrono::Weekday::Mon => "lunes",
-                chrono::Weekday::Tue => "martes",
-                chrono::Weekday::Wed => "miércoles",
-                chrono::Weekday::Thu => "jueves",
-                chrono::Weekday::Fri => "viernes",
-                chrono::Weekday::Sat => "sábado",
-                chrono::Weekday::Sun => "domingo",
-            };
-            let mes_str = match now.month() {
-                1 => "enero", 2 => "febrero", 3 => "marzo", 4 => "abril", 5 => "mayo", 6 => "junio",
-                7 => "julio", 8 => "agosto", 9 => "septiembre", 10 => "octubre", 11 => "noviembre", 12 => "diciembre", _ => ""
-            };
-            let date_str = format!("{} {} de {} de {}", dias_semana, now.day(), mes_str, now.year());
-            let date_vars = vec![date_str];
-
-            let cfg_tpl = if let Some(p) = pool {
-                let cfg = get_whatsapp_config(p).await;
-                if !cfg.template_name.trim().is_empty() && cfg.template_name.trim() != "servicio_monitoreo" {
-                    cfg.template_name
-                } else {
-                    "brief_informativo".to_string()
-                }
-            } else {
-                "brief_informativo".to_string()
-            };
-
-            return self.send_template_with_log(
-                pool,
-                to,
-                &cfg_tpl,
-                "es_MX",
-                Some(&date_vars),
-                &format!("{}_redireccion_plantilla", accion),
-            ).await;
+        if accion.contains("sintesis") || accion.contains("brief") {
+            let err = format!(
+                "Error de protocolo: La acción '{}' corresponde a síntesis diaria y no puede enviarse como texto libre ('type: text'). Debe utilizar la plantilla oficial aprobada por Meta ('type: template').",
+                accion
+            );
+            tracing::error!("❌ {}", err);
+            if let Some(p) = pool {
+                log_whatsapp_api(p, accion, to, "error", Some(400), Some(0), "", "", Some(&err)).await;
+            }
+            return Err(err);
         }
 
         // Límite oficial de Meta Cloud API: text.body <= 4096 caracteres
@@ -341,21 +343,21 @@ impl KapsoClient {
         self.send_text_with_log(None, to, text, "mensaje_texto").await
     }
 
-    /// Envía una plantilla oficial aprobada en Meta Cloud API / Kapso registrando log opcional en BD
-    pub async fn send_template_with_log(
+    /// Envía una plantilla oficial con componentes estructurados (header, body, named parameters)
+    pub async fn send_template_components_with_log(
         &self,
         pool: Option<&PgPool>,
         to: &str,
         template_name: &str,
         language_code: &str,
-        variables: Option<&[String]>,
+        components: Option<&[serde_json::Value]>,
         accion: &str,
     ) -> Result<String, String> {
         let start = std::time::Instant::now();
         let clean_phone = Self::sanitize_phone(to);
         let raw_name = template_name.trim();
         let t_name = if raw_name.is_empty() || raw_name == "hello_world" || raw_name == "servicio_monitoreo" {
-            "brief_informativo"
+            "brief_informativo_cp_v2"
         } else {
             raw_name
         };
@@ -372,22 +374,9 @@ impl KapsoClient {
             }
         });
 
-        // Si se proveen variables (por ejemplo el extracto de la síntesis), se añaden como componentes body
-        if let Some(vars) = variables {
-            let non_empty: Vec<&String> = vars.iter().filter(|v| !v.trim().is_empty()).collect();
-            if !non_empty.is_empty() {
-                let params: Vec<serde_json::Value> = non_empty.iter().map(|v| {
-                    json!({
-                        "type": "text",
-                        "text": v
-                    })
-                }).collect();
-                template_obj["components"] = json!([
-                    {
-                        "type": "body",
-                        "parameters": params
-                    }
-                ]);
+        if let Some(comps) = components {
+            if !comps.is_empty() {
+                template_obj["components"] = json!(comps);
             }
         }
 
@@ -417,13 +406,6 @@ impl KapsoClient {
             let err = "KAPSO_PHONE_NUMBER_ID no configurado en el sistema".to_string();
             if let Some(p) = pool {
                 log_whatsapp_api(p, accion, to, "error", Some(500), Some(0), &payload_str, "", Some(&err)).await;
-            }
-            return Err(err);
-        }
-        if t_name.is_empty() {
-            let err = "El nombre de la plantilla de WhatsApp es obligatorio".to_string();
-            if let Some(p) = pool {
-                log_whatsapp_api(p, accion, to, "error", Some(400), Some(0), &payload_str, "", Some(&err)).await;
             }
             return Err(err);
         }
@@ -474,47 +456,6 @@ impl KapsoClient {
 
         if !status.is_success() {
             let err_detail = extract_error_detail(status, &body);
-            let err_lower = err_detail.to_lowercase();
-
-            // Si falló por discrepancia de componentes/parámetros en Meta, intentar fallback automático
-            if (err_lower.contains("parameter") || err_lower.contains("param") || err_lower.contains("component")) && variables.is_some() {
-                tracing::warn!("⚠️ Fallo al enviar plantilla con variables ({}), reintentando sin componentes...", err_detail);
-                let fallback_payload = json!({
-                    "messaging_product": "whatsapp",
-                    "to": clean_phone,
-                    "type": "template",
-                    "template": {
-                        "name": t_name,
-                        "language": {
-                            "code": lang
-                        }
-                    }
-                });
-                if let Ok(resp2) = self.client.post(&url)
-                    .header("X-API-Key", self.api_key.trim())
-                    .header("Content-Type", "application/json")
-                    .json(&fallback_payload)
-                    .send()
-                    .await
-                {
-                    if resp2.status().is_success() {
-                        let b2: serde_json::Value = resp2.json().await.unwrap_or_default();
-                        let msg_id = b2.get("messages")
-                            .and_then(|m| m.as_array())
-                            .and_then(|arr| arr.first())
-                            .and_then(|first| first.get("id"))
-                            .and_then(|id| id.as_str())
-                            .unwrap_or("kapso_template_ok")
-                            .to_string();
-                        info!("✅ Plantilla WhatsApp entregada a Kapso con éxito (fallback sin componentes). Message ID: {}", msg_id);
-                        if let Some(p) = pool {
-                            log_whatsapp_api(p, accion, to, "ok", Some(200), Some(latency), &fallback_payload.to_string(), &b2.to_string(), None).await;
-                        }
-                        return Ok(msg_id);
-                    }
-                }
-            }
-
             error!("Error en Kapso Template API (HTTP {}): {:?}", status, body);
             if let Some(p) = pool {
                 log_whatsapp_api(p, accion, to, "error", Some(status.as_u16() as i32), Some(latency), &payload_str, &body_str, Some(&err_detail)).await;
@@ -536,6 +477,179 @@ impl KapsoClient {
             log_whatsapp_api(p, accion, to, "ok", Some(status.as_u16() as i32), Some(latency), &payload_str, &body_str, None).await;
         }
         Ok(msg_id)
+    }
+
+    /// Envía una plantilla oficial aprobada en Meta Cloud API / Kapso registrando log en BD
+    pub async fn send_template_with_log(
+        &self,
+        pool: Option<&PgPool>,
+        to: &str,
+        template_name: &str,
+        language_code: &str,
+        variables: Option<&[String]>,
+        accion: &str,
+    ) -> Result<String, String> {
+        let mut components = Vec::new();
+
+        if let Some(vars) = variables {
+            let non_empty: Vec<&String> = vars.iter().filter(|v| !v.trim().is_empty()).collect();
+            if !non_empty.is_empty() {
+                let params: Vec<serde_json::Value> = non_empty
+                    .iter()
+                    .map(|v| {
+                        json!({
+                            "type": "text",
+                            "text": v
+                        })
+                    })
+                    .collect();
+                components.push(json!({
+                    "type": "body",
+                    "parameters": params
+                }));
+            }
+        }
+
+        let comps_ref = if components.is_empty() { None } else { Some(components.as_slice()) };
+        self.send_template_components_with_log(pool, to, template_name, language_code, comps_ref, accion).await
+    }
+
+    /// Envía el Brief / Síntesis Diaria utilizando la plantilla activa configurada en whatsapp_plantillas
+    /// mapeando dinámicamente sus parámetros nombrados (ej: date y primeras_planas).
+    pub async fn send_brief_template(
+        &self,
+        pool: Option<&PgPool>,
+        to: &str,
+        fecha: chrono::NaiveDate,
+        extracto: &str,
+        accion: &str,
+    ) -> Result<String, String> {
+        #[derive(sqlx::FromRow)]
+        struct PlantillaActivaRow {
+            nombre: String,
+            idioma: String,
+            parametros: serde_json::Value,
+            tope_extracto: i32,
+        }
+
+        let mut t_name = "brief_informativo_cp_v2".to_string();
+        let mut t_lang = "es_MX".to_string();
+        let mut tope = 900;
+        let mut params_cfg = json!([
+            {"componente": "header", "nombre": "date", "fuente": "fecha", "formato": "D de Mes"},
+            {"componente": "body", "nombre": "primeras_planas", "fuente": "extracto"}
+        ]);
+
+        if let Some(p) = pool {
+            if let Ok(Some(row)) = sqlx::query_as::<_, PlantillaActivaRow>(
+                "SELECT nombre, idioma, parametros, tope_extracto FROM whatsapp_plantillas WHERE activa = true LIMIT 1"
+            )
+            .fetch_optional(p)
+            .await {
+                t_name = row.nombre;
+                t_lang = row.idioma;
+                tope = row.tope_extracto;
+                if row.parametros.is_array() && !row.parametros.as_array().unwrap().is_empty() {
+                    params_cfg = row.parametros;
+                }
+            }
+        }
+
+        // Normalizar extracto: \r\n -> \n, UTF-8 seguro hasta tope caracteres
+        let clean_extracto = extracto.replace("\r\n", "\n").trim().to_string();
+        let safe_extracto: String = clean_extracto.chars().take(tope as usize).collect();
+
+        let fecha_corta = format_fecha_header(fecha);
+        let fecha_larga = format_fecha_larga_es(fecha);
+
+        let mut header_params: Vec<serde_json::Value> = Vec::new();
+        let mut body_params: Vec<serde_json::Value> = Vec::new();
+
+        if let Some(param_list) = params_cfg.as_array() {
+            for param in param_list {
+                let comp_type = param
+                    .get("componente")
+                    .or_else(|| param.get("component"))
+                    .or_else(|| param.get("type"))
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("body");
+
+                let param_name = param
+                    .get("nombre")
+                    .or_else(|| param.get("name"))
+                    .or_else(|| param.get("parameter_name"))
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("");
+
+                let explicit_fuente = param
+                    .get("fuente")
+                    .or_else(|| param.get("source"))
+                    .and_then(|f| f.as_str())
+                    .unwrap_or("");
+
+                let fuente = if !explicit_fuente.is_empty() {
+                    explicit_fuente
+                } else if param_name.eq_ignore_ascii_case("date") || param_name.eq_ignore_ascii_case("fecha") {
+                    "fecha"
+                } else if param_name.eq_ignore_ascii_case("primeras_planas") || param_name.eq_ignore_ascii_case("extracto") || param_name.eq_ignore_ascii_case("summary") {
+                    "extracto"
+                } else if comp_type.eq_ignore_ascii_case("header") {
+                    "fecha"
+                } else {
+                    "extracto"
+                };
+
+                let formato = param
+                    .get("formato")
+                    .or_else(|| param.get("format"))
+                    .and_then(|f| f.as_str())
+                    .unwrap_or("corta");
+
+                let valor = match fuente {
+                    "fecha" => {
+                        if formato.to_lowercase().contains("larga") {
+                            fecha_larga.clone()
+                        } else {
+                            fecha_corta.clone()
+                        }
+                    }
+                    "extracto" => safe_extracto.clone(),
+                    "fijo" => param.get("valor").or_else(|| param.get("value")).and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    _ => safe_extracto.clone(),
+                };
+
+                let mut param_obj = json!({
+                    "type": "text",
+                    "text": valor
+                });
+                if !param_name.trim().is_empty() {
+                    param_obj["parameter_name"] = json!(param_name.trim());
+                }
+
+                if comp_type.eq_ignore_ascii_case("header") {
+                    header_params.push(param_obj);
+                } else {
+                    body_params.push(param_obj);
+                }
+            }
+        }
+
+        let mut components = Vec::new();
+        if !header_params.is_empty() {
+            components.push(json!({
+                "type": "header",
+                "parameters": header_params
+            }));
+        }
+        if !body_params.is_empty() {
+            components.push(json!({
+                "type": "body",
+                "parameters": body_params
+            }));
+        }
+
+        let comps_ref = if components.is_empty() { None } else { Some(components.as_slice()) };
+        self.send_template_components_with_log(pool, to, &t_name, &t_lang, comps_ref, accion).await
     }
 
     pub async fn send_template(
@@ -882,8 +996,18 @@ pub async fn get_whatsapp_config(pool: &PgPool) -> KapsoConfig {
         }
     }
 
-    if template_name.is_empty() || template_name == "hello_world" || template_name == "servicio_monitoreo" {
-        template_name = "brief_informativo".to_string();
+    // Consultar primero si existe plantilla activa en el administrador whatsapp_plantillas
+    if let Ok(Some(plantilla)) = sqlx::query_as::<_, (String, String)>(
+        "SELECT nombre, idioma FROM whatsapp_plantillas WHERE activa = true LIMIT 1"
+    )
+    .fetch_optional(pool)
+    .await {
+        template_name = plantilla.0;
+        template_language = plantilla.1;
+    }
+
+    if template_name.is_empty() || template_name == "hello_world" || template_name == "servicio_monitoreo" || template_name == "brief_informativo" {
+        template_name = "brief_informativo_cp_v2".to_string();
     }
     if template_language.is_empty() {
         template_language = "es_MX".to_string();

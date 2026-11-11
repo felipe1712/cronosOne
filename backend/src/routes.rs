@@ -42,6 +42,8 @@ pub fn create_router(pool: DbPool, config: Arc<Config>) -> Router {
         .route("/api/sintesis-diarias/:fecha", delete(boletines::eliminar_sintesis_diaria))
         .route("/api/sintesis-diarias/:fecha/consolidar", post(boletines::consolidar_sintesis_fecha))
         .route("/api/sintesis-diarias/:fecha/aprobar", post(boletines::aprobar_sintesis_diaria))
+        .route("/api/sintesis-diarias/:fecha/extracto", get(boletines::get_extracto_fecha).put(boletines::guardar_extracto_fecha))
+        .route("/api/sintesis-diarias/:fecha/extracto/resumir", post(boletines::resumir_extracto_fecha))
 
         // Mensajería (historial y despacho en panel)
         .route("/api/mensajes/historial", get(mensajes::list_historial_mensajes))
@@ -67,6 +69,12 @@ pub fn create_router(pool: DbPool, config: Arc<Config>) -> Router {
         .route("/api/configuracion/test-claude", post(configuracion::test_claude))
         .route("/api/configuracion/test-whatsapp", post(configuracion::test_whatsapp))
         .route("/api/configuracion/test-template", post(configuracion::test_template))
+        // Administrador de Plantillas WhatsApp
+        .route("/api/whatsapp/plantillas", get(configuracion::list_plantillas).post(configuracion::create_plantilla))
+        .route("/api/whatsapp/plantillas/importar-kapso", post(configuracion::importar_plantillas_kapso))
+        .route("/api/whatsapp/plantillas/:id", put(configuracion::update_plantilla).delete(configuracion::delete_plantilla))
+        .route("/api/whatsapp/plantillas/:id/activar", post(configuracion::activar_plantilla))
+        .route("/api/whatsapp/plantillas/:id/probar", post(configuracion::probar_plantilla))
         // Auditoría e Intercambio de Peticiones APIs (Claude y WhatsApp)
         .route("/api/configuracion/logs-api", get(configuracion::get_api_logs).post(configuracion::create_api_log).delete(configuracion::clear_api_logs))
         // Lista de Distribución WhatsApp (Destinatarios)
