@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
@@ -54,7 +54,44 @@ import PeopleIcon from "@mui/icons-material/People";
 import CampaignIcon from "@mui/icons-material/Campaign";
 import WebIcon from "@mui/icons-material/Web";
 import SaveIcon from "@mui/icons-material/Save";
+import NewspaperIcon from "@mui/icons-material/Newspaper";
+import AccountBalanceIcon from "@mui/icons-material/AccountBalance";
+import TrendingUpIcon from "@mui/icons-material/TrendingUp";
+import SecurityIcon from "@mui/icons-material/Security";
+import GavelIcon from "@mui/icons-material/Gavel";
+import PublicIcon from "@mui/icons-material/Public";
+import BusinessIcon from "@mui/icons-material/Business";
+import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import { ApiService } from "@/lib/api";
+
+function renderSectionIcon(iconName: string, fontSize: number = 20) {
+  const norm = (iconName || "").trim().toLowerCase();
+  if (norm === "newspaper" || norm === "primeras_planas" || norm === "feed") {
+    return <NewspaperIcon sx={{ fontSize }} />;
+  }
+  if (norm === "landmark" || norm === "account_balance" || norm === "politica" || norm === "government") {
+    return <AccountBalanceIcon sx={{ fontSize }} />;
+  }
+  if (norm === "trending-up" || norm === "trending_up" || norm === "economia" || norm === "finance") {
+    return <TrendingUpIcon sx={{ fontSize }} />;
+  }
+  if (norm === "shield-alert" || norm === "shield_alert" || norm === "security" || norm === "seguridad" || norm === "shield") {
+    return <SecurityIcon sx={{ fontSize }} />;
+  }
+  if (norm === "gavel" || norm === "legal" || norm === "justicia") {
+    return <GavelIcon sx={{ fontSize }} />;
+  }
+  if (norm === "public" || norm === "global" || norm === "internacional") {
+    return <PublicIcon sx={{ fontSize }} />;
+  }
+  if (norm === "business" || norm === "empresas") {
+    return <BusinessIcon sx={{ fontSize }} />;
+  }
+  if (norm === "warning" || norm === "alert") {
+    return <WarningAmberIcon sx={{ fontSize }} />;
+  }
+  return <ArticleIcon sx={{ fontSize }} />;
+}
 
 export default function CmsManagementPage() {
   const [currentTab, setCurrentTab] = useState<number>(0);
@@ -411,7 +448,7 @@ export default function CmsManagementPage() {
           <Button
             variant="outlined"
             startIcon={<LaunchIcon />}
-            href="/brief/politica"
+            href="/brief/primeras_planas"
             target="_blank"
             sx={{ textTransform: "none", borderColor: "#cbd5e1", color: "#334155" }}
           >
@@ -507,20 +544,19 @@ export default function CmsManagementPage() {
                               <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
                                 <Box
                                   sx={{
-                                    width: 36,
-                                    height: 36,
+                                    width: 38,
+                                    height: 38,
+                                    minWidth: 38,
                                     borderRadius: 2,
-                                    bgcolor: pColor + "15",
+                                    bgcolor: pColor + "18",
                                     color: pColor,
                                     display: "flex",
                                     alignItems: "center",
                                     justifyContent: "center",
-                                    fontWeight: 700,
+                                    overflow: "hidden",
                                   }}
                                 >
-                                  <i className="material-symbols-outlined" style={{ fontSize: 20 }}>
-                                    {pIcon}
-                                  </i>
+                                  {renderSectionIcon(pIcon, 20)}
                                 </Box>
                                 <Box>
                                   <Typography variant="subtitle2" sx={{ fontWeight: 700, color: "#0f172a" }}>
@@ -1140,13 +1176,33 @@ export default function CmsManagementPage() {
                 />
               </Grid>
               <Grid size={{ xs: 6 }}>
-                <TextField
-                  label="Ícono Material"
-                  value={pageForm.icon_name}
-                  onChange={(e) => setPageForm({ ...pageForm, icon_name: e.target.value })}
-                  helperText="article, security, trending_up, etc."
-                  fullWidth
-                />
+                <FormControl fullWidth>
+                  <InputLabel id="page-icon-select-label">Ícono del Canal</InputLabel>
+                  <Select
+                    labelId="page-icon-select-label"
+                    label="Ícono del Canal"
+                    value={pageForm.icon_name || "newspaper"}
+                    onChange={(e) => setPageForm({ ...pageForm, icon_name: e.target.value })}
+                  >
+                    {[
+                      { id: "newspaper", label: "Periódico (Primeras Planas)" },
+                      { id: "landmark", label: "Gobierno / Congreso (Política)" },
+                      { id: "trending-up", label: "Tendencia / Finanzas (Economía)" },
+                      { id: "shield-alert", label: "Escudo / Alerta (Seguridad)" },
+                      { id: "gavel", label: "Justicia / Marco Legal" },
+                      { id: "business", label: "Sector Empresarial" },
+                      { id: "public", label: "Internacional / Global" },
+                      { id: "article", label: "Artículo General" },
+                    ].map((opt) => (
+                      <MenuItem key={opt.id} value={opt.id}>
+                        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                          {renderSectionIcon(opt.id, 18)}
+                          <Typography variant="body2">{opt.label}</Typography>
+                        </Box>
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
               </Grid>
             </Grid>
             <Grid container spacing={2}>

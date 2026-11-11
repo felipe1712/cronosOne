@@ -1668,20 +1668,74 @@ export default function ConfiguracionPage() {
                           </Box>
 
                           <Typography variant="caption" sx={{ color: "#15803d", display: "block", mb: 2, lineHeight: 1.4 }}>
-                            Meta exige que el envío masivo sea mediante una <strong>plantilla pre-aprobada</strong> (<code>type: &quot;template&quot;</code>). Para el despacho matutino de Primeras Planas se utiliza la plantilla activa con parámetros nombrados (<code>date</code> y <code>primeras_planas</code>).
+                            Meta exige que el envío masivo sea mediante una <strong>plantilla pre-aprobada</strong> (<code>type: &quot;template&quot;</code>) sincronizada desde tu WABA (<code>1280554003783822</code>). Selecciona aquí la plantilla activa dada de alta en Kapso:
                           </Typography>
                           <Grid container spacing={2}>
                             <Grid size={{ xs: 12, sm: 8 }}>
-                              <TextField
-                                fullWidth
-                                size="small"
-                                label="Nombre Exacto de la Plantilla WABA"
-                                value={whatsappTemplateName || "brief_informativo_cp_v2"}
-                                onChange={(e) => setWhatsappTemplateName(e.target.value)}
-                                onBlur={() => handleSaveWhatsapp()}
-                                placeholder="brief_informativo_cp_v2"
-                                helperText="Nombre exacto aprobado en Meta/Kapso (ej: brief_informativo_cp_v2)"
-                              />
+                              <FormControl fullWidth size="small">
+                                <InputLabel id="canal-wa-template-select-label">Seleccionar Plantilla de Kapso / Meta WABA</InputLabel>
+                                <Select
+                                  labelId="canal-wa-template-select-label"
+                                  label="Seleccionar Plantilla de Kapso / Meta WABA"
+                                  value={
+                                    plantillas.some((p) => p.nombre === whatsappTemplateName)
+                                      ? whatsappTemplateName
+                                      : plantillas.find((p) => p.activa)?.nombre || whatsappTemplateName || "brief_informativo"
+                                  }
+                                  onChange={async (e) => {
+                                    const chosenName = e.target.value as string;
+                                    setWhatsappTemplateName(chosenName);
+                                    const found = plantillas.find((p) => p.nombre === chosenName);
+                                    if (found) {
+                                      setWhatsappTemplateLanguage(found.idioma || "es_MX");
+                                      await handleActivarPlantilla(found.id, found.nombre);
+                                    } else {
+                                      handleSaveWhatsapp();
+                                    }
+                                  }}
+                                  sx={{ bgcolor: "#fff" }}
+                                >
+                                  {plantillas.length > 0 ? (
+                                    plantillas.map((p) => {
+                                      const paramCount = Array.isArray(p.parametros) ? p.parametros.length : 0;
+                                      const st = (p.status || "APPROVED").toUpperCase();
+                                      return (
+                                        <MenuItem key={p.id} value={p.nombre}>
+                                          <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", gap: 1 }}>
+                                            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                                              <Typography variant="body2" sx={{ fontWeight: 700, fontFamily: "monospace" }}>
+                                                {p.nombre}
+                                              </Typography>
+                                              <Chip label={p.idioma || "es_MX"} size="small" variant="outlined" sx={{ height: 20, fontSize: "0.7rem" }} />
+                                              <Chip
+                                                label={paramCount === 0 ? "0 variables (sin components)" : `${paramCount} variable(s)`}
+                                                size="small"
+                                                sx={{
+                                                  height: 20,
+                                                  fontSize: "0.7rem",
+                                                  bgcolor: paramCount === 0 ? "#e0f2fe" : "#fef3c7",
+                                                  color: paramCount === 0 ? "#0369a1" : "#b45309",
+                                                  fontWeight: 600,
+                                                }}
+                                              />
+                                            </Box>
+                                            <Chip
+                                              label={st}
+                                              size="small"
+                                              color={st === "APPROVED" ? "success" : st === "PENDING" ? "warning" : "default"}
+                                              sx={{ height: 20, fontSize: "0.68rem", fontWeight: 700 }}
+                                            />
+                                          </Box>
+                                        </MenuItem>
+                                      );
+                                    })
+                                  ) : (
+                                    <MenuItem value={whatsappTemplateName || "brief_informativo"}>
+                                      {whatsappTemplateName || "brief_informativo"}
+                                    </MenuItem>
+                                  )}
+                                </Select>
+                              </FormControl>
                             </Grid>
                             <Grid size={{ xs: 12, sm: 4 }}>
                               <TextField
@@ -1693,6 +1747,7 @@ export default function ConfiguracionPage() {
                                 onBlur={() => handleSaveWhatsapp()}
                                 placeholder="es_MX"
                                 helperText="Ej. es_MX o en_US"
+                                sx={{ bgcolor: "#fff" }}
                               />
                             </Grid>
                           </Grid>
@@ -2014,16 +2069,111 @@ export default function ConfiguracionPage() {
                 </Box>
               </Box>
 
+              {/* Selector ComboBox de Plantillas Registradas en Kapso / Meta WABA */}
+              <Card sx={{ mb: 3, borderRadius: "12px", border: "1px solid #bbf7d0", bgcolor: "#f0fdf4", boxShadow: "0 2px 6px rgba(0,0,0,0.04)" }}>
+                <CardContent sx={{ p: 2.5 }}>
+                  <Grid container spacing={2.5} alignItems="center">
+                    <Grid size={{ xs: 12, md: 7 }}>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 700, color: "#166534", mb: 0.5, display: "flex", alignItems: "center", gap: 1 }}>
+                        <WhatsAppIcon sx={{ fontSize: 20, color: "#16a34a" }} />
+                        Seleccionar Plantilla Activa de Kapso / Meta WABA (1280554003783822)
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: "#15803d", display: "block", mb: 1.5 }}>
+                        Elige del listado sincronizado con Meta WABA qué plantilla se utilizará para el envío de síntesis y pruebas. Si eliges una sin variables (<code>0 variables</code>), el sistema omitirá automáticamente <code>components</code>.
+                      </Typography>
+                      <FormControl fullWidth size="small">
+                        <InputLabel id="admin-plantilla-activa-combo-label">Plantillas registradas en Kapso / Meta WABA</InputLabel>
+                        <Select
+                          labelId="admin-plantilla-activa-combo-label"
+                          label="Plantillas registradas en Kapso / Meta WABA"
+                          value={plantillas.find((p) => p.activa)?.id || (plantillas[0]?.id ?? "")}
+                          disabled={loadingPlantillas || plantillas.length === 0 || Boolean(activatingPlantillaId)}
+                          onChange={(e) => {
+                            const selectedId = e.target.value as string;
+                            const target = plantillas.find((p) => p.id === selectedId);
+                            if (target && !target.activa) {
+                              handleActivarPlantilla(target.id, target.nombre);
+                            }
+                          }}
+                          sx={{ bgcolor: "#ffffff", borderRadius: "8px" }}
+                        >
+                          {plantillas.map((p) => {
+                            const paramCount = Array.isArray(p.parametros) ? p.parametros.length : 0;
+                            const st = (p.status || "APPROVED").toUpperCase();
+                            return (
+                              <MenuItem key={p.id} value={p.id}>
+                                <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", gap: 1, flexWrap: "wrap" }}>
+                                  <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                                    <Typography variant="body2" sx={{ fontWeight: 700, fontFamily: "monospace", color: "#0f172a" }}>
+                                      {p.nombre}
+                                    </Typography>
+                                    <Chip label={p.idioma || "es_MX"} size="small" variant="outlined" sx={{ height: 20, fontSize: "0.7rem" }} />
+                                    <Chip
+                                      label={paramCount === 0 ? "0 variables (omite components)" : `${paramCount} variable(s)`}
+                                      size="small"
+                                      sx={{
+                                        height: 20,
+                                        fontSize: "0.7rem",
+                                        bgcolor: paramCount === 0 ? "#e0f2fe" : "#fef3c7",
+                                        color: paramCount === 0 ? "#0369a1" : "#b45309",
+                                        fontWeight: 600,
+                                      }}
+                                    />
+                                  </Box>
+                                  <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
+                                    {p.activa && (
+                                      <Chip label="EN USO" size="small" color="success" sx={{ height: 20, fontSize: "0.68rem", fontWeight: 800 }} />
+                                    )}
+                                    <Chip
+                                      label={st}
+                                      size="small"
+                                      color={st === "APPROVED" ? "success" : st === "PENDING" ? "warning" : "default"}
+                                      variant={p.activa ? "filled" : "outlined"}
+                                      sx={{ height: 20, fontSize: "0.68rem", fontWeight: 700 }}
+                                    />
+                                  </Box>
+                                </Box>
+                              </MenuItem>
+                            );
+                          })}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+
+                    <Grid size={{ xs: 12, md: 5 }}>
+                      {(() => {
+                        const activeTpl = plantillas.find((p) => p.activa) || plantillas[0];
+                        if (!activeTpl) return null;
+                        const pCount = Array.isArray(activeTpl.parametros) ? activeTpl.parametros.length : 0;
+                        return (
+                          <Paper variant="outlined" sx={{ p: 1.75, borderRadius: "10px", bgcolor: "#ffffff", borderColor: "#bbf7d0" }}>
+                            <Typography variant="caption" sx={{ fontWeight: 800, color: "#166534", display: "block", mb: 0.5 }}>
+                              RESUMEN DE PLANTILLA SELECCIONADA:
+                            </Typography>
+                            <Typography variant="body2" sx={{ fontSize: "0.8rem", color: "#334155", lineHeight: 1.6 }}>
+                              • <strong>Plantilla:</strong> <code>{activeTpl.nombre}</code> ({activeTpl.idioma})<br />
+                              • <strong>Estado Meta / Categoría:</strong> <code>{activeTpl.status || "APPROVED"}</code> · <code>{activeTpl.category || "MARKETING"}</code><br />
+                              • <strong>Meta ID:</strong> <code>{activeTpl.meta_template_id || "784203120908608"}</code><br />
+                              • <strong>Kapso UUID:</strong> <code>{activeTpl.kapso_template_id || "Pendiente sync"}</code><br />
+                              • <strong>Modo de envío:</strong> {pCount === 0 ? "Sin parámetros (omite components)" : `Con ${pCount} parámetro(s) dinámicos`}
+                            </Typography>
+                          </Paper>
+                        );
+                      })()}
+                    </Grid>
+                  </Grid>
+                </CardContent>
+              </Card>
+
               {/* Card explicativo de Meta Guidelines */}
               <Alert severity="info" sx={{ mb: 3, borderRadius: "10px" }}>
                 <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
-                  Guía de Parámetros y Límites Oficiales de Meta (WhatsApp Cloud API)
+                  Guía de Parámetros y Sincronización WABA (Meta Cloud API)
                 </Typography>
                 <Typography variant="body2" sx={{ fontSize: "0.85rem", lineHeight: 1.5 }}>
-                  • <strong>Plantilla recomendada:</strong> <code>brief_informativo_cp_v2</code> con idioma <code>es_MX</code>.<br />
-                  • <strong>Header:</strong> Parámetro de texto <code>date</code> (ej. &quot;12 de Noviembre&quot;).<br />
-                  • <strong>Body:</strong> Texto fijo <code>PRIMERAS PLANAS \n\n {"{{primeras_planas}}"} .\n\n Si no deseas seguir recibiendo estos mensajes manda la palabra &quot;STOP&quot;</code>.<br />
-                  • <strong>Límite de Meta:</strong> Todo el cuerpo de la plantilla debe mantenerse estrictamente dentro de los <strong>1,024 caracteres</strong>.
+                  • <strong>Plantilla sin variables (Activa actual):</strong> <code>brief_informativo</code> (<code>es_MX</code>, <code>0 variables</code>) — se envía omitiendo <code>components</code>.<br />
+                  • <strong>Plantilla con variables dinámicas:</strong> <code>brief_informativo_cp_v2</code> (Header: <code>date</code>, Body: <code>primeras_planas</code>) — cambiará a <code>APPROVED</code> automáticamente al pulsar <strong>Sincronizar desde Kapso</strong> una vez autorizada por Meta.<br />
+                  • <strong>Límite de Meta (#132018):</strong> Cuerpo máximo de <strong>1,024 caracteres</strong>; los saltos de línea se sanean automáticamente antes de despachar.
                 </Typography>
               </Alert>
 
@@ -2034,9 +2184,9 @@ export default function ConfiguracionPage() {
                     <TableHead sx={{ backgroundColor: "#f8fafc" }}>
                       <TableRow>
                         <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Estado / Uso</TableCell>
-                        <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Nombre de la Plantilla</TableCell>
-                        <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Idioma</TableCell>
-                        <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Tope Extracto</TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Plantilla & IDs (Meta / Kapso)</TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Estatus WABA</TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Idioma / Tope</TableCell>
                         <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Parámetros Mapeados</TableCell>
                         <TableCell sx={{ fontWeight: 700, color: "#475569" }} align="right">Acciones</TableCell>
                       </TableRow>
@@ -2058,6 +2208,8 @@ export default function ConfiguracionPage() {
                         plantillas.map((p) => {
                           const isActiva = p.activa;
                           const paramList = Array.isArray(p.parametros) ? p.parametros : [];
+                          const st = (p.status || "APPROVED").toUpperCase();
+                          const cat = (p.category || "MARKETING").toUpperCase();
                           return (
                             <TableRow key={p.id} hover sx={{ backgroundColor: isActiva ? "#f0fdf4" : "inherit" }}>
                               <TableCell>
@@ -2091,32 +2243,54 @@ export default function ConfiguracionPage() {
                                     {p.texto_fijo_body}
                                   </Typography>
                                 )}
+                                <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", mt: 0.5 }}>
+                                  {p.meta_template_id && (
+                                    <Typography variant="caption" sx={{ fontSize: "0.68rem", fontFamily: "monospace", color: "#475569", bgcolor: "#f1f5f9", px: 0.75, borderRadius: 1 }}>
+                                      Meta: {p.meta_template_id}
+                                    </Typography>
+                                  )}
+                                  {p.kapso_template_id && (
+                                    <Typography variant="caption" sx={{ fontSize: "0.68rem", fontFamily: "monospace", color: "#475569", bgcolor: "#f1f5f9", px: 0.75, borderRadius: 1 }}>
+                                      Kapso: {p.kapso_template_id.substring(0, 13)}...
+                                    </Typography>
+                                  )}
+                                </Box>
                               </TableCell>
                               <TableCell>
-                                <Chip label={p.idioma || "es_MX"} size="small" variant="outlined" sx={{ fontWeight: 600, fontSize: "0.75rem" }} />
-                              </TableCell>
-                              <TableCell>
-                                <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-                                  <Typography variant="body2" sx={{ fontWeight: 700, color: p.tope_extracto > 1024 ? "#dc2626" : "#1e293b" }}>
-                                    {p.tope_extracto} chars
-                                  </Typography>
-                                  <Typography variant="caption" sx={{ color: "#64748b" }}>
-                                    (Meta: 1,024)
+                                <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5, alignItems: "flex-start" }}>
+                                  <Chip
+                                    label={st}
+                                    size="small"
+                                    color={st === "APPROVED" ? "success" : st === "PENDING" ? "warning" : "error"}
+                                    sx={{ fontWeight: 700, fontSize: "0.7rem", height: 22 }}
+                                  />
+                                  <Typography variant="caption" sx={{ color: "#64748b", fontSize: "0.7rem" }}>
+                                    {cat} {p.quality_score ? `· ${p.quality_score}` : ""}
                                   </Typography>
                                 </Box>
+                              </TableCell>
+                              <TableCell>
+                                <Chip label={p.idioma || "es_MX"} size="small" variant="outlined" sx={{ fontWeight: 600, fontSize: "0.75rem", mb: 0.5 }} />
+                                <Typography variant="caption" sx={{ display: "block", fontWeight: 700, color: p.tope_extracto > 1024 ? "#dc2626" : "#475569" }}>
+                                  Tope: {p.tope_extracto} chars
+                                </Typography>
                               </TableCell>
                               <TableCell>
                                 <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap", maxWidth: 260 }}>
                                   {paramList.map((param: any, idx: number) => (
                                     <Chip
                                       key={idx}
-                                      label={`${param.component || "body"}:${param.name || param}`}
+                                      label={`${param.componente || param.component || "body"}:${param.nombre || param.name || param}`}
                                       size="small"
                                       sx={{ fontSize: "0.7rem", height: 22, backgroundColor: "#f1f5f9" }}
                                     />
                                   ))}
                                   {paramList.length === 0 && (
-                                    <Typography variant="caption" sx={{ color: "#94a3b8" }}>Sin parámetros</Typography>
+                                    <Chip
+                                      label="0 variables (omite components)"
+                                      size="small"
+                                      sx={{ fontSize: "0.7rem", height: 22, bgcolor: "#e0f2fe", color: "#0369a1", fontWeight: 600 }}
+                                    />
                                   )}
                                 </Box>
                               </TableCell>

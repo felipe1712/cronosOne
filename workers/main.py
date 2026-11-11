@@ -386,7 +386,7 @@ async def consolidar_sintesis_diaria_endpoint(payload: ConsolidarSintesisDiariaR
                 pass
 
     # 2. Fase de IA / LLM Claude (SIN conexión de base de datos retenida durante la llamada HTTP remota)
-    from llm_synthesis import generate_consolidated_daily_brief, get_configured_model
+    from llm_synthesis import generate_consolidated_daily_brief, generate_segmented_cms_sections, get_configured_model
     active_model = get_configured_model()
     print(f"[Consolidar] Generando síntesis consolidada para {len(documentos_data)} documentos de {fecha} con {active_model}...")
     try:
@@ -399,6 +399,13 @@ async def consolidar_sintesis_diaria_endpoint(payload: ConsolidarSintesisDiariaR
     brief_texto = brief_res[0]
     detected_topics = brief_res[1]
     total_tokens = brief_res[2] if len(brief_res) > 2 else 0
+
+    # 2.1 Generar segmentación temática especializada por canal para el Portal Público CMS
+    try:
+        segmented_sections = await generate_segmented_cms_sections(documentos_data, brief_texto, fecha)
+    except Exception as seg_err:
+        print(f"[Consolidar] Aviso en generate_segmented_cms_sections: {seg_err}")
+        segmented_sections = {}
 
     # 3. Fase de guardado: Abrir conexión puntual a PostgreSQL para persistir el resultado
     import uuid as uuid_lib
@@ -466,8 +473,15 @@ async def consolidar_sintesis_diaria_endpoint(payload: ConsolidarSintesisDiariaR
             row = cur.fetchone()
             conn.commit()
 
-        # Sincronizar automáticamente con news_editions y news_sections para el blog público
+        # Sincronizar automáticamente con news_editions y news_sections para el blog público (4 canales segmentados)
         try:
+            cur.execute(
+                """
+                INSERT INTO news_pages (section_key, title, subtitle, color, icon, orden, active)
+                VALUES ('primeras_planas', 'Primeras Planas', 'Lo más relevante de las portadas nacionales del día', '#7c3aed', 'newspaper', 0, true)
+                ON CONFLICT (section_key) DO NOTHING;
+                """
+            )
             cur.execute(
                 """
                 INSERT INTO news_editions (edition_date, status, generated_at, updated_at)
@@ -480,12 +494,17 @@ async def consolidar_sintesis_diaria_endpoint(payload: ConsolidarSintesisDiariaR
             ed_row = cur.fetchone()
             if ed_row and ed_row.get("id"):
                 ed_id = ed_row["id"]
-                sec_configs = [
-                    ("politica", f"Síntesis Política y Legislativa — {fecha}", brief_texto[:300], brief_texto),
+                default_keys = [
+                    ("primeras_planas", f"Primeras Planas y Síntesis Ejecutiva — {fecha}", brief_texto[:280], brief_texto),
+                    ("politica", f"Política, Gobierno y Agenda Legislativa — {fecha}", "Análisis legislativo, reformas y acuerdos parlamentarios.", brief_texto),
                     ("economia", f"Panorama Económico y Financiero — {fecha}", "Seguimiento a variables macroeconómicas, divisas y sectores regulados.", brief_texto),
                     ("seguridad", f"Monitoreo de Seguridad e Incidentes — {fecha}", "Alertas de seguridad pública, incidentes carreteros y siniestros.", brief_texto)
                 ]
-                for s_key, s_title, s_sum, s_content in sec_configs:
+                for s_key, def_title, def_sum, def_content in default_keys:
+                    sec_data = segmented_sections.get(s_key) or {}
+                    s_title = sec_data.get("title") or def_title
+                    s_sum = sec_data.get("summary") or def_sum
+                    s_content = sec_data.get("full_content") or def_content
                     cur.execute(
                         """
                         INSERT INTO news_sections (edition_id, section_key, title, summary, full_content, public_slug, published, updated_at)

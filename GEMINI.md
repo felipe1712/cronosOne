@@ -49,11 +49,13 @@
 1. **Nunca enviar síntesis ni pruebas como texto libre (`type: "text"`)**:
    - Meta rechaza cualquier mensaje que no sea plantilla fuera de la ventana de 24 horas (`Cannot send non-template messages outside the 24-hour window`).
    - Todo envío de boletín, síntesis diaria o prueba debe ir como `"type": "template"` usando `send_brief_template`.
-2. **Plantilla Oficial Activa (`brief_informativo_cp_v2`, idioma `es_MX`)**:
-   - Administrada en la tabla `whatsapp_plantillas` (pestaña **"Plantillas WhatsApp"** en `/configuracion`).
-   - Utiliza **parámetros nombrados (`parameter_name`)**:
-     - Componente `header`: `parameter_name: "date"` (ej. `"11 de Noviembre"`).
-     - Componente `body`: `parameter_name: "primeras_planas"` (contenido de la tabla `extractos`).
+2. **Plantillas Oficiales en WABA (`1280554003783822`) y Sincronización con Kapso**:
+   - Administradas en la tabla `whatsapp_plantillas` (seleccionables mediante ComboBox en las pestañas **"Canal WhatsApp"** y **"Plantillas WhatsApp"** en `/configuracion`).
+   - Sincronización:
+     1. `POST https://api.kapso.ai/platform/v1/whatsapp_templates/sync`
+     2. `GET https://api.kapso.ai/meta/whatsapp/v24.0/1280554003783822/message_templates` (WABA ID `1280554003783822`, Phone Number ID `759195320601997`).
+   - Guarda localmente `meta_template_id`, `kapso_template_id`, `status` (`APPROVED`), `category`, `components`, `quality_score`, `phone_number_id`, `waba_id` y `synced_at`.
+   - Si una plantilla tiene **0 variables** (ej. `brief_informativo`, Meta ID `784203120908608`), **se omite por completo `components`** en el payload. Si tiene variables (ej. `brief_informativo_cp_v2`), envía `header` (`date`) y `body` (`primeras_planas`).
 3. **Tabla `extractos`, Límite de Caracteres y Regla `#132018` de Meta**:
    - El cuerpo total de la plantilla en Meta no puede superar los **1,024 caracteres** (tope por defecto del extracto: `900` caracteres).
    - **Regla crítica `#132018` de Meta Graph API**: Los valores dentro de `template.components[].parameters[].text` **NO pueden contener saltos de línea (`\n`), tabuladores (`\t`) ni más de 4 espacios consecutivos** (`Param text cannot have new-line/tab characters or more than 4 consecutive spaces`).
@@ -62,5 +64,5 @@
 ---
 
 ## 3. Reglas del Portal Público y Menú
-1. **Aislamiento de `Primeras Planas`**: La síntesis diaria consolidada se publica exclusivamente en `/brief/primeras_planas` (`section_key = 'primeras_planas'`). Nunca debe sobrescribir las secciones de `politica`, `economia` ni `seguridad`.
+1. **Segmentación en 4 Secciones del Portal Público (`/brief/[section_key]`)**: Cada edición diaria segmenta su contenido especializado sin duplicar texto en las 4 secciones activas: `primeras_planas`, `politica`, `economia` y `seguridad` (tanto al consolidar con Claude en `workers/llm_synthesis.py` como mediante auto-segmentación temática en `backend/src/handlers/cms.rs`).
 2. **Módulo OSINT**: La opción "Inteligencia & OSINT" en `LeftSidebarMenu.tsx` debe permanecer oculta/comentada hasta nuevo aviso.

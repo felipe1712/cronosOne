@@ -627,7 +627,7 @@ pub async fn ensure_sintesis_diarias_schema(pool: &DbPool) {
     .execute(pool)
     .await;
 
-    // Asegurar tabla whatsapp_plantillas y plantilla activa por defecto
+    // Asegurar tabla whatsapp_plantillas y columnas de metadatos WABA / Kapso
     let _ = sqlx::query(
         "CREATE TABLE IF NOT EXISTS whatsapp_plantillas (
             id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -638,6 +638,14 @@ pub async fn ensure_sintesis_diarias_schema(pool: &DbPool) {
             tope_extracto       INT NOT NULL DEFAULT 900 CHECK (tope_extracto BETWEEN 1 AND 1024),
             parametros          JSONB NOT NULL DEFAULT '[]',
             kapso_template_id   VARCHAR(100),
+            meta_template_id    VARCHAR(100),
+            status              VARCHAR(50) DEFAULT 'APPROVED',
+            category            VARCHAR(50) DEFAULT 'MARKETING',
+            components          JSONB DEFAULT '[]',
+            quality_score       VARCHAR(50) DEFAULT 'GREEN',
+            phone_number_id     VARCHAR(100) DEFAULT '759195320601997',
+            waba_id             VARCHAR(100) DEFAULT '1280554003783822',
+            synced_at           TIMESTAMPTZ,
             creado_en           TIMESTAMPTZ NOT NULL DEFAULT now(),
             actualizado_en      TIMESTAMPTZ NOT NULL DEFAULT now(),
             CONSTRAINT uq_plantilla_nombre_idioma UNIQUE (nombre, idioma)
@@ -646,26 +654,61 @@ pub async fn ensure_sintesis_diarias_schema(pool: &DbPool) {
     .execute(pool)
     .await;
 
+    let _ = sqlx::query("ALTER TABLE whatsapp_plantillas ADD COLUMN IF NOT EXISTS meta_template_id VARCHAR(100)").execute(pool).await;
+    let _ = sqlx::query("ALTER TABLE whatsapp_plantillas ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'APPROVED'").execute(pool).await;
+    let _ = sqlx::query("ALTER TABLE whatsapp_plantillas ADD COLUMN IF NOT EXISTS category VARCHAR(50) DEFAULT 'MARKETING'").execute(pool).await;
+    let _ = sqlx::query("ALTER TABLE whatsapp_plantillas ADD COLUMN IF NOT EXISTS components JSONB DEFAULT '[]'").execute(pool).await;
+    let _ = sqlx::query("ALTER TABLE whatsapp_plantillas ADD COLUMN IF NOT EXISTS quality_score VARCHAR(50) DEFAULT 'GREEN'").execute(pool).await;
+    let _ = sqlx::query("ALTER TABLE whatsapp_plantillas ADD COLUMN IF NOT EXISTS phone_number_id VARCHAR(100) DEFAULT '759195320601997'").execute(pool).await;
+    let _ = sqlx::query("ALTER TABLE whatsapp_plantillas ADD COLUMN IF NOT EXISTS waba_id VARCHAR(100) DEFAULT '1280554003783822'").execute(pool).await;
+    let _ = sqlx::query("ALTER TABLE whatsapp_plantillas ADD COLUMN IF NOT EXISTS synced_at TIMESTAMPTZ").execute(pool).await;
+
     let _ = sqlx::query("CREATE UNIQUE INDEX IF NOT EXISTS uq_plantilla_activa ON whatsapp_plantillas (activa) WHERE activa = true")
         .execute(pool)
         .await;
 
-    let _ = sqlx::query("UPDATE whatsapp_plantillas SET activa = false WHERE activa = true")
-        .execute(pool)
-        .await;
+    let has_any_active: Option<bool> = sqlx::query_scalar(
+        "SELECT true FROM whatsapp_plantillas WHERE activa = true LIMIT 1"
+    )
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None);
 
     let _ = sqlx::query(
-        "INSERT INTO whatsapp_plantillas (nombre, idioma, activa, texto_fijo_body, tope_extracto, parametros)
-         VALUES ('brief_informativo', 'es_MX', true, 'Plantilla oficial sin variables dinámicas (0 parámetros - omite components)', 900, '[]'::jsonb)
-         ON CONFLICT (nombre, idioma) DO UPDATE SET activa = true, parametros = '[]'::jsonb, actualizado_en = now()"
+        "INSERT INTO whatsapp_plantillas (
+            nombre, idioma, activa, texto_fijo_body, tope_extracto, parametros,
+            meta_template_id, kapso_template_id, status, category, components, quality_score, phone_number_id, waba_id, synced_at
+         )
+         VALUES (
+            'brief_informativo', 'es_MX', $1,
+            'Plantilla oficial sin variables dinámicas (0 parámetros - omite components)', 900, '[]'::jsonb,
+            '784203120908608', 'd69f7c2d-f43c-4fc6-888e-15a291ac7cad', 'APPROVED', 'MARKETING', '[]'::jsonb, 'GREEN', '759195320601997', '1280554003783822', now()
+         )
+         ON CONFLICT (nombre, idioma) DO UPDATE
+         SET parametros = '[]'::jsonb,
+             meta_template_id = COALESCE(whatsapp_plantillas.meta_template_id, EXCLUDED.meta_template_id),
+             kapso_template_id = COALESCE(whatsapp_plantillas.kapso_template_id, EXCLUDED.kapso_template_id),
+             status = COALESCE(whatsapp_plantillas.status, 'APPROVED'),
+             category = COALESCE(whatsapp_plantillas.category, 'MARKETING'),
+             quality_score = COALESCE(whatsapp_plantillas.quality_score, 'GREEN'),
+             phone_number_id = COALESCE(whatsapp_plantillas.phone_number_id, '759195320601997'),
+             waba_id = COALESCE(whatsapp_plantillas.waba_id, '1280554003783822')"
     )
+    .bind(!has_any_active.unwrap_or(false))
     .execute(pool)
     .await;
 
     let _ = sqlx::query(
-        "INSERT INTO whatsapp_plantillas (nombre, idioma, activa, texto_fijo_body, tope_extracto, parametros)
-         VALUES ('brief_informativo_cp_v2', 'es_MX', false, 'PRIMERAS PLANAS \\n\\n {{primeras_planas}} .\\n\\n Si no deseas seguir recibiendo estos mensajes manda la palabra \"STOP\"', 900,
-         '[{\"componente\": \"header\", \"nombre\": \"date\", \"fuente\": \"fecha\", \"formato\": \"D de Mes\"}, {\"componente\": \"body\", \"nombre\": \"primeras_planas\", \"fuente\": \"extracto\"}]'::jsonb)
+        "INSERT INTO whatsapp_plantillas (
+            nombre, idioma, activa, texto_fijo_body, tope_extracto, parametros,
+            status, category, phone_number_id, waba_id
+         )
+         VALUES (
+            'brief_informativo_cp_v2', 'es_MX', false,
+            'PRIMERAS PLANAS \\n\\n {{primeras_planas}} .\\n\\n Si no deseas seguir recibiendo estos mensajes manda la palabra \"STOP\"', 900,
+            '[{\"componente\": \"header\", \"nombre\": \"date\", \"fuente\": \"fecha\", \"formato\": \"D de Mes\"}, {\"componente\": \"body\", \"nombre\": \"primeras_planas\", \"fuente\": \"extracto\"}]'::jsonb,
+            'PENDING', 'MARKETING', '759195320601997', '1280554003783822'
+         )
          ON CONFLICT (nombre, idioma) DO NOTHING"
     )
     .execute(pool)
@@ -1319,6 +1362,8 @@ async fn sync_sintesis_to_cms(pool: &DbPool, fecha: NaiveDate, texto: &str) {
         .bind(texto)
         .execute(pool)
         .await;
+
+        crate::handlers::cms::ensure_edition_segmented_sections(pool, edition_id, fecha).await;
     }
 }
 

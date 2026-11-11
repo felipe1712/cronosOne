@@ -377,16 +377,62 @@ impl KapsoClient {
         let fecha_corta = Self::sanitize_template_param(&format_fecha_header(fecha), 60);
         let fecha_larga = Self::sanitize_template_param(&format_fecha_larga_es(fecha), 60);
 
+        let mut effective_params_cfg = params_cfg.clone();
+        let mut expected_meta_placeholders: Option<usize> = None;
+
+        // Validación previa contra los metadatos sincronizados de WABA / Kapso en whatsapp_plantillas
+        if let Some(p) = pool {
+            #[derive(sqlx::FromRow)]
+            struct TplMetaCheck {
+                status: Option<String>,
+                components: Option<serde_json::Value>,
+            }
+            if let Ok(Some(meta_row)) = sqlx::query_as::<_, TplMetaCheck>(
+                "SELECT status, components FROM whatsapp_plantillas WHERE nombre = $1 AND idioma = $2 LIMIT 1"
+            )
+            .bind(t_name.trim())
+            .bind(t_lang.trim())
+            .fetch_optional(p)
+            .await {
+                if let Some(st) = meta_row.status {
+                    let clean_st = st.trim().to_uppercase();
+                    if !clean_st.is_empty() && clean_st != "APPROVED" {
+                        let err = format!(
+                            "La plantilla '{}' ({}) tiene estado '{}' en Meta WABA. Solo se pueden enviar plantillas con estado APPROVED.",
+                            t_name, t_lang, clean_st
+                        );
+                        log_whatsapp_api(p, accion, to, "error", Some(400), Some(0), "", "", Some(&err)).await;
+                        return Err(err);
+                    }
+                }
+
+                if let Some(comps) = meta_row.components {
+                    if let Some(arr) = comps.as_array() {
+                        if !arr.is_empty() {
+                            let (cnt, auto_params, _) = crate::handlers::configuracion::count_template_placeholders_in_components(&comps);
+                            expected_meta_placeholders = Some(cnt);
+                            if cnt == 0 {
+                                effective_params_cfg = json!([]);
+                            } else if effective_params_cfg.as_array().map(|a| a.is_empty()).unwrap_or(true) {
+                                effective_params_cfg = json!(auto_params);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         let mut header_params: Vec<serde_json::Value> = Vec::new();
         let mut body_params: Vec<serde_json::Value> = Vec::new();
 
         // Si la plantilla es brief_informativo o servicio_monitoreo (aprobadas con 0 parámetros en Meta),
-        // o si el arreglo de parámetros está vacío ([]), no agregar ningún parámetro ni component.
+        // o si Meta components indica 0 placeholders, o el arreglo de parámetros está vacío ([]), no agregar ningún parámetro ni component.
         let is_zero_param_template = t_name.trim().eq_ignore_ascii_case("brief_informativo")
-            || t_name.trim().eq_ignore_ascii_case("servicio_monitoreo");
+            || t_name.trim().eq_ignore_ascii_case("servicio_monitoreo")
+            || expected_meta_placeholders == Some(0);
 
         if !is_zero_param_template {
-            if let Some(param_list) = params_cfg.as_array() {
+            if let Some(param_list) = effective_params_cfg.as_array() {
                 for param in param_list {
                     let comp_type = param
                         .get("componente")
@@ -884,8 +930,8 @@ pub async fn get_whatsapp_config(pool: &PgPool) -> KapsoConfig {
         template_language = plantilla.1;
     }
 
-    if template_name.is_empty() || template_name == "hello_world" || template_name == "servicio_monitoreo" || template_name == "brief_informativo" {
-        template_name = "brief_informativo_cp_v2".to_string();
+    if template_name.is_empty() || template_name == "hello_world" || template_name == "servicio_monitoreo" {
+        template_name = "brief_informativo".to_string();
     }
     if template_language.is_empty() {
         template_language = "es_MX".to_string();

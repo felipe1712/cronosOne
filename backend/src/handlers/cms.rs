@@ -332,6 +332,284 @@ pub async fn list_editions(
     Ok((StatusCode::OK, Json(json!(editions))))
 }
 
+pub async fn ensure_edition_segmented_sections(pool: &DbPool, edition_id: Uuid, date: NaiveDate) {
+    // Asegurar que exista el canal 'primeras_planas' en news_pages
+    let _ = sqlx::query(
+        "INSERT INTO news_pages (section_key, title, subtitle, color, icon, orden, active)
+         VALUES ('primeras_planas', 'Primeras Planas', 'Lo más relevante de las portadas nacionales del día', '#7c3aed', 'newspaper', 0, true)
+         ON CONFLICT (section_key) DO NOTHING"
+    )
+    .execute(pool)
+    .await;
+
+    let current_sections = sqlx::query_as::<_, NewsSection>(
+        "SELECT id, edition_id, section_key, title, summary, full_content, public_slug, published, created_at, updated_at
+         FROM news_sections
+         WHERE edition_id = $1"
+    )
+    .bind(edition_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    let has_primeras_planas = current_sections
+        .iter()
+        .any(|s| s.section_key == "primeras_planas" && !s.full_content.trim().is_empty());
+
+    let pol_txt = current_sections.iter().find(|s| s.section_key == "politica").map(|s| s.full_content.trim()).unwrap_or("");
+    let eco_txt = current_sections.iter().find(|s| s.section_key == "economia").map(|s| s.full_content.trim()).unwrap_or("");
+    let seg_txt = current_sections.iter().find(|s| s.section_key == "seguridad").map(|s| s.full_content.trim()).unwrap_or("");
+
+    let has_duplicate_legacy_sections = !pol_txt.is_empty() && pol_txt == eco_txt && eco_txt == seg_txt;
+
+    if has_primeras_planas && !has_duplicate_legacy_sections && current_sections.len() >= 4 {
+        return;
+    }
+
+    // Obtener síntesis diaria base (o tomar el contenido existente de politica si sintesis_diarias no tuviera fila)
+    let sint_texto: String = sqlx::query_scalar::<_, String>(
+        "SELECT texto FROM sintesis_diarias WHERE fecha = $1 AND trim(texto) != ''"
+    )
+    .bind(date)
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None)
+    .unwrap_or_else(|| pol_txt.to_string());
+
+    // Obtener secciones OCR de los boletines de esa fecha para enriquecer cada apartado temático
+    #[derive(sqlx::FromRow)]
+    struct OcrSecRow {
+        nombre_archivo: String,
+        tema: String,
+        contenido: serde_json::Value,
+    }
+
+    let ocr_rows = sqlx::query_as::<_, OcrSecRow>(
+        "SELECT b.nombre_archivo, s.tema, s.contenido
+         FROM secciones s
+         JOIN boletines b ON b.id = s.boletin_id
+         WHERE b.fecha_boletin = $1
+         ORDER BY b.creado_en ASC, s.orden ASC"
+    )
+    .bind(date)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    if sint_texto.trim().is_empty() && ocr_rows.is_empty() {
+        return;
+    }
+
+    let mut pp_parts: Vec<String> = Vec::new();
+    let mut pol_parts: Vec<String> = Vec::new();
+    let mut eco_parts: Vec<String> = Vec::new();
+    let mut seg_parts: Vec<String> = Vec::new();
+
+    // 1. Clasificar párrafos/viñetas de la síntesis diaria por tema
+    for raw_line in sint_texto.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let low = line.to_lowercase();
+        let is_seg = ["seguridad", "siniestr", "robo", "carreter", "crimen", "delito", "guardia nacional", "violencia", "incidente", "autopista", "transporte", "operativo"]
+            .iter()
+            .any(|k| low.contains(k));
+        let is_eco = ["econom", "finanz", "inflaci", "banxico", "tasa", "mercado", "peso", "dólar", "shcp", "hacienda", "coparmex", "empres", "empleo", "inversión", "comercio", "arancel", "pib", "asegurador"]
+            .iter()
+            .any(|k| low.contains(k));
+        let is_pol = ["polític", "politic", "legislat", "senado", "diputad", "reforma", "scjn", "judicial", "gobierno", "constitucional", "comisión", "decreto", "congreso", "ejecutivo", "ley"]
+            .iter()
+            .any(|k| low.contains(k));
+
+        if is_seg {
+            seg_parts.push(line.to_string());
+        }
+        if is_eco {
+            eco_parts.push(line.to_string());
+        }
+        if is_pol {
+            pol_parts.push(line.to_string());
+        }
+    }
+
+    // 2. Clasificar extractos de documentos OCR de la fecha
+    for r in &ocr_rows {
+        let txt = r.contenido
+            .get("texto_completo")
+            .or_else(|| r.contenido.get("text"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        if txt.is_empty() {
+            continue;
+        }
+        let snippet: String = txt.chars().take(1200).collect();
+        let fname = r.nombre_archivo.to_uppercase();
+        let tema_low = r.tema.to_lowercase();
+        let txt_low = snippet.to_lowercase();
+
+        if fname.contains("PRIMERAS") || fname.contains("PORTADA") || fname.contains("SINTESIS") || tema_low.contains("plana") {
+            if pp_parts.len() < 4 {
+                pp_parts.push(format!("📰 *{}*\n{}", r.nombre_archivo, snippet));
+            }
+        }
+        if ["seguridad", "siniestr", "robo", "carreter", "crimen", "delito", "violencia", "protección civil"]
+            .iter()
+            .any(|k| tema_low.contains(k) || txt_low.contains(k))
+        {
+            if seg_parts.len() < 6 {
+                seg_parts.push(format!("🛡️ *[{} — {}]*\n{}", r.nombre_archivo, r.tema, snippet));
+            }
+        }
+        if ["econom", "finanz", "inflaci", "banxico", "tasa", "mercado", "shcp", "hacienda", "coparmex", "empres", "inversión", "comercio"]
+            .iter()
+            .any(|k| tema_low.contains(k) || txt_low.contains(k))
+        {
+            if eco_parts.len() < 6 {
+                eco_parts.push(format!("📈 *[{} — {}]*\n{}", r.nombre_archivo, r.tema, snippet));
+            }
+        }
+        if ["polític", "politic", "legislat", "senado", "diputad", "reforma", "scjn", "judicial", "gobierno", "constitucional"]
+            .iter()
+            .any(|k| tema_low.contains(k) || txt_low.contains(k))
+            || fname.contains("SENADO")
+            || fname.contains("DIPUTADOS")
+        {
+            if pol_parts.len() < 6 {
+                pol_parts.push(format!("🏛️ *[{} — {}]*\n{}", r.nombre_archivo, r.tema, snippet));
+            }
+        }
+    }
+
+    let mut pp_full = if !sint_texto.trim().is_empty() {
+        sint_texto.trim().to_string()
+    } else {
+        pp_parts.join("\n\n")
+    };
+    if !pp_parts.is_empty() && !sint_texto.trim().is_empty() && pp_full.len() < 3500 {
+        pp_full.push_str("\n\n---\n📰 *EXTRACTOS DE PORTADAS DEL DÍA*\n\n");
+        pp_full.push_str(&pp_parts.iter().take(2).cloned().collect::<Vec<_>>().join("\n\n"));
+    }
+
+    let pol_full = if !pol_parts.is_empty() {
+        format!(
+            "🏛️ *SÍNTESIS POLÍTICA, GOBIERNO Y AGENDA LEGISLATIVA — {}*\n\n{}",
+            date,
+            pol_parts.join("\n\n")
+        )
+    } else {
+        format!(
+            "🏛️ *SÍNTESIS POLÍTICA Y LEGISLATIVA — {}*\n\n• *Seguimiento Parlamentario:* Actividad en Cámara de Senadores y Diputados, iniciativas de ley y reformas constitucionales.\n\n{}",
+            date,
+            sint_texto.lines().take(6).collect::<Vec<_>>().join("\n")
+        )
+    };
+
+    let eco_full = if !eco_parts.is_empty() {
+        format!(
+            "📈 *PANORAMA ECONÓMICO, FINANCIERO Y EMPRESARIAL — {}*\n\n{}",
+            date,
+            eco_parts.join("\n\n")
+        )
+    } else {
+        format!(
+            "📈 *PANORAMA ECONÓMICO Y FINANCIERO — {}*\n\n• *Variables Macroeconómicas y Sectoriales:* Seguimiento a inflación, tipo de cambio, política monetaria (Banxico), SHCP y sector empresarial (Coparmex).\n\n{}",
+            date,
+            sint_texto.lines().skip(2).take(6).collect::<Vec<_>>().join("\n")
+        )
+    };
+
+    let seg_full = if !seg_parts.is_empty() {
+        format!(
+            "🛡️ *MONITOREO DE SEGURIDAD NACIONAL Y SINIESTRALIDAD — {}*\n\n{}",
+            date,
+            seg_parts.join("\n\n")
+        )
+    } else {
+        format!(
+            "🛡️ *MONITOREO DE SEGURIDAD E INCIDENTES — {}*\n\n• *Riesgos Operativos y Corredores Logísticos:* Vigilancia de carreteras federales, transporte de carga, seguridad pública y prevención de siniestros.\n\n{}",
+            date,
+            sint_texto.lines().rev().take(6).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n")
+        )
+    };
+
+    let build_summary = |txt: &str, fallback: &str| -> String {
+        let clean = txt.replace('*', "").replace('#', "");
+        let meaningful: Vec<&str> = clean
+            .lines()
+            .map(|l| l.trim())
+            .filter(|l| l.chars().count() > 25 && !l.starts_with("🏛️") && !l.starts_with("📈") && !l.starts_with("🛡️") && !l.starts_with("📋"))
+            .take(2)
+            .collect();
+        let joined = if meaningful.is_empty() { fallback.to_string() } else { meaningful.join(" · ") };
+        if joined.chars().count() > 260 {
+            format!("{}...", joined.chars().take(260).collect::<String>())
+        } else {
+            joined
+        }
+    };
+
+    let configs = vec![
+        (
+            "primeras_planas",
+            format!("Primeras Planas y Síntesis Ejecutiva — {}", date),
+            build_summary(&pp_full, "Lo más relevante de las portadas nacionales y síntesis ejecutiva del día."),
+            pp_full,
+        ),
+        (
+            "politica",
+            format!("Política, Gobierno y Agenda Legislativa — {}", date),
+            build_summary(&pol_full, "Análisis legislativo, reformas, acuerdos parlamentarios y política nacional."),
+            pol_full,
+        ),
+        (
+            "economia",
+            format!("Economía, Finanzas y Entorno Empresarial — {}", date),
+            build_summary(&eco_full, "Indicadores de mercado, inflación, Banxico, Coparmex y actividad económica."),
+            eco_full,
+        ),
+        (
+            "seguridad",
+            format!("Seguridad Nacional, Transporte y Siniestralidad — {}", date),
+            build_summary(&seg_full, "Seguridad pública, incidentes carreteros, siniestralidad e inteligencia."),
+            seg_full,
+        ),
+    ];
+
+    for (s_key, s_title, s_sum, s_content) in configs {
+        if s_content.trim().is_empty() {
+            continue;
+        }
+        // Si ya existe con contenido propio distinto, solo actualizar si faltaba primeras_planas o si había duplicación
+        let should_upsert = if s_key == "primeras_planas" {
+            !has_primeras_planas
+        } else {
+            has_duplicate_legacy_sections || !current_sections.iter().any(|s| s.section_key == s_key && !s.full_content.trim().is_empty())
+        };
+
+        if should_upsert {
+            let _ = sqlx::query(
+                "INSERT INTO news_sections (edition_id, section_key, title, summary, full_content, public_slug, published, created_at, updated_at)
+                 VALUES ($1, $2, $3, $4, $5, $2, true, now(), now())
+                 ON CONFLICT (edition_id, section_key) DO UPDATE
+                 SET title = EXCLUDED.title,
+                     summary = EXCLUDED.summary,
+                     full_content = EXCLUDED.full_content,
+                     published = true,
+                     updated_at = now()"
+            )
+            .bind(edition_id)
+            .bind(s_key)
+            .bind(&s_title)
+            .bind(&s_sum)
+            .bind(&s_content)
+            .execute(pool)
+            .await;
+        }
+    }
+}
+
 pub async fn get_edition(
     State((pool, _)): State<(DbPool, Arc<Config>)>,
     Path(fecha_str): Path<String>,
@@ -352,10 +630,10 @@ pub async fn get_edition(
     let edition = match edition {
         Some(ed) => ed,
         None => {
-            // Si aún no existe, crear la edición inicial en modo borrador
+            // Si aún no existe, crear la edición inicial en modo publicado
             sqlx::query_as::<_, NewsEdition>(
                 "INSERT INTO news_editions (edition_date, status, generated_at, created_at, updated_at)
-                 VALUES ($1, 'draft', now(), now(), now())
+                 VALUES ($1, 'published', now(), now(), now())
                  ON CONFLICT (edition_date) DO UPDATE SET updated_at = now()
                  RETURNING id, edition_date, status, generated_at, published_at, created_at, updated_at"
             )
@@ -366,8 +644,11 @@ pub async fn get_edition(
         }
     };
 
+    // Garantizar que las 4 secciones (primeras_planas, politica, economia, seguridad) estén segmentadas y sin duplicados
+    ensure_edition_segmented_sections(&pool, edition.id, date).await;
+
     // Obtener las secciones de la edición
-    let mut sections = sqlx::query_as::<_, NewsSection>(
+    let sections = sqlx::query_as::<_, NewsSection>(
         "SELECT s.id, s.edition_id, s.section_key, s.title, s.summary, s.full_content, s.public_slug, s.published, s.created_at, s.updated_at
          FROM news_sections s
          JOIN news_pages p ON p.section_key = s.section_key
@@ -378,62 +659,6 @@ pub async fn get_edition(
     .fetch_all(&pool)
     .await
     .unwrap_or_default();
-
-    // Si la edición no cuenta con secciones generadas, intentar sincronizarlas automáticamente desde sintesis_diarias
-    if sections.is_empty() {
-        #[derive(sqlx::FromRow)]
-        struct SintRow {
-            texto: String,
-        }
-
-        let sint_opt = sqlx::query_as::<_, SintRow>(
-            "SELECT texto FROM sintesis_diarias WHERE fecha = $1 AND trim(texto) != ''"
-        )
-        .bind(date)
-        .fetch_optional(&pool)
-        .await
-        .unwrap_or(None);
-
-        if let Some(sint) = sint_opt {
-            let brief_texto = sint.texto;
-            let s_title = format!("Primeras Planas — {}", date);
-            let s_summary = if brief_texto.chars().count() > 280 {
-                format!("{}...", brief_texto.chars().take(280).collect::<String>())
-            } else {
-                brief_texto.clone()
-            };
-
-            let _ = sqlx::query(
-                "INSERT INTO news_sections (edition_id, section_key, title, summary, full_content, public_slug, published, created_at, updated_at)
-                 VALUES ($1, 'primeras_planas', $2, $3, $4, 'primeras_planas', true, now(), now())
-                 ON CONFLICT (edition_id, section_key) DO UPDATE
-                 SET title = EXCLUDED.title,
-                     summary = EXCLUDED.summary,
-                     full_content = EXCLUDED.full_content,
-                     published = true,
-                     updated_at = now()"
-            )
-            .bind(edition.id)
-            .bind(&s_title)
-            .bind(&s_summary)
-            .bind(&brief_texto)
-            .execute(&pool)
-            .await;
-
-            // Recargar secciones recién generadas
-            sections = sqlx::query_as::<_, NewsSection>(
-                "SELECT s.id, s.edition_id, s.section_key, s.title, s.summary, s.full_content, s.public_slug, s.published, s.created_at, s.updated_at
-                 FROM news_sections s
-                 JOIN news_pages p ON p.section_key = s.section_key
-                 WHERE s.edition_id = $1
-                 ORDER BY p.orden ASC, s.created_at ASC"
-            )
-            .bind(edition.id)
-            .fetch_all(&pool)
-            .await
-            .unwrap_or_default();
-        }
-    }
 
     Ok((StatusCode::OK, Json(json!({
         "id": edition.id,
@@ -591,6 +816,34 @@ pub async fn get_public_brief(
     Path(section_key): Path<String>,
     Query(params): Query<PublicBriefQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    // Asegurar que las ediciones recientes (y cualquier fecha en sintesis_diarias sin edición CMS)
+    // tengan las 4 secciones segmentadas (primeras_planas, politica, economia, seguridad)
+    let _ = sqlx::query(
+        "INSERT INTO news_editions (edition_date, status, generated_at, published_at, created_at, updated_at)
+         SELECT fecha, 'published', creado_en, actualizado_en, creado_en, actualizado_en
+         FROM sintesis_diarias
+         WHERE trim(texto) != ''
+         ON CONFLICT (edition_date) DO UPDATE SET status = 'published'"
+    )
+    .execute(&pool)
+    .await;
+
+    #[derive(sqlx::FromRow)]
+    struct EdIdDate {
+        id: Uuid,
+        edition_date: NaiveDate,
+    }
+    if let Ok(recent_eds) = sqlx::query_as::<_, EdIdDate>(
+        "SELECT id, edition_date FROM news_editions ORDER BY edition_date DESC LIMIT 7"
+    )
+    .fetch_all(&pool)
+    .await
+    {
+        for ed in recent_eds {
+            ensure_edition_segmented_sections(&pool, ed.id, ed.edition_date).await;
+        }
+    }
+
     #[derive(sqlx::FromRow)]
     struct BriefRow {
         id: Uuid,

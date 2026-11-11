@@ -766,7 +766,7 @@ pub struct TriggerBroadcastRequest {
 }
 
 // ============================================================================
-// 9. Administrador de Plantillas WhatsApp (Kapso)
+// 9. Administrador de Plantillas WhatsApp (Kapso / Meta WABA)
 // ============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -779,6 +779,22 @@ pub struct WhatsappPlantilla {
     pub tope_extracto: i32,
     pub parametros: serde_json::Value,
     pub kapso_template_id: Option<String>,
+    #[sqlx(default)]
+    pub meta_template_id: Option<String>,
+    #[sqlx(default)]
+    pub status: Option<String>,
+    #[sqlx(default)]
+    pub category: Option<String>,
+    #[sqlx(default)]
+    pub components: Option<serde_json::Value>,
+    #[sqlx(default)]
+    pub quality_score: Option<String>,
+    #[sqlx(default)]
+    pub phone_number_id: Option<String>,
+    #[sqlx(default)]
+    pub waba_id: Option<String>,
+    #[sqlx(default)]
+    pub synced_at: Option<DateTime<Utc>>,
     pub creado_en: DateTime<Utc>,
     pub actualizado_en: DateTime<Utc>,
 }
@@ -792,6 +808,13 @@ pub struct CreatePlantillaRequest {
     pub tope_extracto: Option<i32>,
     pub parametros: Option<serde_json::Value>,
     pub kapso_template_id: Option<String>,
+    pub meta_template_id: Option<String>,
+    pub status: Option<String>,
+    pub category: Option<String>,
+    pub components: Option<serde_json::Value>,
+    pub quality_score: Option<String>,
+    pub phone_number_id: Option<String>,
+    pub waba_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -803,6 +826,13 @@ pub struct UpdatePlantillaRequest {
     pub tope_extracto: Option<i32>,
     pub parametros: Option<serde_json::Value>,
     pub kapso_template_id: Option<String>,
+    pub meta_template_id: Option<String>,
+    pub status: Option<String>,
+    pub category: Option<String>,
+    pub components: Option<serde_json::Value>,
+    pub quality_score: Option<String>,
+    pub phone_number_id: Option<String>,
+    pub waba_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

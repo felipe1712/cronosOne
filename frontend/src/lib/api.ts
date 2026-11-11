@@ -251,6 +251,14 @@ export interface WhatsappPlantilla {
   tope_extracto: number;
   parametros: any[];
   kapso_template_id?: string;
+  meta_template_id?: string;
+  status?: string;
+  category?: string;
+  components?: any[];
+  quality_score?: string;
+  phone_number_id?: string;
+  waba_id?: string;
+  synced_at?: string;
   creado_en: string;
   actualizado_en: string;
 }

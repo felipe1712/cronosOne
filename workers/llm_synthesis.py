@@ -1,4 +1,4 @@
-﻿import os
+import os
 import json
 from typing import List, Dict, Any, Tuple
 import anthropic
@@ -782,4 +782,223 @@ async def generate_whatsapp_extract(texto: str, max_chars: int = 900) -> Tuple[s
         idx = cut.rfind("\n")
         fallback = cut[:idx].strip() if idx > 0 else cut.strip()
         return fallback, f"error_{configured_model}", 0
+
+
+def _fallback_segment_sections(documents: List[Dict[str, Any]], brief_texto: str, fecha_str: str) -> Dict[str, Dict[str, str]]:
+    """
+    Clasificador determinista por palabras clave y documentos fuente cuando Claude no está disponible
+    o para respaldar que ninguna sección quede vacía ni con texto idéntico duplicado.
+    """
+    buckets = {
+        "primeras_planas": [],
+        "politica": [],
+        "economia": [],
+        "seguridad": [],
+    }
+
+    # 1. Clasificar fragmentos desde los documentos y secciones OCR
+    for doc in (documents or []):
+        doc_nombre = (doc.get("nombre") or "").upper()
+        for sec in (doc.get("secciones") or []):
+            tema = (sec.get("tema") or "general").lower()
+            texto = extract_section_text(sec).strip()
+            if not texto:
+                continue
+            snippet = texto[:1400].strip()
+            lower_txt = snippet.lower()
+
+            if "PRIMERAS" in doc_nombre or "PORTADA" in doc_nombre or "SINTESIS" in doc_nombre or "plana" in tema:
+                buckets["primeras_planas"].append(snippet)
+            if any(k in tema or k in lower_txt for k in ["seguridad", "siniestr", "robo", "carreter", "crimen", "delito", "guardia nacional", "violencia", "accidente", "protección civil"]):
+                buckets["seguridad"].append(snippet)
+            if any(k in tema or k in lower_txt for k in ["econom", "finanz", "inflaci", "banxico", "tasa", "mercado", "peso", "dólar", "shcp", "hacienda", "coparmex", "empres", "empleo", "inversión", "comercio", "arancel", "pib"]):
+                buckets["economia"].append(snippet)
+            if any(k in tema or k in lower_txt for k in ["polític", "politic", "legislat", "senado", "diputad", "reforma", "scjn", "judicial", "gobierno", "constitucional", "comisión", "decreto"]) or "SENADO" in doc_nombre or "DIPUTADOS" in doc_nombre:
+                buckets["politica"].append(snippet)
+
+    # 2. Clasificar párrafos/viñetas de brief_texto para enriquecer cada apartado sin duplicar todo el bloque
+    paragraphs = [p.strip() for p in (brief_texto or "").split("\n") if p.strip()]
+    for p in paragraphs:
+        low = p.lower()
+        if any(k in low for k in ["seguridad", "siniestr", "robo", "carreter", "delictiv", "operativo", "transporte", "crimen", "violencia", "incidente"]):
+            buckets["seguridad"].insert(0, p)
+        if any(k in low for k in ["econom", "finanz", "inflaci", "banxico", "tasa", "mercado", "tipo de cambio", "shcp", "hacienda", "coparmex", "inversión", "asegurador", "póliza"]):
+            buckets["economia"].insert(0, p)
+        if any(k in low for k in ["polític", "legislat", "senado", "diputad", "reforma", "scjn", "judicial", "congreso", "ejecutivo", "decreto", "ley"]):
+            buckets["politica"].insert(0, p)
+
+    # Primeras planas siempre inicia con la síntesis ejecutiva principal + extractos de portadas
+    pp_content = (brief_texto or "").strip()
+    if buckets["primeras_planas"]:
+        extra_pp = "\n\n---\n📰 *DETALLE DE PORTADAS Y TITULARES NACIONALES*\n\n" + "\n\n".join(buckets["primeras_planas"][:3])
+        if len(pp_content) + len(extra_pp) <= 6000:
+            pp_content = f"{pp_content}{extra_pp}"
+
+    pol_content = "\n\n".join(dict.fromkeys(buckets["politica"][:6])) if buckets["politica"] else (
+        f"🏛️ *PANORAMA POLÍTICO Y LEGISLATIVO — {fecha_str}*\n\n"
+        f"• *Agenda Parlamentaria (Senado y Cámara de Diputados):* Seguimiento a dictámenes, iniciativas de reforma constitucional y acuerdos en comisiones legislativas.\n"
+        f"• *Poder Judicial y Marco Regulatorio:* Monitoreo de resoluciones de la SCJN y criterios jurídicos con impacto institucional.\n\n"
+        + "\n".join(paragraphs[:4])
+    )
+
+    eco_content = "\n\n".join(dict.fromkeys(buckets["economia"][:6])) if buckets["economia"] else (
+        f"📈 *PANORAMA ECONÓMICO Y FINANCIERO — {fecha_str}*\n\n"
+        f"• *Variables Macroeconómicas y Mercados:* Seguimiento a inflación, tipo de cambio, decisiones de política monetaria (Banxico) y finanzas públicas (SHCP).\n"
+        f"• *Sector Empresarial y Asegurador:* Posturas de Coparmex, entorno de inversión, empleo formal y regulación financiera.\n\n"
+        + "\n".join(paragraphs[:4])
+    )
+
+    seg_content = "\n\n".join(dict.fromkeys(buckets["seguridad"][:6])) if buckets["seguridad"] else (
+        f"🛡️ *MONITOREO DE SEGURIDAD NACIONAL Y SINIESTRALIDAD — {fecha_str}*\n\n"
+        f"• *Seguridad en Corredores Logísticos:* Vigilancia sobre robo a transporte de carga, autopistas federales e incidentes carreteros.\n"
+        f"• *Operativos y Prevención de Riesgos:* Reportes de seguridad pública, protección civil y alertas operativas para suscripción y siniestros.\n\n"
+        + "\n".join(paragraphs[:4])
+    )
+
+    def make_summary(txt: str, default_sum: str) -> str:
+        clean = txt.replace("*", "").replace("#", "").strip()
+        lines = [l.strip() for l in clean.split("\n") if len(l.strip()) > 25]
+        first = " · ".join(lines[:2]) if lines else clean
+        return (first[:260] + "...") if len(first) > 260 else (first or default_sum)
+
+    return {
+        "primeras_planas": {
+            "title": f"Primeras Planas y Síntesis Ejecutiva — {fecha_str}",
+            "summary": make_summary(pp_content, "Lo más relevante de las portadas nacionales y síntesis ejecutiva del día."),
+            "full_content": pp_content,
+        },
+        "politica": {
+            "title": f"Política, Gobierno y Agenda Legislativa — {fecha_str}",
+            "summary": make_summary(pol_content, "Análisis legislativo, reformas constitucionales, acuerdos parlamentarios y política nacional."),
+            "full_content": pol_content,
+        },
+        "economia": {
+            "title": f"Economía, Finanzas y Entorno Empresarial — {fecha_str}",
+            "summary": make_summary(eco_content, "Indicadores de mercado, inflación, Banxico, Coparmex y actividad económica."),
+            "full_content": eco_content,
+        },
+        "seguridad": {
+            "title": f"Seguridad Nacional, Transporte y Siniestralidad — {fecha_str}",
+            "summary": make_summary(seg_content, "Seguridad pública, incidentes carreteros, robo a carga y prevención de riesgos."),
+            "full_content": seg_content,
+        },
+    }
+
+
+async def generate_segmented_cms_sections(
+    documents: List[Dict[str, Any]],
+    brief_texto: str,
+    fecha_str: str
+) -> Dict[str, Dict[str, str]]:
+    """
+    Desglosa el universo documental del día con Claude en 4 apartados especializados e independientes
+    para el Portal Público CMS:
+      1. primeras_planas
+      2. politica
+      3. economia
+      4. seguridad
+    Garantiza que cada página pública tenga su propio contenido especializado y nunca se duplique el mismo texto.
+    """
+    fallback_sections = _fallback_segment_sections(documents, brief_texto, fecha_str)
+
+    if not settings.anthropic_api_key:
+        return fallback_sections
+
+    # Compilar corpus resumido por documento para que Claude clasifique con precisión
+    corpus_parts = []
+    for doc in (documents or []):
+        doc_nombre = doc.get("nombre", "Documento")
+        doc_origen = doc.get("origen", "general")
+        sec_texts = []
+        for sec in (doc.get("secciones") or []):
+            tema = sec.get("tema", "general")
+            txt = extract_section_text(sec).strip()
+            if txt:
+                sec_texts.append(f"[{tema.upper()}] {txt[:1600]}")
+        if sec_texts:
+            corpus_parts.append(f"=== DOCUMENTO: {doc_nombre} ({doc_origen}) ===\n" + "\n".join(sec_texts[:8]))
+
+    corpus_str = "\n\n".join(corpus_parts)
+    if not corpus_str.strip():
+        corpus_str = brief_texto or ""
+
+    prompt = (
+        f"Eres el Director Editorial de Inteligencia de ExposureIQ.\n"
+        f"Fecha de edición: {fecha_str}\n\n"
+        f"Tu misión es segmentar la información del día en 4 canales especializados para el Portal Público, "
+        f"de modo que CADA SECCIÓN tenga contenido propio, profundo y exclusivo de su materia (PROHIBIDO repetir el mismo texto en las 4 secciones).\n\n"
+        f"Canales a generar:\n"
+        f"1. \"primeras_planas\": Síntesis de las Portadas Nacionales del día (titulares de primera plana, temas de portada de los principales diarios nacionales y columnas destacadas).\n"
+        f"2. \"politica\": Política y Gobierno (actividad en Cámara de Senadores y Diputados, iniciativas de ley, reformas constitucionales, Poder Ejecutivo, SCJN / Poder Judicial y acuerdos parlamentarios).\n"
+        f"3. \"economia\": Economía y Finanzas (indicadores macroeconómicos, inflación, tipo de cambio, Banxico, SHCP, Coparmex, sector empresarial, comercio exterior e impacto financiero/asegurador).\n"
+        f"4. \"seguridad\": Seguridad Nacional y Siniestralidad (seguridad pública, robo a transporte de carga, incidentes en carreteras federales, operativos de seguridad, protección civil y riesgos operativos).\n\n"
+        f"Síntesis ejecutiva base del día:\n{brief_texto[:4000]}\n\n"
+        f"Extractos documentales del día:\n{corpus_str[:35000]}\n\n"
+        f"Responde ÚNICAMENTE con un objeto JSON válido (sin bloques markdown ```json) con esta estructura exacta:\n"
+        f"{{\n"
+        f"  \"primeras_planas\": {{\"title\": \"...\", \"summary\": \"Resumen ejecutivo de 1 a 2 enunciados\", \"full_content\": \"Desarrollo completo con viñetas y negritas *texto*\"}},\n"
+        f"  \"politica\": {{\"title\": \"...\", \"summary\": \"Resumen ejecutivo de 1 a 2 enunciados\", \"full_content\": \"Desarrollo completo exclusivo de política y legislativo\"}},\n"
+        f"  \"economia\": {{\"title\": \"...\", \"summary\": \"Resumen ejecutivo de 1 a 2 enunciados\", \"full_content\": \"Desarrollo completo exclusivo de economía, finanzas y empresas\"}},\n"
+        f"  \"seguridad\": {{\"title\": \"...\", \"summary\": \"Resumen ejecutivo de 1 a 2 enunciados\", \"full_content\": \"Desarrollo completo exclusivo de seguridad y siniestralidad\"}}\n"
+        f"}}"
+    )
+
+    t0 = time.time()
+    configured_model = get_configured_model()
+    try:
+        client = anthropic.Anthropic(api_key=settings.anthropic_api_key, timeout=180.0)
+        response = client.messages.create(
+            model=configured_model,
+            max_tokens=3000,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        latency = int((time.time() - t0) * 1000)
+        raw_text, in_tok, out_tok, _ = extract_text_and_meta(response)
+
+        clean_json = raw_text.strip()
+        if "```" in clean_json:
+            start_brace = clean_json.find("{")
+            end_brace = clean_json.rfind("}")
+            if start_brace != -1 and end_brace != -1 and end_brace > start_brace:
+                clean_json = clean_json[start_brace:end_brace + 1]
+        else:
+            start_brace = clean_json.find("{")
+            end_brace = clean_json.rfind("}")
+            if start_brace != -1 and end_brace != -1 and end_brace > start_brace:
+                clean_json = clean_json[start_brace:end_brace + 1]
+
+        parsed = json.loads(clean_json)
+        result = {}
+        for key in ["primeras_planas", "politica", "economia", "seguridad"]:
+            sec_obj = parsed.get(key) or {}
+            fb_obj = fallback_sections[key]
+            title = (sec_obj.get("title") or "").strip() or fb_obj["title"]
+            summary = (sec_obj.get("summary") or "").strip() or fb_obj["summary"]
+            full_content = (sec_obj.get("full_content") or "").strip() or fb_obj["full_content"]
+            result[key] = {
+                "title": title,
+                "summary": summary,
+                "full_content": full_content,
+            }
+
+        record_api_log(
+            servicio="claude",
+            accion="segmentar_secciones_cms",
+            modelo_o_proveedor=configured_model,
+            estado="ok",
+            codigo_http=200,
+            latencia_ms=latency,
+            tokens_input=in_tok,
+            tokens_output=out_tok,
+            tokens_total=in_tok + out_tok,
+            max_tokens_configurado=3000,
+            peticion_payload=f"[Segmentación 4 Secciones CMS fecha={fecha_str}]\n{prompt[:2000]}",
+            respuesta_payload=raw_text[:4000]
+        )
+        print(f"[LLM] ✅ 4 secciones CMS segmentadas con éxito para {fecha_str} ({in_tok + out_tok} tokens, {latency}ms).")
+        return result
+    except Exception as e:
+        print(f"[LLM] Aviso al segmentar secciones CMS con Claude ({e}). Usando clasificador temático de respaldo.")
+        return fallback_sections
+
 
