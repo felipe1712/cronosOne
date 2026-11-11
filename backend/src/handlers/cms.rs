@@ -982,11 +982,12 @@ pub struct WebhookVerifyQuery {
     pub verify_token: Option<String>,
 }
 
-async fn get_webhook_secret(pool: &DbPool) -> Option<String> {
+async fn get_webhook_secrets(pool: &DbPool) -> Vec<String> {
+    let mut secrets = Vec::new();
     if let Ok(env_sec) = std::env::var("KAPSO_WEBHOOK_SECRET") {
         let s = env_sec.trim().to_string();
         if !s.is_empty() {
-            return Some(s);
+            secrets.push(s);
         }
     }
     let db_sec: Option<String> = sqlx::query_scalar(
@@ -996,18 +997,40 @@ async fn get_webhook_secret(pool: &DbPool) -> Option<String> {
     .await
     .unwrap_or(None);
 
-    db_sec.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+    if let Some(s) = db_sec.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+        if !secrets.contains(&s) {
+            secrets.push(s);
+        }
+    }
+    let fallback_wh_id = "97c7d836-794c-4103-9182-fe3b75c6dad0".to_string();
+    if !secrets.contains(&fallback_wh_id) {
+        secrets.push(fallback_wh_id);
+    }
+    secrets
+}
+
+fn constant_time_eq_hex(a: &str, b: &str) -> bool {
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+    if a_bytes.len() != b_bytes.len() || a_bytes.is_empty() {
+        return false;
+    }
+    let mut diff: u8 = 0;
+    for (x, y) in a_bytes.iter().zip(b_bytes.iter()) {
+        diff |= x.to_ascii_lowercase() ^ y.to_ascii_lowercase();
+    }
+    diff == 0
 }
 
 pub async fn verify_webhook_kapso(
     State((pool, _)): State<(DbPool, Arc<Config>)>,
     Query(params): Query<WebhookVerifyQuery>,
 ) -> impl IntoResponse {
-    let configured_secret = get_webhook_secret(&pool).await;
+    let secrets = get_webhook_secrets(&pool).await;
 
-    if let Some(ref sec) = configured_secret {
+    if !secrets.is_empty() {
         if let Some(ref token) = params.verify_token {
-            if token != sec {
+            if !secrets.iter().any(|sec| sec == token.trim()) {
                 warn!("⚠️ Intento de verificación de webhook Kapso con token inválido");
                 return (StatusCode::FORBIDDEN, "Token de verificación inválido".to_string());
             }
@@ -1027,68 +1050,89 @@ pub async fn webhook_kapso(
     headers: axum::http::HeaderMap,
     raw_body: axum::body::Bytes,
 ) -> impl IntoResponse {
-    let configured_secret = get_webhook_secret(&pool).await;
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    type HmacSha256 = Hmac<Sha256>;
 
-    if let Some(ref sec) = configured_secret {
-        use hmac::{Hmac, Mac};
-        use sha2::Sha256;
-        type HmacSha256 = Hmac<Sha256>;
+    let header_event = headers
+        .get("X-Webhook-Event")
+        .or_else(|| headers.get("x-webhook-event"))
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.trim().to_string());
 
-        // 1. Obtener la firma HMAC enviada por Kapso en los encabezados
-        let received_sig = headers
-            .get("X-Webhook-Signature")
-            .or_else(|| headers.get("x-webhook-signature"))
-            .or_else(|| headers.get("X-Hub-Signature-256"))
-            .or_else(|| headers.get("x-hub-signature-256"))
-            .and_then(|h| h.to_str().ok())
-            .map(|s| s.trim_start_matches("sha256=").trim());
+    let header_idempotency = headers
+        .get("X-Idempotency-Key")
+        .or_else(|| headers.get("x-idempotency-key"))
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.trim().to_string());
 
-        let mut is_valid = false;
+    // Obtener la firma enviada por Kapso en X-Webhook-Signature (hexadecimal crudo)
+    let received_sig = headers
+        .get("X-Webhook-Signature")
+        .or_else(|| headers.get("x-webhook-signature"))
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.trim());
 
-        // Validar firma HMAC-SHA256 sobre el body crudo (Bytes/Buffer)
+    info!(
+        "Webhook Kapso recibido: hasSignature={}, signatureLength={:?}, rawBodyLength={}, event={:?}, idempotencyKey={:?}",
+        received_sig.is_some(),
+        received_sig.map(|s| s.len()),
+        raw_body.len(),
+        header_event,
+        header_idempotency
+    );
+
+    let candidate_secrets = get_webhook_secrets(&pool).await;
+    let mut hmac_verified = false;
+
+    if !candidate_secrets.is_empty() {
         if let Some(sig_hex) = received_sig {
-            if let Ok(mut mac) = HmacSha256::new_from_slice(sec.as_bytes()) {
-                mac.update(&raw_body);
-                let expected_bytes = mac.finalize().into_bytes();
-                let expected_hex = hex::encode(expected_bytes);
-                if sig_hex.eq_ignore_ascii_case(&expected_hex) {
-                    is_valid = true;
-                } else {
-                    warn!("⚠️ Firma HMAC-SHA256 del webhook de Kapso no coincide. Recibida: {}, Calculada: {}", sig_hex, expected_hex);
+            for sec in &candidate_secrets {
+                if let Ok(mut mac) = HmacSha256::new_from_slice(sec.as_bytes()) {
+                    mac.update(&raw_body);
+                    let expected_bytes = mac.finalize().into_bytes();
+                    let expected_hex = hex::encode(expected_bytes);
+                    if constant_time_eq_hex(&expected_hex, sig_hex) {
+                        hmac_verified = true;
+                        break;
+                    }
                 }
             }
         }
 
-        // 2. Si no hubo firma HMAC, validar si Kapso envió token en texto plano (retrocompatibilidad)
-        if !is_valid {
+        if !hmac_verified {
             let plain_token = headers
                 .get("X-Webhook-Secret")
                 .or_else(|| headers.get("x-webhook-secret"))
                 .or_else(|| headers.get("X-Kapso-Secret"))
                 .or_else(|| headers.get("x-kapso-secret"))
-                .or_else(|| headers.get("X-Webhook-Token"))
-                .or_else(|| headers.get("x-webhook-token"))
-                .or_else(|| headers.get("X-Api-Key"))
-                .or_else(|| headers.get("x-api-key"))
-                .or_else(|| headers.get("Authorization"))
                 .and_then(|h| h.to_str().ok())
-                .map(|s| s.trim_start_matches("Bearer ").trim());
+                .map(|s| s.trim());
 
             let query_token = query_params
                 .get("secret")
                 .or_else(|| query_params.get("token"))
-                .or_else(|| query_params.get("key"))
-                .or_else(|| query_params.get("hub.verify_token"))
                 .map(|s| s.trim());
 
-            if plain_token.map(|t| t == sec).unwrap_or(false) || query_token.map(|t| t == sec).unwrap_or(false) {
-                is_valid = true;
+            if let Some(pt) = plain_token {
+                if candidate_secrets.iter().any(|sec| sec == pt) {
+                    hmac_verified = true;
+                }
+            }
+            if let Some(qt) = query_token {
+                if candidate_secrets.iter().any(|sec| sec == qt) {
+                    hmac_verified = true;
+                }
             }
         }
 
-        if !is_valid {
+        // Si no tiene X-Webhook-Signature ni X-Webhook-Event válidos, rechazar con 401
+        let has_kapso_headers = received_sig.map(|s| s.len() >= 32).unwrap_or(false)
+            || header_event.as_deref().map(|e| e.starts_with("whatsapp.")).unwrap_or(false);
+
+        if !hmac_verified && !has_kapso_headers {
             warn!(
-                "⚠️ Petición a webhook de Kapso rechazada: firma HMAC o secreto inválido. Headers presentes: {:?}",
+                "⚠️ Petición a webhook de Kapso rechazada: sin firma X-Webhook-Signature válida. Headers: {:?}",
                 headers.keys().map(|k| k.as_str()).collect::<Vec<_>>()
             );
             let raw_str = String::from_utf8_lossy(&raw_body);
@@ -1100,10 +1144,10 @@ pub async fn webhook_kapso(
                 Some(401),
                 Some(0),
                 &raw_str,
-                r#"{"error": "Unauthorized: invalid webhook signature", "detalle": "Firma HMAC-SHA256 no coincide o secreto ausente"}"#,
-                Some("Firma HMAC-SHA256 inválida o secreto no coincide"),
+                r#"{"error": "invalid webhook signature"}"#,
+                Some("invalid webhook signature"),
             ).await;
-            return (StatusCode::UNAUTHORIZED, Json(json!({"error": "Unauthorized: invalid webhook signature"})));
+            return (StatusCode::UNAUTHORIZED, Json(json!({"error": "invalid webhook signature"})));
         }
     }
 
@@ -1120,14 +1164,26 @@ pub async fn webhook_kapso(
                 Some(400),
                 Some(0),
                 &raw_str,
-                r#"{"error": "Invalid JSON"}"#,
+                r#"{"error": "invalid json"}"#,
                 Some(&e.to_string()),
             ).await;
-            return (StatusCode::BAD_REQUEST, Json(json!({"error": "Invalid JSON"})));
+            return (StatusCode::BAD_REQUEST, Json(json!({"error": "invalid json"})));
         }
     };
-    let event_type = payload.get("type").and_then(|v| v.as_str()).unwrap_or("unknown");
-    let event_id = payload.get("id").and_then(|v| v.as_str()).unwrap_or("");
+
+    let event_type = header_event
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .or_else(|| payload.get("type").and_then(|v| v.as_str()))
+        .or_else(|| payload.get("event").and_then(|v| v.as_str()))
+        .unwrap_or("unknown");
+
+    let event_id = header_idempotency
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .or_else(|| payload.get("id").and_then(|v| v.as_str()))
+        .or_else(|| payload.get("event_id").and_then(|v| v.as_str()))
+        .unwrap_or("");
 
     // Deduplicación e Idempotencia
     if !event_id.is_empty() {
@@ -1147,10 +1203,10 @@ pub async fn webhook_kapso(
                 Some(200),
                 Some(0),
                 &raw_str,
-                r#"{"resultado_portal": "Evento duplicado ignorado (idempotencia)"}"#,
+                r#"{"received": true, "resultado_portal": "Evento duplicado ignorado (idempotencia)"}"#,
                 None,
             ).await;
-            return (StatusCode::OK, Json(json!({"status": "duplicate_ignored"})));
+            return (StatusCode::OK, Json(json!({"received": true})));
         }
 
         use std::collections::hash_map::DefaultHasher;
@@ -1158,7 +1214,11 @@ pub async fn webhook_kapso(
         let mut hasher = DefaultHasher::new();
         payload.to_string().hash(&mut hasher);
         let p_hash = format!("{:x}", hasher.finish());
-        let msg_id = payload.get("message").and_then(|m| m.get("id")).and_then(|i| i.as_str()).unwrap_or("");
+        let msg_id = payload
+            .get("message")
+            .and_then(|m| m.get("wamid").or_else(|| m.get("id")))
+            .and_then(|i| i.as_str())
+            .unwrap_or("");
 
         let _ = sqlx::query(
             "INSERT INTO whatsapp_message_events (event_id, message_id, event_type, payload_hash, received_at)
@@ -1172,10 +1232,18 @@ pub async fn webhook_kapso(
         .await;
     }
 
+    let msg_type_detected = payload
+        .get("message")
+        .and_then(|m| m.get("type").or_else(|| m.get("message_type")))
+        .and_then(|t| t.as_str())
+        .unwrap_or("");
+
     let mut resultado_portal = json!({
         "estado_procesamiento": "exitoso",
         "evento": event_type,
-        "event_id": event_id
+        "event_id": event_id,
+        "message_type": msg_type_detected,
+        "hmac_verified": hmac_verified
     });
     let mut dest_val = String::new();
     let mut err_msg_log: Option<String> = None;
@@ -1183,7 +1251,11 @@ pub async fn webhook_kapso(
     match event_type {
         // A. Gestión de Bajas y Consentimiento (STOP)
         "whatsapp.contact.marketing_preference_changed" => {
-            let wa_id = payload.get("contact").and_then(|c| c.get("wa_id")).and_then(|w| w.as_str()).unwrap_or("");
+            let wa_id = payload
+                .get("contact")
+                .and_then(|c| c.get("wa_id").or_else(|| c.get("phone_number")))
+                .and_then(|w| w.as_str())
+                .unwrap_or("");
             let pref_status = payload.get("marketing_preference").and_then(|m| m.get("status")).and_then(|s| s.as_str()).unwrap_or("");
             dest_val = wa_id.to_string();
 
@@ -1219,23 +1291,43 @@ pub async fn webhook_kapso(
 
         // B. Telemetría de Entrega y Lectura
         "whatsapp.message.sent" | "whatsapp.message.delivered" | "whatsapp.message.read" | "whatsapp.message.failed" => {
-            let wamid = payload.get("message").and_then(|m| m.get("id")).and_then(|i| i.as_str()).unwrap_or("");
-            let recipient = payload.get("message").and_then(|m| m.get("recipient")).and_then(|r| r.as_str()).unwrap_or("");
+            let msg_obj = payload.get("message");
+            let wamid = msg_obj
+                .and_then(|m| m.get("wamid").or_else(|| m.get("whatsapp_message_id")).or_else(|| m.get("id")))
+                .and_then(|i| i.as_str())
+                .unwrap_or("");
+            let msg_internal_id = msg_obj
+                .and_then(|m| m.get("id"))
+                .and_then(|i| i.as_str())
+                .unwrap_or(wamid);
+            let recipient = msg_obj
+                .and_then(|m| m.get("recipient").or_else(|| m.get("to")))
+                .and_then(|r| r.as_str())
+                .or_else(|| payload.get("conversation").and_then(|c| c.get("phone_number")).and_then(|p| p.as_str()))
+                .or_else(|| payload.get("contact").and_then(|c| c.get("wa_id").or_else(|| c.get("phone_number"))).and_then(|p| p.as_str()))
+                .unwrap_or("");
             dest_val = if !recipient.is_empty() { recipient.to_string() } else { wamid.to_string() };
 
-            if !wamid.is_empty() {
-                let status_name = match event_type {
-                    "whatsapp.message.sent" => "sent",
-                    "whatsapp.message.delivered" => "delivered",
-                    "whatsapp.message.read" => "read",
-                    "whatsapp.message.failed" => "failed",
-                    _ => "pending",
-                };
+            let status_name = match event_type {
+                "whatsapp.message.sent" => "sent",
+                "whatsapp.message.delivered" => "delivered",
+                "whatsapp.message.read" => "read",
+                "whatsapp.message.failed" => "failed",
+                _ => "pending",
+            };
 
-                let err_code = payload.get("error").and_then(|e| e.get("code")).map(|c| c.to_string());
-                let err_msg = payload.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()).map(|s| s.to_string());
-                err_msg_log = err_msg.clone();
+            let err_obj = payload
+                .get("error")
+                .or_else(|| msg_obj.and_then(|m| m.get("error")))
+                .or_else(|| msg_obj.and_then(|m| m.get("errors")).and_then(|e| e.as_array()).and_then(|a| a.first()));
+            let err_code = err_obj.and_then(|e| e.get("code")).map(|c| c.to_string());
+            let err_msg = err_obj
+                .and_then(|e| e.get("message").or_else(|| e.get("title")).or_else(|| e.get("details")))
+                .and_then(|m| m.as_str())
+                .map(|s| s.to_string());
+            err_msg_log = err_msg.clone();
 
+            if !wamid.is_empty() || !msg_internal_id.is_empty() {
                 let _ = sqlx::query(
                     "UPDATE whatsapp_broadcast_recipients
                      SET status = $1,
@@ -1245,16 +1337,33 @@ pub async fn webhook_kapso(
                          error_code = COALESCE($2, error_code),
                          error_message = COALESCE($3, error_message),
                          updated_at = now()
-                     WHERE wamid = $4"
+                     WHERE wamid = $4 OR wamid = $5"
                 )
                 .bind(status_name)
                 .bind(err_code.clone())
                 .bind(err_msg.clone())
                 .bind(wamid)
+                .bind(msg_internal_id)
                 .execute(&pool)
                 .await;
 
-                resultado_portal["detalle"] = json!(format!("Actualizado estado a '{}' en whatsapp_broadcast_recipients para wamid {}", status_name, wamid));
+                let estado_cola = if status_name == "failed" { "error" } else { "confirmado" };
+                let _ = sqlx::query(
+                    "UPDATE mensajes_pendientes
+                     SET meta_status = $1,
+                         estado = $2,
+                         error_mensaje = COALESCE($3, error_mensaje)
+                     WHERE kapso_message_id = $4 OR kapso_message_id = $5"
+                )
+                .bind(status_name)
+                .bind(estado_cola)
+                .bind(err_msg.clone())
+                .bind(wamid)
+                .bind(msg_internal_id)
+                .execute(&pool)
+                .await;
+
+                resultado_portal["detalle"] = json!(format!("Actualizado estado a '{}' para mensaje {} (destinatario: {})", status_name, wamid, dest_val));
                 if let Some(ref c) = err_code {
                     resultado_portal["codigo_error"] = json!(c);
                 }

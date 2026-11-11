@@ -1038,7 +1038,15 @@ pub async fn create_destinatario(
                     .filter(|v| !v.is_empty())
             };
 
-            match client.send_template_with_log(Some(&pool), telefono, tpl_name, tpl_lang, vars, "plantilla_bienvenida").await {
+            let today = chrono::Utc::now().date_naive();
+            let sample = "🇲🇽 *PRIMERAS PLANAS NACIONALES*\nValidación y alta de destinatario en el canal informativo ExposureIQ.".to_string();
+            let send_res = if tpl_name.contains("brief") || tpl_name == "servicio_monitoreo" || tpl_name == "brief_informativo_cp_v2" {
+                client.send_brief_template(Some(&pool), telefono, today, &sample, "plantilla_bienvenida").await
+            } else {
+                client.send_template_with_log(Some(&pool), telefono, tpl_name, tpl_lang, vars, "plantilla_bienvenida").await
+            };
+
+            match send_res {
                 Ok(msg_id) => {
                     plantilla_enviada = true;
                     kapso_msg_id = Some(msg_id.clone());
@@ -1277,8 +1285,15 @@ pub async fn enviar_plantilla_destinatario(
     };
 
     let client = KapsoClient::new(api_key.to_string(), phone_number_id.to_string());
+    let today = chrono::Utc::now().date_naive();
+    let sample = "🇲🇽 *PRIMERAS PLANAS NACIONALES*\nActivación de sesión en el canal informativo ExposureIQ.".to_string();
+    let send_res = if tpl_name.contains("brief") || tpl_name == "servicio_monitoreo" || tpl_name == "brief_informativo_cp_v2" {
+        client.send_brief_template(Some(&pool), target_phone, today, &sample, "plantilla_destinatario").await
+    } else {
+        client.send_template_with_log(Some(&pool), target_phone, tpl_name, tpl_lang, vars, "plantilla_destinatario").await
+    };
 
-    match client.send_template_with_log(Some(&pool), target_phone, tpl_name, tpl_lang, vars, "plantilla_destinatario").await {
+    match send_res {
         Ok(msg_id) => {
             let _ = sqlx::query(
                 "INSERT INTO mensajes_pendientes (tipo, referencia_id, texto, destinatario, estado, proveedor, kapso_message_id, meta_status, confirmado_en)
