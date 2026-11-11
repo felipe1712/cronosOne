@@ -2088,7 +2088,7 @@ export default function BoletinesPage() {
             }
             label={
               <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                Despachar inmediatamente vía WhatsApp a los contactos activos de la lista de distribución
+                Despachar plantilla oficial vía WhatsApp a la Audiencia Activa (Suscriptores del Gestor de Páginas)
               </Typography>
             }
           />

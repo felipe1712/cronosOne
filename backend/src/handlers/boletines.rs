@@ -359,18 +359,19 @@ pub async fn aprobar_boletin(
     let whatsapp_cfg = get_whatsapp_config(&pool).await;
 
     #[derive(sqlx::FromRow)]
-    struct DestRow {
-        telefono: String,
+    struct SubRow {
+        phone_number: String,
     }
 
-    let destinatarios_db = sqlx::query_as::<_, DestRow>(
-        "SELECT telefono FROM lista_distribucion WHERE activo = true AND telefono != '5215512345678' AND trim(telefono) != ''"
+    // Obtener destinatarios de la lista "Audiencia WhatsApp" del CMS (subscribers activos)
+    let subscribers_db = sqlx::query_as::<_, SubRow>(
+        "SELECT phone_number FROM subscribers WHERE consent_status = 'subscribed' AND trim(phone_number) != '' AND phone_number NOT LIKE '%5512345678' ORDER BY created_at ASC"
     )
     .fetch_all(&mut *tx)
     .await
     .unwrap_or_default();
 
-    let mut target_phones: Vec<String> = if destinatarios_db.is_empty() {
+    let mut target_phones: Vec<String> = if subscribers_db.is_empty() {
         if !whatsapp_cfg.director_phone.trim().is_empty() && whatsapp_cfg.director_phone.trim() != "5215512345678" {
             vec![whatsapp_cfg.director_phone.trim().to_string()]
         } else if !config.director_whatsapp.trim().is_empty() && config.director_whatsapp.trim() != "5215512345678" {
@@ -379,10 +380,10 @@ pub async fn aprobar_boletin(
             vec![]
         }
     } else {
-        destinatarios_db
+        subscribers_db
             .into_iter()
-            .map(|d| d.telefono)
-            .filter(|t| !t.trim().is_empty() && t.trim() != "5215512345678")
+            .map(|s| s.phone_number)
+            .filter(|p| !p.trim().is_empty() && !p.contains("5512345678"))
             .collect()
     };
 
@@ -1278,18 +1279,19 @@ pub async fn aprobar_sintesis_diaria(
         let whatsapp_cfg = get_whatsapp_config(&pool).await;
 
         #[derive(sqlx::FromRow)]
-        struct DestRow {
-            telefono: String,
+        struct SubRow {
+            phone_number: String,
         }
 
-        let destinatarios_db = sqlx::query_as::<_, DestRow>(
-            "SELECT telefono FROM lista_distribucion WHERE activo = true AND telefono != '5215512345678' AND trim(telefono) != ''"
+        // Obtener destinatarios de la lista "Audiencia WhatsApp" del CMS (subscribers activos)
+        let subscribers_db = sqlx::query_as::<_, SubRow>(
+            "SELECT phone_number FROM subscribers WHERE consent_status = 'subscribed' AND trim(phone_number) != '' AND phone_number NOT LIKE '%5512345678' ORDER BY created_at ASC"
         )
         .fetch_all(&mut *tx)
         .await
         .unwrap_or_default();
 
-        target_phones = if destinatarios_db.is_empty() {
+        target_phones = if subscribers_db.is_empty() {
             if !whatsapp_cfg.director_phone.trim().is_empty() && whatsapp_cfg.director_phone.trim() != "5215512345678" {
                 vec![whatsapp_cfg.director_phone.trim().to_string()]
             } else if !config.director_whatsapp.trim().is_empty() && config.director_whatsapp.trim() != "5215512345678" {
@@ -1298,10 +1300,10 @@ pub async fn aprobar_sintesis_diaria(
                 vec![]
             }
         } else {
-            destinatarios_db
+            subscribers_db
                 .into_iter()
-                .map(|d| d.telefono)
-                .filter(|t| !t.trim().is_empty() && t.trim() != "5215512345678")
+                .map(|s| s.phone_number)
+                .filter(|p| !p.trim().is_empty() && !p.contains("5512345678"))
                 .collect()
         };
 
