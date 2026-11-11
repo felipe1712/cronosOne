@@ -696,7 +696,7 @@ pub async fn test_template(
         .filter(|s| !s.is_empty() && *s != "hello_world")
         .unwrap_or(cfg.template_name.trim());
     let tpl_name = if raw_name == "hello_world" || raw_name.is_empty() {
-        "servicio_monitoreo"
+        "brief_informativo"
     } else {
         raw_name
     };
@@ -708,7 +708,7 @@ pub async fn test_template(
         .filter(|s| !s.is_empty())
         .unwrap_or(cfg.template_language.trim());
 
-    let vars = if tpl_name.to_lowercase() == "servicio_monitoreo" {
+    let vars = if tpl_name.eq_ignore_ascii_case("servicio_monitoreo") || tpl_name.eq_ignore_ascii_case("brief_informativo") {
         None
     } else {
         req.variables.as_deref().filter(|v| !v.is_empty())
@@ -718,8 +718,50 @@ pub async fn test_template(
     let start = Instant::now();
     let today = chrono::Utc::now().date_naive();
 
-    let res = if tpl_name.contains("brief") || tpl_name == "servicio_monitoreo" || tpl_name == "brief_informativo_cp_v2" {
-        let sample = "🇲🇽 *PRIMERAS PLANAS NACIONALES*\n🔴 SCJN y comités de evaluación definen ternas.\n💼 Estabilidad financiera y cambiaria en mercados locales.".to_string();
+    // Consultar si la plantilla existe en whatsapp_plantillas para respetar exactamente sus parámetros ([] = sin components)
+    #[derive(sqlx::FromRow)]
+    struct TplCfgRow {
+        idioma: String,
+        tope_extracto: i32,
+        parametros: serde_json::Value,
+    }
+
+    let db_tpl = sqlx::query_as::<_, TplCfgRow>(
+        "SELECT idioma, tope_extracto, parametros FROM whatsapp_plantillas WHERE nombre = $1 LIMIT 1"
+    )
+    .bind(tpl_name)
+    .fetch_optional(&pool)
+    .await
+    .unwrap_or(None);
+
+    let sample = "🇲🇽 *PRIMERAS PLANAS NACIONALES*  🔴 SCJN y comités de evaluación definen ternas.  💼 Estabilidad financiera y cambiaria en mercados locales.".to_string();
+
+    let res = if let Some(row) = db_tpl {
+        client.send_configured_template(
+            Some(&pool),
+            target_phone,
+            tpl_name,
+            &row.idioma,
+            row.tope_extracto,
+            &row.parametros,
+            today,
+            &sample,
+            "test_plantilla",
+        ).await
+    } else if tpl_name.eq_ignore_ascii_case("brief_informativo") || tpl_name.eq_ignore_ascii_case("servicio_monitoreo") {
+        // Plantilla aprobada con 0 parámetros: omite components por completo
+        client.send_configured_template(
+            Some(&pool),
+            target_phone,
+            tpl_name,
+            tpl_lang,
+            900,
+            &json!([]),
+            today,
+            "",
+            "test_plantilla",
+        ).await
+    } else if tpl_name.contains("v2") {
         client.send_brief_template(Some(&pool), target_phone, today, &sample, "test_plantilla").await
     } else {
         client.send_template_with_log(Some(&pool), target_phone, tpl_name, tpl_lang, vars, "test_plantilla").await
@@ -1761,36 +1803,43 @@ pub async fn clear_api_logs(
 pub async fn list_plantillas(
     State((pool, _)): State<(DbPool, Arc<Config>)>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    // 1. Asegurar que brief_informativo y servicio_monitoreo tengan siempre 0 parámetros ('[]')
     let _ = sqlx::query(
         "UPDATE whatsapp_plantillas
-         SET nombre = 'brief_informativo_cp_v2', actualizado_en = now()
-         WHERE nombre = 'brief_informativo'
-           AND NOT EXISTS (SELECT 1 FROM whatsapp_plantillas WHERE nombre = 'brief_informativo_cp_v2')"
+         SET parametros = '[]'::jsonb, actualizado_en = now()
+         WHERE nombre IN ('brief_informativo', 'servicio_monitoreo')
+           AND jsonb_array_length(parametros) > 0"
     )
     .execute(&pool)
     .await;
 
-    let exists_v2: Option<bool> = sqlx::query_scalar(
-        "SELECT true FROM whatsapp_plantillas WHERE nombre = 'brief_informativo_cp_v2' LIMIT 1"
+    // 2. Garantizar que exista 'brief_informativo' (0 parámetros, sin components)
+    let has_any_active: Option<bool> = sqlx::query_scalar(
+        "SELECT true FROM whatsapp_plantillas WHERE activa = true LIMIT 1"
     )
     .fetch_optional(&pool)
     .await
     .unwrap_or(None);
 
-    if !exists_v2.unwrap_or(false) {
-        let _ = sqlx::query("UPDATE whatsapp_plantillas SET activa = false WHERE activa = true")
-            .execute(&pool)
-            .await;
+    let _ = sqlx::query(
+        "INSERT INTO whatsapp_plantillas (nombre, idioma, activa, texto_fijo_body, tope_extracto, parametros)
+         VALUES ('brief_informativo', 'es_MX', $1, 'Plantilla oficial sin variables dinámicas (0 parámetros - omite components)', 900, '[]'::jsonb)
+         ON CONFLICT (nombre, idioma) DO UPDATE
+         SET parametros = '[]'::jsonb, actualizado_en = now()"
+    )
+    .bind(!has_any_active.unwrap_or(false))
+    .execute(&pool)
+    .await;
 
-        let _ = sqlx::query(
-            "INSERT INTO whatsapp_plantillas (nombre, idioma, activa, texto_fijo_body, tope_extracto, parametros)
-             VALUES ('brief_informativo_cp_v2', 'es_MX', true, 'PRIMERAS PLANAS \\n\\n {{primeras_planas}} .\\n\\n Si no deseas seguir recibiendo estos mensajes manda la palabra \"STOP\"', 900,
-             '[{\"componente\": \"header\", \"nombre\": \"date\", \"fuente\": \"fecha\", \"formato\": \"D de Mes\"}, {\"componente\": \"body\", \"nombre\": \"primeras_planas\", \"fuente\": \"extracto\"}]'::jsonb)
-             ON CONFLICT (nombre, idioma) DO UPDATE SET activa = true, actualizado_en = now()"
-        )
-        .execute(&pool)
-        .await;
-    }
+    // 3. Garantizar que también exista 'brief_informativo_cp_v2' (2 parámetros: date y primeras_planas)
+    let _ = sqlx::query(
+        "INSERT INTO whatsapp_plantillas (nombre, idioma, activa, texto_fijo_body, tope_extracto, parametros)
+         VALUES ('brief_informativo_cp_v2', 'es_MX', false, 'PRIMERAS PLANAS \\n\\n {{primeras_planas}} .\\n\\n Si no deseas seguir recibiendo estos mensajes manda la palabra \"STOP\"', 900,
+         '[{\"componente\": \"header\", \"nombre\": \"date\", \"fuente\": \"fecha\", \"formato\": \"D de Mes\"}, {\"componente\": \"body\", \"nombre\": \"primeras_planas\", \"fuente\": \"extracto\"}]'::jsonb)
+         ON CONFLICT (nombre, idioma) DO NOTHING"
+    )
+    .execute(&pool)
+    .await;
 
     let rows = sqlx::query_as::<_, WhatsappPlantilla>(
         "SELECT id, nombre, idioma, activa, texto_fijo_body, tope_extracto, parametros, kapso_template_id, creado_en, actualizado_en
@@ -1981,18 +2030,25 @@ pub async fn importar_plantillas_kapso(
     use crate::services::kapso::get_whatsapp_config;
     let cfg = get_whatsapp_config(&pool).await;
 
-    // 1. Migrar 'brief_informativo' -> 'brief_informativo_cp_v2' y liberar activa=true antes de insertar
-    let _ = sqlx::query(
-        "UPDATE whatsapp_plantillas
-         SET nombre = 'brief_informativo_cp_v2', actualizado_en = now()
-         WHERE nombre = 'brief_informativo'
-           AND NOT EXISTS (SELECT 1 FROM whatsapp_plantillas WHERE nombre = 'brief_informativo_cp_v2')"
-    )
-    .execute(&pool)
-    .await;
+    // 1. Asegurar que brief_informativo tenga 0 parámetros ('[]') y esté activa si es la plantilla en uso
+    let _ = sqlx::query("UPDATE whatsapp_plantillas SET activa = false WHERE activa = true")
+        .execute(&pool)
+        .await;
 
     let _ = sqlx::query(
-        "UPDATE whatsapp_plantillas SET activa = false WHERE nombre != 'brief_informativo_cp_v2' AND activa = true"
+        "INSERT INTO whatsapp_plantillas (nombre, idioma, activa, texto_fijo_body, tope_extracto, parametros, creado_en, actualizado_en)
+         VALUES (
+             'brief_informativo',
+             'es_MX',
+             true,
+             'Plantilla oficial sin variables dinámicas (0 parámetros - omite components)',
+             900,
+             '[]'::jsonb,
+             now(),
+             now()
+         )
+         ON CONFLICT (nombre, idioma) DO UPDATE
+         SET activa = true, parametros = '[]'::jsonb, actualizado_en = now()"
     )
     .execute(&pool)
     .await;
@@ -2002,7 +2058,7 @@ pub async fn importar_plantillas_kapso(
          VALUES (
              'brief_informativo_cp_v2',
              'es_MX',
-             true,
+             false,
              'PRIMERAS PLANAS \\n\\n {{primeras_planas}} .\\n\\n Si no deseas seguir recibiendo estos mensajes manda la palabra \"STOP\"',
              900,
              '[{\"componente\": \"header\", \"nombre\": \"date\", \"fuente\": \"fecha\", \"formato\": \"D de Mes\"}, {\"componente\": \"body\", \"nombre\": \"primeras_planas\", \"fuente\": \"extracto\"}]'::jsonb,
@@ -2010,7 +2066,7 @@ pub async fn importar_plantillas_kapso(
              now()
          )
          ON CONFLICT (nombre, idioma) DO UPDATE
-         SET activa = true, actualizado_en = now()"
+         SET actualizado_en = now()"
     )
     .execute(&pool)
     .await;
@@ -2018,8 +2074,8 @@ pub async fn importar_plantillas_kapso(
     if cfg.api_key.trim().is_empty() {
         return Ok((StatusCode::OK, Json(json!({
             "ok": true,
-            "importadas": 1,
-            "mensaje": "Plantilla oficial brief_informativo_cp_v2 verificada (KAPSO_API_KEY no configurada para consulta remota)."
+            "importadas": 2,
+            "mensaje": "Plantillas oficiales brief_informativo (0 parámetros) y brief_informativo_cp_v2 verificadas."
         }))));
     }
 
@@ -2052,8 +2108,8 @@ pub async fn importar_plantillas_kapso(
         None => {
             return Ok((StatusCode::OK, Json(json!({
                 "ok": true,
-                "importadas": 1,
-                "mensaje": "Plantilla oficial brief_informativo_cp_v2 cargada y lista para editar."
+                "importadas": 2,
+                "mensaje": "Plantillas brief_informativo (0 parámetros, activa) y brief_informativo_cp_v2 cargadas."
             }))));
         }
     };
@@ -2085,7 +2141,7 @@ pub async fn importar_plantillas_kapso(
                     if let Some(close) = text[open_idx..].find("}}") {
                         let p_name = text[open_idx..open_idx + close].trim();
                         if !p_name.is_empty() {
-                            let fuente = if p_name.contains("date") || p_name.contains("fecha") {
+                            let fuente = if p_name.contains("date") || p_name.contains("fecha") || p_name == "1" {
                                 "fecha"
                             } else if p_name.contains("plana") || p_name.contains("extracto") || p_name.contains("summary") {
                                 "extracto"
@@ -2107,21 +2163,19 @@ pub async fn importar_plantillas_kapso(
             }
         }
 
-        let is_target = nombre == "brief_informativo_cp_v2";
         let tope = if body_text.len() < 1024 { (1024 - body_text.len()).clamp(300, 1024) as i32 } else { 900 };
 
         let _ = sqlx::query(
             "INSERT INTO whatsapp_plantillas (nombre, idioma, activa, texto_fijo_body, tope_extracto, parametros, kapso_template_id, creado_en, actualizado_en)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, now(), now())
+             VALUES ($1, $2, false, $3, $4, $5, $6, now(), now())
              ON CONFLICT (nombre, idioma) DO UPDATE
              SET kapso_template_id = COALESCE(EXCLUDED.kapso_template_id, whatsapp_plantillas.kapso_template_id),
-                 texto_fijo_body = EXCLUDED.texto_fijo_body,
-                 parametros = CASE WHEN jsonb_array_length(whatsapp_plantillas.parametros) = 0 THEN EXCLUDED.parametros ELSE whatsapp_plantillas.parametros END,
+                 texto_fijo_body = CASE WHEN EXCLUDED.texto_fijo_body != '' THEN EXCLUDED.texto_fijo_body ELSE whatsapp_plantillas.texto_fijo_body END,
+                 parametros = EXCLUDED.parametros,
                  actualizado_en = now()"
         )
         .bind(nombre)
         .bind(idioma)
-        .bind(is_target)
         .bind(&body_text)
         .bind(tope)
         .bind(json!(params))
@@ -2134,8 +2188,8 @@ pub async fn importar_plantillas_kapso(
 
     Ok((StatusCode::OK, Json(json!({
         "ok": true,
-        "importadas": importadas.max(1),
-        "mensaje": format!("Plantillas sincronizadas ({} procesadas). brief_informativo_cp_v2 activa.", importadas.max(1))
+        "importadas": importadas.max(2),
+        "mensaje": format!("Plantillas sincronizadas ({} procesadas). brief_informativo (0 parámetros) activa.", importadas.max(2))
     }))))
 }
 
@@ -2163,13 +2217,17 @@ pub async fn probar_plantilla(
 
     let client = KapsoClient::new(cfg.api_key, cfg.phone_number_id);
     let sample_extract = payload.extracto_prueba.unwrap_or_else(|| {
-        "🇲🇽 *PRIMERAS PLANAS NACIONALES*\n🔴 *Seguridad:* Operativos conjuntos en autopistas federales.\n📈 *Economía:* Tipo de cambio y tasas estables ante el inicio de jornada legislativa.".to_string()
+        "🇲🇽 *PRIMERAS PLANAS NACIONALES*  🔴 *Seguridad:* Operativos conjuntos en autopistas federales.  📈 *Economía:* Tipo de cambio y tasas estables ante el inicio de jornada legislativa.".to_string()
     });
 
     let today = chrono::Utc::now().date_naive();
-    let res = client.send_brief_template(
+    let res = client.send_configured_template(
         Some(&pool),
         &payload.telefono,
+        &plantilla.nombre,
+        &plantilla.idioma,
+        plantilla.tope_extracto,
+        &plantilla.parametros,
         today,
         &sample_extract,
         "test_plantilla_admin",

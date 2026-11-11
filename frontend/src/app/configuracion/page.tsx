@@ -3764,17 +3764,60 @@ export default function ConfiguracionPage() {
             />
 
             <Box>
-              <Typography variant="caption" sx={{ fontWeight: 700, color: "#475569", mb: 0.5, display: "block" }}>
-                Parámetros Mapeados (JSON)
-              </Typography>
+              <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 1, flexWrap: "wrap", gap: 1 }}>
+                <Typography variant="caption" sx={{ fontWeight: 700, color: "#475569" }}>
+                  Parámetros Mapeados (JSON)
+                </Typography>
+                <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+                  <Button
+                    size="small"
+                    variant={formPlantillaParametros.trim() === "[]" ? "contained" : "outlined"}
+                    onClick={() => setFormPlantillaParametros("[]")}
+                    sx={{ textTransform: "none", fontSize: "0.72rem", py: 0.25 }}
+                  >
+                    0 Variables (Omite components)
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={() =>
+                      setFormPlantillaParametros(
+                        JSON.stringify([{ componente: "body", nombre: "1", fuente: "fecha", formato: "larga" }], null, 2)
+                      )
+                    }
+                    sx={{ textTransform: "none", fontSize: "0.72rem", py: 0.25 }}
+                  >
+                    1 Variable (Fecha)
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={() =>
+                      setFormPlantillaParametros(
+                        JSON.stringify(
+                          [
+                            { componente: "header", nombre: "date", fuente: "fecha", formato: "D de Mes" },
+                            { componente: "body", nombre: "primeras_planas", fuente: "extracto" },
+                          ],
+                          null,
+                          2
+                        )
+                      )
+                    }
+                    sx={{ textTransform: "none", fontSize: "0.72rem", py: 0.25 }}
+                  >
+                    2 Variables (date + primeras_planas)
+                  </Button>
+                </Box>
+              </Box>
               <TextField
                 fullWidth
                 multiline
                 rows={5}
                 value={formPlantillaParametros}
                 onChange={(e) => setFormPlantillaParametros(e.target.value)}
-                placeholder='[\n  {"component": "header", "name": "date", "tipo": "text"},\n  {"component": "body", "name": "primeras_planas", "tipo": "text"}\n]'
-                helperText="Arreglo de parámetros con 'component' ('header' o 'body') y 'name'"
+                placeholder="[]"
+                helperText="Use [] para plantillas aprobadas sin variables (omite components). O defina los parámetros de header/body."
                 sx={{
                   "& .MuiOutlinedInput-root": {
                     fontFamily: "monospace",

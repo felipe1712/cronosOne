@@ -650,26 +650,23 @@ pub async fn ensure_sintesis_diarias_schema(pool: &DbPool) {
         .execute(pool)
         .await;
 
-    let _ = sqlx::query(
-        "UPDATE whatsapp_plantillas
-         SET nombre = 'brief_informativo_cp_v2', actualizado_en = now()
-         WHERE nombre = 'brief_informativo'
-           AND NOT EXISTS (SELECT 1 FROM whatsapp_plantillas WHERE nombre = 'brief_informativo_cp_v2')"
-    )
-    .execute(pool)
-    .await;
+    let _ = sqlx::query("UPDATE whatsapp_plantillas SET activa = false WHERE activa = true")
+        .execute(pool)
+        .await;
 
     let _ = sqlx::query(
-        "UPDATE whatsapp_plantillas SET activa = false WHERE nombre != 'brief_informativo_cp_v2' AND activa = true"
+        "INSERT INTO whatsapp_plantillas (nombre, idioma, activa, texto_fijo_body, tope_extracto, parametros)
+         VALUES ('brief_informativo', 'es_MX', true, 'Plantilla oficial sin variables dinámicas (0 parámetros - omite components)', 900, '[]'::jsonb)
+         ON CONFLICT (nombre, idioma) DO UPDATE SET activa = true, parametros = '[]'::jsonb, actualizado_en = now()"
     )
     .execute(pool)
     .await;
 
     let _ = sqlx::query(
         "INSERT INTO whatsapp_plantillas (nombre, idioma, activa, texto_fijo_body, tope_extracto, parametros)
-         VALUES ('brief_informativo_cp_v2', 'es_MX', true, 'PRIMERAS PLANAS \\n\\n {{primeras_planas}} .\\n\\n Si no deseas seguir recibiendo estos mensajes manda la palabra \"STOP\"', 900,
+         VALUES ('brief_informativo_cp_v2', 'es_MX', false, 'PRIMERAS PLANAS \\n\\n {{primeras_planas}} .\\n\\n Si no deseas seguir recibiendo estos mensajes manda la palabra \"STOP\"', 900,
          '[{\"componente\": \"header\", \"nombre\": \"date\", \"fuente\": \"fecha\", \"formato\": \"D de Mes\"}, {\"componente\": \"body\", \"nombre\": \"primeras_planas\", \"fuente\": \"extracto\"}]'::jsonb)
-         ON CONFLICT (nombre, idioma) DO UPDATE SET activa = true, actualizado_en = now()"
+         ON CONFLICT (nombre, idioma) DO NOTHING"
     )
     .execute(pool)
     .await;

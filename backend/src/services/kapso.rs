@@ -197,12 +197,8 @@ impl KapsoClient {
         let start = std::time::Instant::now();
         let clean_phone = Self::sanitize_phone(to);
         let raw_name = template_name.trim();
-        let t_name = if raw_name.is_empty()
-            || raw_name == "hello_world"
-            || raw_name == "servicio_monitoreo"
-            || raw_name == "brief_informativo"
-        {
-            "brief_informativo_cp_v2"
+        let t_name = if raw_name.is_empty() || raw_name == "hello_world" {
+            "brief_informativo"
         } else {
             raw_name
         };
@@ -360,124 +356,110 @@ impl KapsoClient {
         self.send_template_components_with_log(pool, to, template_name, language_code, comps_ref, accion).await
     }
 
-    /// Envía el Brief / Síntesis Diaria utilizando la plantilla activa configurada en whatsapp_plantillas
-    /// mapeando dinámicamente sus parámetros nombrados (ej: date y primeras_planas).
-    pub async fn send_brief_template(
+    /// Envía una plantilla específica según su configuración de nombre, idioma, tope y arreglo JSON de parámetros.
+    /// Regla estricta Meta:
+    /// - Si `params_cfg` está vacío (`[]`) o la plantilla es `brief_informativo` / `servicio_monitoreo` sin variables,
+    ///   omite por completo `components`.
+    /// - Si tiene 1 o más variables configuradas, construye `components` en el orden indicado.
+    pub async fn send_configured_template(
         &self,
         pool: Option<&PgPool>,
         to: &str,
+        t_name: &str,
+        t_lang: &str,
+        tope: i32,
+        params_cfg: &serde_json::Value,
         fecha: chrono::NaiveDate,
         extracto: &str,
         accion: &str,
     ) -> Result<String, String> {
-        #[derive(sqlx::FromRow)]
-        struct PlantillaActivaRow {
-            nombre: String,
-            idioma: String,
-            parametros: serde_json::Value,
-            tope_extracto: i32,
-        }
-
-        let mut t_name = "brief_informativo_cp_v2".to_string();
-        let mut t_lang = "es_MX".to_string();
-        let mut tope = 900;
-        let mut params_cfg = json!([
-            {"componente": "header", "nombre": "date", "fuente": "fecha", "formato": "D de Mes"},
-            {"componente": "body", "nombre": "primeras_planas", "fuente": "extracto"}
-        ]);
-
-        if let Some(p) = pool {
-            if let Ok(Some(row)) = sqlx::query_as::<_, PlantillaActivaRow>(
-                "SELECT nombre, idioma, parametros, tope_extracto FROM whatsapp_plantillas WHERE activa = true LIMIT 1"
-            )
-            .fetch_optional(p)
-            .await {
-                t_name = row.nombre;
-                t_lang = row.idioma;
-                tope = row.tope_extracto;
-                if row.parametros.is_array() && !row.parametros.as_array().unwrap().is_empty() {
-                    params_cfg = row.parametros;
-                }
-            }
-        }
-
-        // Normalizar extracto según regla #132018 de Meta (sin \n, \t ni >4 espacios consecutivos) y tope de caracteres
-        let safe_extracto = Self::sanitize_template_param(extracto, tope as usize);
-
+        let safe_extracto = Self::sanitize_template_param(extracto, tope.clamp(100, 1024) as usize);
         let fecha_corta = Self::sanitize_template_param(&format_fecha_header(fecha), 60);
         let fecha_larga = Self::sanitize_template_param(&format_fecha_larga_es(fecha), 60);
 
         let mut header_params: Vec<serde_json::Value> = Vec::new();
         let mut body_params: Vec<serde_json::Value> = Vec::new();
 
-        if let Some(param_list) = params_cfg.as_array() {
-            for param in param_list {
-                let comp_type = param
-                    .get("componente")
-                    .or_else(|| param.get("component"))
-                    .or_else(|| param.get("type"))
-                    .and_then(|c| c.as_str())
-                    .unwrap_or("body");
+        // Si la plantilla es brief_informativo o servicio_monitoreo (aprobadas con 0 parámetros en Meta),
+        // o si el arreglo de parámetros está vacío ([]), no agregar ningún parámetro ni component.
+        let is_zero_param_template = t_name.trim().eq_ignore_ascii_case("brief_informativo")
+            || t_name.trim().eq_ignore_ascii_case("servicio_monitoreo");
 
-                let param_name = param
-                    .get("nombre")
-                    .or_else(|| param.get("name"))
-                    .or_else(|| param.get("parameter_name"))
-                    .and_then(|n| n.as_str())
-                    .unwrap_or("");
+        if !is_zero_param_template {
+            if let Some(param_list) = params_cfg.as_array() {
+                for param in param_list {
+                    let comp_type = param
+                        .get("componente")
+                        .or_else(|| param.get("component"))
+                        .or_else(|| param.get("type"))
+                        .and_then(|c| c.as_str())
+                        .unwrap_or("body");
 
-                let explicit_fuente = param
-                    .get("fuente")
-                    .or_else(|| param.get("source"))
-                    .and_then(|f| f.as_str())
-                    .unwrap_or("");
+                    let param_name = param
+                        .get("nombre")
+                        .or_else(|| param.get("name"))
+                        .or_else(|| param.get("parameter_name"))
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("");
 
-                let fuente = if !explicit_fuente.is_empty() {
-                    explicit_fuente
-                } else if param_name.eq_ignore_ascii_case("date") || param_name.eq_ignore_ascii_case("fecha") {
-                    "fecha"
-                } else if param_name.eq_ignore_ascii_case("primeras_planas") || param_name.eq_ignore_ascii_case("extracto") || param_name.eq_ignore_ascii_case("summary") {
-                    "extracto"
-                } else if comp_type.eq_ignore_ascii_case("header") {
-                    "fecha"
-                } else {
-                    "extracto"
-                };
+                    let explicit_fuente = param
+                        .get("fuente")
+                        .or_else(|| param.get("source"))
+                        .and_then(|f| f.as_str())
+                        .unwrap_or("");
 
-                let formato = param
-                    .get("formato")
-                    .or_else(|| param.get("format"))
-                    .and_then(|f| f.as_str())
-                    .unwrap_or("corta");
+                    let fuente = if !explicit_fuente.is_empty() {
+                        explicit_fuente
+                    } else if param_name.eq_ignore_ascii_case("date") || param_name.eq_ignore_ascii_case("fecha") {
+                        "fecha"
+                    } else if param_name.eq_ignore_ascii_case("primeras_planas")
+                        || param_name.eq_ignore_ascii_case("extracto")
+                        || param_name.eq_ignore_ascii_case("summary")
+                    {
+                        "extracto"
+                    } else if comp_type.eq_ignore_ascii_case("header") {
+                        "fecha"
+                    } else {
+                        "extracto"
+                    };
 
-                let valor = match fuente {
-                    "fecha" => {
-                        if formato.to_lowercase().contains("larga") {
-                            fecha_larga.clone()
-                        } else {
-                            fecha_corta.clone()
+                    let formato = param
+                        .get("formato")
+                        .or_else(|| param.get("format"))
+                        .and_then(|f| f.as_str())
+                        .unwrap_or("corta");
+
+                    let valor = match fuente {
+                        "fecha" => {
+                            if formato.to_lowercase().contains("larga") {
+                                fecha_larga.clone()
+                            } else {
+                                fecha_corta.clone()
+                            }
                         }
+                        "extracto" => safe_extracto.clone(),
+                        "fijo" => Self::sanitize_template_param(
+                            param.get("valor").or_else(|| param.get("value")).and_then(|v| v.as_str()).unwrap_or(""),
+                            tope as usize,
+                        ),
+                        _ => safe_extracto.clone(),
+                    };
+
+                    let mut param_obj = json!({
+                        "type": "text",
+                        "text": valor
+                    });
+                    // Solo incluir parameter_name si no es posicional numérico ("1", "2")
+                    let trimmed_name = param_name.trim();
+                    if !trimmed_name.is_empty() && !trimmed_name.chars().all(|c| c.is_ascii_digit()) {
+                        param_obj["parameter_name"] = json!(trimmed_name);
                     }
-                    "extracto" => safe_extracto.clone(),
-                    "fijo" => Self::sanitize_template_param(
-                        param.get("valor").or_else(|| param.get("value")).and_then(|v| v.as_str()).unwrap_or(""),
-                        tope as usize,
-                    ),
-                    _ => safe_extracto.clone(),
-                };
 
-                let mut param_obj = json!({
-                    "type": "text",
-                    "text": valor
-                });
-                if !param_name.trim().is_empty() {
-                    param_obj["parameter_name"] = json!(param_name.trim());
-                }
-
-                if comp_type.eq_ignore_ascii_case("header") {
-                    header_params.push(param_obj);
-                } else {
-                    body_params.push(param_obj);
+                    if comp_type.eq_ignore_ascii_case("header") {
+                        header_params.push(param_obj);
+                    } else {
+                        body_params.push(param_obj);
+                    }
                 }
             }
         }
@@ -497,7 +479,55 @@ impl KapsoClient {
         }
 
         let comps_ref = if components.is_empty() { None } else { Some(components.as_slice()) };
-        self.send_template_components_with_log(pool, to, &t_name, &t_lang, comps_ref, accion).await
+        self.send_template_components_with_log(pool, to, t_name, t_lang, comps_ref, accion).await
+    }
+
+    /// Envía el Brief / Síntesis Diaria utilizando la plantilla activa configurada en whatsapp_plantillas
+    pub async fn send_brief_template(
+        &self,
+        pool: Option<&PgPool>,
+        to: &str,
+        fecha: chrono::NaiveDate,
+        extracto: &str,
+        accion: &str,
+    ) -> Result<String, String> {
+        #[derive(sqlx::FromRow)]
+        struct PlantillaActivaRow {
+            nombre: String,
+            idioma: String,
+            parametros: serde_json::Value,
+            tope_extracto: i32,
+        }
+
+        let mut t_name = "brief_informativo".to_string();
+        let mut t_lang = "es_MX".to_string();
+        let mut tope = 900;
+        let mut params_cfg = json!([]);
+
+        if let Some(p) = pool {
+            if let Ok(Some(row)) = sqlx::query_as::<_, PlantillaActivaRow>(
+                "SELECT nombre, idioma, parametros, tope_extracto FROM whatsapp_plantillas WHERE activa = true LIMIT 1"
+            )
+            .fetch_optional(p)
+            .await {
+                t_name = row.nombre;
+                t_lang = row.idioma;
+                tope = row.tope_extracto;
+                if row.parametros.is_array() {
+                    params_cfg = row.parametros;
+                }
+            } else {
+                let cfg = get_whatsapp_config(p).await;
+                if !cfg.template_name.trim().is_empty() && cfg.template_name.trim() != "hello_world" {
+                    t_name = cfg.template_name.trim().to_string();
+                }
+                if !cfg.template_language.trim().is_empty() {
+                    t_lang = cfg.template_language.trim().to_string();
+                }
+            }
+        }
+
+        self.send_configured_template(pool, to, &t_name, &t_lang, tope, &params_cfg, fecha, extracto, accion).await
     }
 
     pub async fn send_template(
