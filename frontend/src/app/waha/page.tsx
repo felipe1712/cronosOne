@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
@@ -89,6 +89,10 @@ export default function CanalWhatsAppPage() {
   };
 
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.location.replace("/configuracion");
+      return;
+    }
     loadData();
     const interval = setInterval(loadData, 20000);
     return () => clearInterval(interval);

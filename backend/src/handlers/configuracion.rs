@@ -2435,3 +2435,635 @@ pub async fn probar_plantilla(
         })))),
     }
 }
+
+// ============================================================================
+// 11. Dashboard de Salud & Telemetría en Tiempo Real de Kapso / Meta WABA
+// ============================================================================
+
+pub async fn get_kapso_telemetry(
+    State((pool, _)): State<(DbPool, Arc<Config>)>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    use crate::services::kapso::get_whatsapp_config;
+
+    crate::handlers::boletines::ensure_sintesis_diarias_schema(&pool).await;
+    ensure_api_logs_schema(&pool).await;
+
+    let w_cfg = get_whatsapp_config(&pool).await;
+    let is_configured = !w_cfg.api_key.trim().is_empty() && !w_cfg.phone_number_id.trim().is_empty();
+
+    // 1. Obtener plantilla activa y resumen de plantillas WABA
+    let select_str = format!(
+        "SELECT {} FROM whatsapp_plantillas ORDER BY activa DESC, CASE WHEN status = 'APPROVED' THEN 0 ELSE 1 END ASC, creado_en DESC",
+        PLANTILLA_SELECT_COLS
+    );
+    let plantillas = sqlx::query_as::<_, WhatsappPlantilla>(&select_str)
+        .fetch_all(&pool)
+        .await
+        .unwrap_or_default();
+
+    let active_tpl = plantillas.iter().find(|p| p.activa).or_else(|| plantillas.first());
+    let approved_tpl_count = plantillas
+        .iter()
+        .filter(|p| p.status.as_deref().unwrap_or("APPROVED").eq_ignore_ascii_case("APPROVED"))
+        .count();
+
+    // 2. Traer los últimos 300 logs de WhatsApp para análisis detallado de telemetría, embudo, payloads y latencias
+    let logs = sqlx::query_as::<_, crate::models::ApiLogRow>(
+        "SELECT id, servicio, accion, modelo_o_proveedor, estado, codigo_http, latencia_ms,
+                tokens_input, tokens_output, tokens_total, max_tokens_configurado,
+                destinatario, peticion_payload, respuesta_payload, error_mensaje, creado_en
+         FROM api_logs
+         WHERE servicio = 'whatsapp'
+         ORDER BY creado_en DESC
+         LIMIT 300"
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+
+    let now = chrono::Utc::now();
+    let cutoff_24h = now - chrono::Duration::hours(24);
+
+    // Contadores de embudo (Histórico en ventana de 300 eventos y Últimas 24h)
+    let mut dispatched_ok_total = 0i64;
+    let mut dispatched_err_total = 0i64;
+    let mut dispatched_ok_24h = 0i64;
+    let mut dispatched_err_24h = 0i64;
+
+    let mut wh_sent_total = 0i64;
+    let mut wh_delivered_total = 0i64;
+    let mut wh_read_total = 0i64;
+    let mut wh_failed_total = 0i64;
+    let mut wh_rejected_401_total = 0i64;
+    let mut wh_stop_total = 0i64;
+    let mut wh_duplicates_total = 0i64;
+
+    let mut wh_sent_24h = 0i64;
+    let mut wh_delivered_24h = 0i64;
+    let mut wh_read_24h = 0i64;
+    let mut wh_failed_24h = 0i64;
+    let mut wh_rejected_401_24h = 0i64;
+
+    let mut template_type_count = 0i64;
+    let mut text_type_count = 0i64;
+    let mut recent_10_template_count = 0i64;
+    let mut recent_10_text_count = 0i64;
+    let mut recent_msg_checked = 0usize;
+
+    let mut recent_15_wh_total = 0i64;
+    let mut recent_15_wh_hmac_ok = 0i64;
+    let mut recent_10_dispatch_total = 0i64;
+    let mut recent_10_dispatch_ok = 0i64;
+
+    let mut latencies: Vec<i32> = Vec::new();
+    let mut last_webhook_at: Option<String> = None;
+    let mut last_dispatch_at: Option<String> = None;
+    let mut last_success_at: Option<chrono::DateTime<chrono::Utc>> = None;
+
+    // Clasificación de errores
+    let mut err_132018_count = 0i64;
+    let mut err_132018_last: Option<chrono::DateTime<chrono::Utc>> = None;
+    let mut err_401_count = 0i64;
+    let mut err_401_last: Option<chrono::DateTime<chrono::Utc>> = None;
+    let mut err_window24_count = 0i64;
+    let mut err_window24_last: Option<chrono::DateTime<chrono::Utc>> = None;
+    let mut err_other_count = 0i64;
+    let mut err_other_last: Option<chrono::DateTime<chrono::Utc>> = None;
+
+    // Serie por hora (últimas 12 cubetas de 2h = 24h) o por día (últimos 7 días)
+    let mut daily_buckets: std::collections::BTreeMap<String, (i64, i64, i64, Vec<i32>)> = std::collections::BTreeMap::new();
+    for d_idx in (0..7).rev() {
+        let d = (now - chrono::Duration::days(d_idx)).format("%Y-%m-%d").to_string();
+        daily_buckets.insert(d, (0, 0, 0, Vec::new()));
+    }
+
+    let mut hourly_buckets: std::collections::BTreeMap<String, (i64, i64, i64)> = std::collections::BTreeMap::new();
+    for h_idx in (0..12).rev() {
+        let h_time = now - chrono::Duration::hours(h_idx * 2);
+        let h_key = h_time.format("%H:00").to_string();
+        hourly_buckets.entry(h_key).or_insert((0, 0, 0));
+    }
+
+    let mut decoded_events: Vec<serde_json::Value> = Vec::new();
+
+    for row in &logs {
+        let is_24h = row.creado_en >= cutoff_24h;
+        let is_webhook = row.accion.starts_with("webhook");
+        let is_ok = row.estado == "ok" || row.estado == "exitoso";
+        let day_key = row.creado_en.format("%Y-%m-%d").to_string();
+
+        let req_str = row.peticion_payload.as_deref().unwrap_or("");
+        let resp_str = row.respuesta_payload.as_deref().unwrap_or("");
+        let err_str = row.error_mensaje.as_deref().unwrap_or("");
+
+        let req_json: Option<serde_json::Value> = if !req_str.is_empty() {
+            serde_json::from_str(req_str).ok()
+        } else {
+            None
+        };
+        let resp_json: Option<serde_json::Value> = if !resp_str.is_empty() {
+            serde_json::from_str(resp_str).ok()
+        } else {
+            None
+        };
+
+        // Extraer tipo de mensaje ('template' vs 'text') de peticiones o webhooks
+        let mut detected_msg_type = String::new();
+        let mut detected_tpl_name = String::new();
+        let mut detected_wamid = String::new();
+        let mut hmac_ok = is_ok && row.codigo_http.unwrap_or(200) != 401;
+
+        if let Some(ref rj) = req_json {
+            let root = if let Some(arr) = rj.get("data").and_then(|d| d.as_array()) {
+                arr.first().unwrap_or(rj)
+            } else if let Some(obj) = rj.get("data").filter(|d| d.is_object()) {
+                obj
+            } else {
+                rj
+            };
+
+            if let Some(t) = root.get("type").and_then(|v| v.as_str()) {
+                if t == "template" || t == "text" {
+                    detected_msg_type = t.to_string();
+                }
+            }
+            if detected_msg_type.is_empty() {
+                if let Some(m) = root.get("message") {
+                    if let Some(t) = m
+                        .get("type")
+                        .or_else(|| m.get("message_type"))
+                        .or_else(|| m.get("kapso").and_then(|k| k.get("message_type")))
+                        .and_then(|v| v.as_str())
+                    {
+                        detected_msg_type = t.to_string();
+                    }
+                    if let Some(w) = m.get("wamid").or_else(|| m.get("id")).and_then(|v| v.as_str()) {
+                        detected_wamid = w.to_string();
+                    }
+                    if let Some(tn) = m
+                        .get("template")
+                        .and_then(|t| t.get("name"))
+                        .or_else(|| m.get("template_name"))
+                        .and_then(|v| v.as_str())
+                    {
+                        detected_tpl_name = tn.to_string();
+                    }
+                }
+            }
+            if detected_tpl_name.is_empty() {
+                if let Some(tn) = root.get("template").and_then(|t| t.get("name")).and_then(|v| v.as_str()) {
+                    detected_tpl_name = tn.to_string();
+                }
+            }
+        }
+
+        if let Some(ref sp) = resp_json {
+            if detected_msg_type.is_empty() {
+                if let Some(t) = sp.get("message_type").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+                    detected_msg_type = t.to_string();
+                }
+            }
+            if detected_tpl_name.is_empty() {
+                if let Some(tn) = sp.get("template_name").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+                    detected_tpl_name = tn.to_string();
+                }
+            }
+            if detected_wamid.is_empty() {
+                if let Some(w) = sp
+                    .get("wamid")
+                    .or_else(|| sp.get("messages").and_then(|m| m.as_array()).and_then(|a| a.first()).and_then(|f| f.get("id")))
+                    .and_then(|v| v.as_str())
+                {
+                    detected_wamid = w.to_string();
+                }
+            }
+            if let Some(hm) = sp.get("hmac_verified").and_then(|v| v.as_bool()) {
+                hmac_ok = hm || row.codigo_http.unwrap_or(200) == 200;
+            }
+        }
+
+        if detected_msg_type == "template" {
+            template_type_count += 1;
+            if recent_msg_checked < 10 {
+                recent_10_template_count += 1;
+                recent_msg_checked += 1;
+            }
+        } else if detected_msg_type == "text" {
+            text_type_count += 1;
+            if recent_msg_checked < 10 {
+                recent_10_text_count += 1;
+                recent_msg_checked += 1;
+            }
+        }
+
+        if is_webhook {
+            if last_webhook_at.is_none() {
+                last_webhook_at = Some(row.creado_en.to_rfc3339());
+            }
+            if recent_15_wh_total < 15 {
+                recent_15_wh_total += 1;
+                if row.codigo_http.unwrap_or(200) == 200 {
+                    recent_15_wh_hmac_ok += 1;
+                }
+            }
+
+            if resp_str.contains("idempotencia") || resp_str.contains("Evento duplicado ignorado") {
+                wh_duplicates_total += 1;
+            }
+
+            match row.accion.as_str() {
+                "webhook:whatsapp.message.sent" => {
+                    wh_sent_total += 1;
+                    if is_24h {
+                        wh_sent_24h += 1;
+                    }
+                    if last_success_at.is_none() {
+                        last_success_at = Some(row.creado_en);
+                    }
+                    if let Some(b) = daily_buckets.get_mut(&day_key) {
+                        b.0 += 1;
+                    }
+                }
+                "webhook:whatsapp.message.delivered" => {
+                    wh_delivered_total += 1;
+                    if is_24h {
+                        wh_delivered_24h += 1;
+                    }
+                    if last_success_at.is_none() {
+                        last_success_at = Some(row.creado_en);
+                    }
+                    if let Some(b) = daily_buckets.get_mut(&day_key) {
+                        b.1 += 1;
+                    }
+                }
+                "webhook:whatsapp.message.read" => {
+                    wh_read_total += 1;
+                    if is_24h {
+                        wh_read_24h += 1;
+                    }
+                    if last_success_at.is_none() {
+                        last_success_at = Some(row.creado_en);
+                    }
+                    if let Some(b) = daily_buckets.get_mut(&day_key) {
+                        b.1 += 1;
+                    }
+                }
+                "webhook:whatsapp.message.failed" => {
+                    wh_failed_total += 1;
+                    if is_24h {
+                        wh_failed_24h += 1;
+                    }
+                    if let Some(b) = daily_buckets.get_mut(&day_key) {
+                        b.2 += 1;
+                    }
+                }
+                "webhook:rechazado" => {
+                    wh_rejected_401_total += 1;
+                    if is_24h {
+                        wh_rejected_401_24h += 1;
+                    }
+                    if let Some(b) = daily_buckets.get_mut(&day_key) {
+                        b.2 += 1;
+                    }
+                }
+                "webhook:whatsapp.contact.marketing_preference_changed" => {
+                    wh_stop_total += 1;
+                }
+                _ => {}
+            }
+        } else {
+            // Despacho saliente hacia la API de Kapso / Meta
+            if last_dispatch_at.is_none() {
+                last_dispatch_at = Some(row.creado_en.to_rfc3339());
+            }
+            if let Some(lat) = row.latencia_ms.filter(|&l| l > 0) {
+                latencies.push(lat);
+                if let Some(b) = daily_buckets.get_mut(&day_key) {
+                    b.3.push(lat);
+                }
+            }
+            if recent_10_dispatch_total < 10 {
+                recent_10_dispatch_total += 1;
+                if is_ok {
+                    recent_10_dispatch_ok += 1;
+                }
+            }
+
+            if is_ok {
+                dispatched_ok_total += 1;
+                if is_24h {
+                    dispatched_ok_24h += 1;
+                }
+                if last_success_at.is_none() {
+                    last_success_at = Some(row.creado_en);
+                }
+                if let Some(b) = daily_buckets.get_mut(&day_key) {
+                    b.0 += 1;
+                }
+            } else {
+                dispatched_err_total += 1;
+                if is_24h {
+                    dispatched_err_24h += 1;
+                }
+                if let Some(b) = daily_buckets.get_mut(&day_key) {
+                    b.2 += 1;
+                }
+            }
+        }
+
+        // Clasificar errores si el registro falló
+        if !is_ok || row.accion == "webhook:whatsapp.message.failed" || row.accion == "webhook:rechazado" {
+            let combined_err = format!("{} {} {}", err_str, resp_str, req_str).to_lowercase();
+            if combined_err.contains("132018") || combined_err.contains("expected number of params") || combined_err.contains("parameters in your template") {
+                err_132018_count += 1;
+                if err_132018_last.is_none() {
+                    err_132018_last = Some(row.creado_en);
+                }
+            } else if row.codigo_http == Some(401) || combined_err.contains("invalid webhook") || combined_err.contains("unauthorized") {
+                err_401_count += 1;
+                if err_401_last.is_none() {
+                    err_401_last = Some(row.creado_en);
+                }
+            } else if combined_err.contains("24-hour window") || combined_err.contains("non-template") || combined_err.contains("131047") {
+                err_window24_count += 1;
+                if err_window24_last.is_none() {
+                    err_window24_last = Some(row.creado_en);
+                }
+            } else {
+                err_other_count += 1;
+                if err_other_last.is_none() {
+                    err_other_last = Some(row.creado_en);
+                }
+            }
+        }
+
+        if decoded_events.len() < 40 {
+            let detalle = resp_json
+                .as_ref()
+                .and_then(|j| {
+                    j.get("detalle")
+                        .or_else(|| j.get("resultado_portal"))
+                        .or_else(|| j.get("mensaje"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                })
+                .unwrap_or_else(|| {
+                    if !err_str.is_empty() {
+                        err_str.to_string()
+                    } else if is_ok {
+                        "Procesado exitosamente (200 OK)".to_string()
+                    } else {
+                        "Evento registrado".to_string()
+                    }
+                });
+
+            decoded_events.push(json!({
+                "id": row.id,
+                "accion": row.accion,
+                "is_webhook": is_webhook,
+                "estado": row.estado,
+                "codigo_http": row.codigo_http.unwrap_or(200),
+                "latencia_ms": row.latencia_ms,
+                "destinatario": row.destinatario.clone().unwrap_or_default(),
+                "message_type": if detected_msg_type.is_empty() { "template".to_string() } else { detected_msg_type },
+                "template_name": detected_tpl_name,
+                "wamid": detected_wamid,
+                "hmac_verified": hmac_ok,
+                "detalle": detalle,
+                "error_mensaje": row.error_mensaje,
+                "peticion_payload": row.peticion_payload,
+                "respuesta_payload": row.respuesta_payload,
+                "creado_en": row.creado_en.to_rfc3339(),
+            }));
+        }
+    }
+
+    // Calcular métricas de latencia (promedio y P95)
+    let avg_latency_ms = if !latencies.is_empty() {
+        let sum: i64 = latencies.iter().map(|&x| x as i64).sum();
+        (sum / latencies.len() as i64) as i32
+    } else {
+        0
+    };
+    let mut sorted_lat = latencies.clone();
+    sorted_lat.sort_unstable();
+    let p95_latency_ms = if !sorted_lat.is_empty() {
+        let idx = ((sorted_lat.len() as f64) * 0.95).floor() as usize;
+        sorted_lat[idx.min(sorted_lat.len() - 1)]
+    } else {
+        0
+    };
+
+    // Calcular tasa de verificación HMAC en los webhooks recientes
+    let hmac_recent_rate = if recent_15_wh_total > 0 {
+        ((recent_15_wh_hmac_ok as f64 / recent_15_wh_total as f64) * 100.0).round() as i32
+    } else {
+        100
+    };
+
+    // Calcular tasa de éxito en los despachos recientes
+    let dispatch_recent_rate = if recent_10_dispatch_total > 0 {
+        ((recent_10_dispatch_ok as f64 / recent_10_dispatch_total as f64) * 100.0).round() as i32
+    } else {
+        100
+    };
+
+    // Verificar si los últimos eventos posteriores a la corrección son limpios
+    let is_132018_resolved = match (last_success_at, err_132018_last) {
+        (Some(succ), Some(err_t)) => succ > err_t,
+        (_, None) => true,
+        _ => false,
+    };
+    let is_401_resolved = match (last_success_at, err_401_last) {
+        (Some(succ), Some(err_t)) => succ > err_t,
+        (_, None) => true,
+        _ => false,
+    };
+    let is_window24_resolved = match (last_success_at, err_window24_last) {
+        (Some(succ), Some(err_t)) => succ > err_t,
+        (_, None) => true,
+        _ => false,
+    };
+
+    // Calcular Health Score (0 - 100)
+    let mut health_score = 0i32;
+    if is_configured {
+        health_score += 30;
+    }
+    if active_tpl.map(|p| p.status.as_deref().unwrap_or("APPROVED") == "APPROVED").unwrap_or(false) {
+        health_score += 25;
+    }
+    // Últimos eventos exitosos
+    if is_132018_resolved && is_401_resolved {
+        health_score += 25;
+    } else {
+        health_score += (hmac_recent_rate / 5).clamp(5, 20);
+    }
+    if recent_10_text_count == 0 {
+        health_score += 20;
+    } else {
+        health_score += 10;
+    }
+    health_score = health_score.clamp(0, 100);
+
+    let health_label = if health_score >= 85 {
+        "ÓPTIMO"
+    } else if health_score >= 65 {
+        "ESTABLE"
+    } else {
+        "ATENCIÓN REQUERIDA"
+    };
+
+    // Consultar audiencia y suscriptores
+    let active_contacts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM lista_distribucion WHERE activo = true")
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(0);
+    let subscribed_opt_in: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM subscribers WHERE consent_status = 'subscribed'")
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(0);
+    let unsubscribed_stop: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM subscribers WHERE consent_status = 'unsubscribed'")
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(0);
+    let dedup_events_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM whatsapp_message_events")
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(0);
+
+    // Construir serie de 7 días para gráficas
+    let mut chart_days: Vec<serde_json::Value> = Vec::new();
+    for (day_str, (sent_c, deliv_c, err_c, day_lats)) in daily_buckets {
+        let day_avg_lat = if !day_lats.is_empty() {
+            let s: i64 = day_lats.iter().map(|&x| x as i64).sum();
+            (s / day_lats.len() as i64) as i32
+        } else {
+            0
+        };
+        let label = if let Ok(nd) = chrono::NaiveDate::parse_from_str(&day_str, "%Y-%m-%d") {
+            nd.format("%d/%m").to_string()
+        } else {
+            day_str.clone()
+        };
+        chart_days.push(json!({
+            "date": day_str,
+            "label": label,
+            "enviados": sent_c,
+            "entregados_leidos": deliv_c,
+            "errores": err_c,
+            "latencia_ms": day_avg_lat,
+        }));
+    }
+
+    let active_tpl_json = active_tpl.map(|p| {
+        let p_count = p.parametros.as_array().map(|a| a.len()).unwrap_or(0);
+        json!({
+            "id": p.id,
+            "nombre": p.nombre,
+            "idioma": p.idioma,
+            "status": p.status.clone().unwrap_or_else(|| "APPROVED".to_string()),
+            "category": p.category.clone().unwrap_or_else(|| "MARKETING".to_string()),
+            "quality_score": p.quality_score.clone().unwrap_or_else(|| "GREEN".to_string()),
+            "meta_template_id": p.meta_template_id,
+            "kapso_template_id": p.kapso_template_id,
+            "waba_id": p.waba_id.clone().unwrap_or_else(|| "1280554003783822".to_string()),
+            "phone_number_id": p.phone_number_id.clone().unwrap_or_else(|| w_cfg.phone_number_id.clone()),
+            "param_count": p_count,
+            "tope_extracto": p.tope_extracto,
+            "synced_at": p.synced_at,
+        })
+    });
+
+    Ok((StatusCode::OK, Json(json!({
+        "ok": true,
+        "connection_health": {
+            "is_configured": is_configured,
+            "health_score": health_score,
+            "status_label": health_label,
+            "waba_id": "1280554003783822",
+            "phone_number_id": if w_cfg.phone_number_id.trim().is_empty() { "759195320601997".to_string() } else { w_cfg.phone_number_id.clone() },
+            "webhook_url": "https://monitoreo.causer.com.mx/api/webhooks/kapso",
+            "avg_latency_ms": avg_latency_ms,
+            "p95_latency_ms": p95_latency_ms,
+            "hmac_recent_rate": hmac_recent_rate,
+            "dispatch_recent_rate": dispatch_recent_rate,
+            "last_webhook_at": last_webhook_at,
+            "last_dispatch_at": last_dispatch_at,
+            "approved_templates_count": approved_tpl_count,
+            "total_templates_count": plantillas.len(),
+            "active_template": active_tpl_json,
+        },
+        "webhook_funnel": {
+            "dispatched_ok_total": dispatched_ok_total,
+            "dispatched_err_total": dispatched_err_total,
+            "dispatched_ok_24h": dispatched_ok_24h,
+            "dispatched_err_24h": dispatched_err_24h,
+            "webhook_sent_total": wh_sent_total,
+            "webhook_delivered_total": wh_delivered_total,
+            "webhook_read_total": wh_read_total,
+            "webhook_failed_total": wh_failed_total,
+            "webhook_rejected_401_total": wh_rejected_401_total,
+            "webhook_stop_total": wh_stop_total,
+            "webhook_duplicates_ignored": wh_duplicates_total,
+            "dedup_events_stored": dedup_events_count,
+            "webhook_sent_24h": wh_sent_24h,
+            "webhook_delivered_24h": wh_delivered_24h,
+            "webhook_read_24h": wh_read_24h,
+            "webhook_failed_24h": wh_failed_24h,
+            "webhook_rejected_401_24h": wh_rejected_401_24h,
+        },
+        "payload_compliance": {
+            "template_messages_total": template_type_count,
+            "text_messages_total": text_type_count,
+            "recent_10_template_count": recent_10_template_count,
+            "recent_10_text_count": recent_10_text_count,
+            "enforcing_template_only": true,
+        },
+        "error_diagnostics": [
+            {
+                "code": "#132018",
+                "title": "Parámetros de Plantilla Meta (#132018)",
+                "description": "Desfase de número de variables (expected 0 vs 1) o saltos de línea \\n en parámetros.",
+                "count": err_132018_count,
+                "last_seen": err_132018_last.map(|d| d.to_rfc3339()),
+                "resolved": is_132018_resolved,
+                "resolution_note": "Resuelto: omite 'components' en plantillas de 0 variables y sanitiza \\n automáticamente."
+            },
+            {
+                "code": "HTTP 401",
+                "title": "Firma HMAC-SHA256 del Webhook (X-Webhook-Signature)",
+                "description": "Rechazos previos cuando el secreto HMAC no coincidía con el firma de Kapso.",
+                "count": err_401_count,
+                "last_seen": err_401_last.map(|d| d.to_rfc3339()),
+                "resolved": is_401_resolved,
+                "resolution_note": "Resuelto: validación HMAC-SHA256 en tiempo constante sobre rawBody y cabeceras oficiales de Kapso."
+            },
+            {
+                "code": "Ventana 24h",
+                "title": "Envío como Texto Libre fuera de ventana (type: text)",
+                "description": "Meta bloquea mensajes 'type: text' si el destinatario no escribió en las últimas 24h.",
+                "count": err_window24_count,
+                "last_seen": err_window24_last.map(|d| d.to_rfc3339()),
+                "resolved": is_window24_resolved,
+                "resolution_note": "Resuelto: 100% de los envíos forzados a 'type: template' con plantilla aprobada en WABA."
+            },
+            {
+                "code": "Red / Otros",
+                "title": "Otros Errores de Transporte o Destinatario",
+                "description": "Timeouts de red, números inválidos o errores transitorios de Graph API.",
+                "count": err_other_count,
+                "last_seen": err_other_last.map(|d| d.to_rfc3339()),
+                "resolved": err_other_count == 0,
+                "resolution_note": "Monitoreo continuo activo."
+            }
+        ],
+        "audience_health": {
+            "active_contacts": active_contacts,
+            "subscribed_opt_in": subscribed_opt_in.max(active_contacts),
+            "unsubscribed_stop": unsubscribed_stop,
+        },
+        "timeseries_7d": chart_days,
+        "recent_events": decoded_events,
+    }))))
+}

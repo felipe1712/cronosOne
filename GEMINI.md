@@ -65,4 +65,4 @@
 
 ## 3. Reglas del Portal Público y Menú
 1. **Segmentación en 4 Secciones del Portal Público (`/brief/[section_key]`)**: Cada edición diaria segmenta su contenido especializado sin duplicar texto en las 4 secciones activas: `primeras_planas`, `politica`, `economia` y `seguridad` (tanto al consolidar con Claude en `workers/llm_synthesis.py` como mediante auto-segmentación temática en `backend/src/handlers/cms.rs`).
-2. **Módulo OSINT**: La opción "Inteligencia & OSINT" en `LeftSidebarMenu.tsx` debe permanecer oculta/comentada hasta nuevo aviso.
+2. **Menú Lateral (`LeftSidebarMenu.tsx`)**: Las opciones `"Inteligencia & OSINT"` (`/osint`) y `"Canal WhatsApp"` (`/waha`) deben permanecer ocultas/comentadas. Toda la telemetría, salud del webhook y configuración de Kapso vive en `/configuracion` (pestaña **"Salud & Telemetría Kapso"** y **"Plantillas WhatsApp"**).

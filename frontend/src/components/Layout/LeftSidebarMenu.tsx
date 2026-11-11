@@ -125,7 +125,7 @@ const LeftSidebarMenu: React.FC<LeftSidebarProps> = ({ toggleActive }) => {
                     Boletines Coparmex
                   </Link>
                 </li>
-                {/* Módulo OSINT temporalmente oculto a solicitud del usuario */}
+                {/* Módulo OSINT y Canal WhatsApp ocultos por redundancia a solicitud del usuario */}
                 {/*
                 <li className="sidemenu-item">
                   <Link
@@ -137,7 +137,6 @@ const LeftSidebarMenu: React.FC<LeftSidebarProps> = ({ toggleActive }) => {
                     Inteligencia & OSINT
                   </Link>
                 </li>
-                */}
                 <li className="sidemenu-item">
                   <Link
                     href="/waha"
@@ -148,6 +147,7 @@ const LeftSidebarMenu: React.FC<LeftSidebarProps> = ({ toggleActive }) => {
                     Canal WhatsApp
                   </Link>
                 </li>
+                */}
                 <li className="sidemenu-item">
                   <Link
                     href="/paginas"

@@ -1485,10 +1485,41 @@ pub async fn webhook_kapso(
         .await;
     }
 
-    let msg_type_detected = payload
-        .get("message")
-        .and_then(|m| m.get("type").or_else(|| m.get("message_type")))
+    // Soportar tanto objeto directo como envoltorio { "data": ... } o arreglo batch de Kapso
+    let event_root = if let Some(arr) = payload.get("data").and_then(|d| d.as_array()) {
+        arr.first().unwrap_or(&payload)
+    } else if let Some(obj) = payload.get("data").filter(|d| d.is_object()) {
+        obj
+    } else {
+        &payload
+    };
+
+    let msg_obj_top = event_root.get("message").or_else(|| payload.get("message"));
+    let conv_obj_top = event_root.get("conversation").or_else(|| payload.get("conversation"));
+
+    let msg_type_detected = msg_obj_top
+        .and_then(|m| {
+            m.get("type")
+                .or_else(|| m.get("message_type"))
+                .or_else(|| m.get("kapso").and_then(|k| k.get("message_type")))
+        })
         .and_then(|t| t.as_str())
+        .or_else(|| {
+            conv_obj_top
+                .and_then(|c| c.get("kapso"))
+                .and_then(|k| k.get("last_message_type"))
+                .and_then(|t| t.as_str())
+        })
+        .unwrap_or("");
+
+    let tpl_name_detected = msg_obj_top
+        .and_then(|m| {
+            m.get("template")
+                .and_then(|t| t.get("name"))
+                .or_else(|| m.get("template_name"))
+                .or_else(|| m.get("kapso").and_then(|k| k.get("template_name")))
+        })
+        .and_then(|n| n.as_str())
         .unwrap_or("");
 
     let mut resultado_portal = json!({
@@ -1496,6 +1527,7 @@ pub async fn webhook_kapso(
         "evento": event_type,
         "event_id": event_id,
         "message_type": msg_type_detected,
+        "template_name": tpl_name_detected,
         "hmac_verified": hmac_verified
     });
     let mut dest_val = String::new();
@@ -1504,12 +1536,18 @@ pub async fn webhook_kapso(
     match event_type {
         // A. Gestión de Bajas y Consentimiento (STOP)
         "whatsapp.contact.marketing_preference_changed" => {
-            let wa_id = payload
+            let wa_id = event_root
                 .get("contact")
+                .or_else(|| payload.get("contact"))
                 .and_then(|c| c.get("wa_id").or_else(|| c.get("phone_number")))
                 .and_then(|w| w.as_str())
                 .unwrap_or("");
-            let pref_status = payload.get("marketing_preference").and_then(|m| m.get("status")).and_then(|s| s.as_str()).unwrap_or("");
+            let pref_status = event_root
+                .get("marketing_preference")
+                .or_else(|| payload.get("marketing_preference"))
+                .and_then(|m| m.get("status"))
+                .and_then(|s| s.as_str())
+                .unwrap_or("");
             dest_val = wa_id.to_string();
 
             if !wa_id.is_empty() {
@@ -1544,7 +1582,7 @@ pub async fn webhook_kapso(
 
         // B. Telemetría de Entrega y Lectura
         "whatsapp.message.sent" | "whatsapp.message.delivered" | "whatsapp.message.read" | "whatsapp.message.failed" => {
-            let msg_obj = payload.get("message");
+            let msg_obj = msg_obj_top;
             let wamid = msg_obj
                 .and_then(|m| m.get("wamid").or_else(|| m.get("whatsapp_message_id")).or_else(|| m.get("id")))
                 .and_then(|i| i.as_str())
@@ -1556,10 +1594,12 @@ pub async fn webhook_kapso(
             let recipient = msg_obj
                 .and_then(|m| m.get("recipient").or_else(|| m.get("to")))
                 .and_then(|r| r.as_str())
-                .or_else(|| payload.get("conversation").and_then(|c| c.get("phone_number")).and_then(|p| p.as_str()))
-                .or_else(|| payload.get("contact").and_then(|c| c.get("wa_id").or_else(|| c.get("phone_number"))).and_then(|p| p.as_str()))
+                .or_else(|| conv_obj_top.and_then(|c| c.get("phone_number")).and_then(|p| p.as_str()))
+                .or_else(|| event_root.get("contact").and_then(|c| c.get("wa_id").or_else(|| c.get("phone_number"))).and_then(|p| p.as_str()))
                 .unwrap_or("");
             dest_val = if !recipient.is_empty() { recipient.to_string() } else { wamid.to_string() };
+            resultado_portal["wamid"] = json!(wamid);
+            resultado_portal["recipient"] = json!(recipient);
 
             let status_name = match event_type {
                 "whatsapp.message.sent" => "sent",
@@ -1569,13 +1609,21 @@ pub async fn webhook_kapso(
                 _ => "pending",
             };
 
-            let err_obj = payload
+            let err_obj = event_root
                 .get("error")
+                .or_else(|| payload.get("error"))
                 .or_else(|| msg_obj.and_then(|m| m.get("error")))
-                .or_else(|| msg_obj.and_then(|m| m.get("errors")).and_then(|e| e.as_array()).and_then(|a| a.first()));
+                .or_else(|| msg_obj.and_then(|m| m.get("errors")).and_then(|e| e.as_array()).and_then(|a| a.first()))
+                .or_else(|| msg_obj.and_then(|m| m.get("kapso")).and_then(|k| k.get("Statuses").or_else(|| k.get("statuses"))).and_then(|s| s.as_array()).and_then(|a| a.first()).and_then(|st| st.get("errors")).and_then(|e| e.as_array()).and_then(|a| a.first()));
             let err_code = err_obj.and_then(|e| e.get("code")).map(|c| c.to_string());
             let err_msg = err_obj
-                .and_then(|e| e.get("message").or_else(|| e.get("title")).or_else(|| e.get("details")))
+                .and_then(|e| {
+                    e.get("error_data")
+                        .and_then(|ed| ed.get("details"))
+                        .or_else(|| e.get("message"))
+                        .or_else(|| e.get("title"))
+                        .or_else(|| e.get("details"))
+                })
                 .and_then(|m| m.as_str())
                 .map(|s| s.to_string());
             err_msg_log = err_msg.clone();

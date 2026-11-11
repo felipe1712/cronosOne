@@ -578,7 +578,8 @@ export const ApiService = {
       }
     ),
 
-  // Administrador de Plantillas WhatsApp
+  // Administrador de Plantillas WhatsApp y Telemetría Kapso
+  getKapsoTelemetry: () => apiFetch<any>('/whatsapp/telemetry'),
   listPlantillasWhatsApp: () => apiFetch<WhatsappPlantilla[]>('/whatsapp/plantillas'),
   createPlantillaWhatsApp: (data: Partial<WhatsappPlantilla>) =>
     apiFetch<WhatsappPlantilla>('/whatsapp/plantillas', { method: 'POST', body: JSON.stringify(data) }),

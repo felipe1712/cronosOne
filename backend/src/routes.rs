@@ -69,7 +69,8 @@ pub fn create_router(pool: DbPool, config: Arc<Config>) -> Router {
         .route("/api/configuracion/test-claude", post(configuracion::test_claude))
         .route("/api/configuracion/test-whatsapp", post(configuracion::test_whatsapp))
         .route("/api/configuracion/test-template", post(configuracion::test_template))
-        // Administrador de Plantillas WhatsApp
+        // Administrador de Plantillas WhatsApp y Telemetría de Salud Kapso
+        .route("/api/whatsapp/telemetry", get(configuracion::get_kapso_telemetry))
         .route("/api/whatsapp/plantillas", get(configuracion::list_plantillas).post(configuracion::create_plantilla))
         .route("/api/whatsapp/plantillas/importar-kapso", post(configuracion::importar_plantillas_kapso))
         .route("/api/whatsapp/plantillas/:id", put(configuracion::update_plantilla).delete(configuracion::delete_plantilla))

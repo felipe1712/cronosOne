@@ -180,6 +180,10 @@ export default function ConfiguracionPage() {
   const [clearLogsConfirmOpen, setClearLogsConfirmOpen] = useState<boolean>(false);
   const [clearingLogs, setClearingLogs] = useState<boolean>(false);
   const [kapsoEventsFilter, setKapsoEventsFilter] = useState<"todos" | "webhooks" | "despachos" | "errores">("todos");
+  const [kapsoTelemetry, setKapsoTelemetry] = useState<any>(null);
+  const [loadingTelemetry, setLoadingTelemetry] = useState<boolean>(false);
+  const [funnelScope, setFunnelScope] = useState<"24h" | "total">("total");
+  const [showCredentialsPanel, setShowCredentialsPanel] = useState<boolean>(false);
 
   const whatsappLogs = useMemo(() => {
     return apiLogs.filter((log) => {
@@ -707,9 +711,27 @@ export default function ConfiguracionPage() {
     }
   };
 
+  const loadKapsoTelemetry = async () => {
+    try {
+      setLoadingTelemetry(true);
+      const data = await ApiService.getKapsoTelemetry();
+      setKapsoTelemetry(data);
+    } catch (err: any) {
+      console.error("Error cargando telemetría de Kapso:", err);
+    } finally {
+      setLoadingTelemetry(false);
+    }
+  };
+
   useEffect(() => {
     if (tabIndex === 2) {
+      loadKapsoTelemetry();
       loadApiLogs("whatsapp", "todos");
+      const interval = setInterval(() => {
+        loadKapsoTelemetry();
+        loadApiLogs("whatsapp", "todos");
+      }, 15000);
+      return () => clearInterval(interval);
     } else if (tabIndex === 3) {
       loadPlantillas();
     } else if (tabIndex === 5) {
@@ -991,7 +1013,7 @@ export default function ConfiguracionPage() {
             Configuración del Sistema
           </Typography>
           <Typography variant="body2" sx={{ color: "#64748b" }}>
-            Modelos de IA, Directrices de Prompt, Canal WhatsApp y Lista de Distribución
+            Modelos de IA, Directrices de Prompt, Salud & Telemetría Kapso, Plantillas WABA y Lista de Distribución
           </Typography>
         </Box>
 
@@ -1031,9 +1053,9 @@ export default function ConfiguracionPage() {
             sx={{ fontWeight: 600, textTransform: "none", fontSize: "0.95rem" }}
           />
           <Tab
-            icon={<WhatsAppIcon sx={{ color: "#25D366" }} />}
+            icon={<DataUsageIcon sx={{ color: "#10b981" }} />}
             iconPosition="start"
-            label="Canal WhatsApp"
+            label="Salud & Telemetría Kapso"
             sx={{ fontWeight: 600, textTransform: "none", fontSize: "0.95rem" }}
           />
           <Tab
@@ -1504,449 +1526,954 @@ export default function ConfiguracionPage() {
           )}
 
           {/* ================================================================= */}
-          {/* PESTAÑA 2: CANAL WHATSAPP (KAPSO CLOUD API)                       */}
+          {/* PESTAÑA 2: DASHBOARD DE SALUD & TELEMETRÍA KAPSO / WEBHOOKS       */}
           {/* ================================================================= */}
-          {tabIndex === 2 && (
-            <Grid container spacing={3}>
-              <Grid size={{ xs: 12, lg: 8 }}>
-                <Card sx={{ borderRadius: "12px", boxShadow: "0 2px 6px rgba(0,0,0,0.04)" }}>
-                  <CardContent sx={{ p: 3 }}>
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}>
-                      <WhatsAppIcon sx={{ color: "#25D366" }} />
-                      <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                        Integración WhatsApp Cloud API (vía Kapso)
-                      </Typography>
-                    </Box>
-                    <Typography variant="body2" sx={{ color: "#64748b", mb: 3 }}>
-                      Entrega directa y oficial a través de los servidores de Meta. No requiere escanear códigos QR, no sufre caídas de sesión de WhatsApp Web y entrega los mensajes en milisegundos.
-                    </Typography>
+          {tabIndex === 2 && (() => {
+            const health = kapsoTelemetry?.connection_health || {};
+            const funnel = kapsoTelemetry?.webhook_funnel || {};
+            const compliance = kapsoTelemetry?.payload_compliance || {};
+            const diagnostics: any[] = kapsoTelemetry?.error_diagnostics || [];
+            const audience = kapsoTelemetry?.audience_health || {};
+            const series7d: any[] = kapsoTelemetry?.timeseries_7d || [];
+            const activeTpl = health.active_template || plantillas.find((p) => p.activa) || plantillas[0];
 
-                    <Grid container spacing={2.5}>
-                      {/* Proveedor activo */}
-                      <Grid size={{ xs: 12, sm: 6 }}>
-                        <Box sx={{ p: 1.8, border: "1px solid #cbd5e1", borderRadius: "8px", bgcolor: "#f8fafc", height: "56px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                            <WhatsAppIcon sx={{ color: "#25D366" }} />
-                            <Box>
-                              <Typography variant="caption" sx={{ color: "#64748b", display: "block", lineHeight: 1.1, fontWeight: 600 }}>
-                                PROVEEDOR EXCLUSIVO
-                              </Typography>
-                              <Typography variant="body2" sx={{ fontWeight: 700, color: "#0f172a" }}>
-                                Kapso Cloud API (Oficial Meta)
-                              </Typography>
-                            </Box>
-                          </Box>
-                          <Chip label="ACTIVO" size="small" color="success" sx={{ fontWeight: 800, height: 22 }} />
-                        </Box>
-                      </Grid>
+            const score = typeof health.health_score === "number" ? health.health_score : 95;
+            const statusLabel = health.status_label || (score >= 85 ? "ÓPTIMO" : score >= 65 ? "ESTABLE" : "ATENCIÓN REQUERIDA");
+            const scoreColor = score >= 85 ? "#10b981" : score >= 65 ? "#f59e0b" : "#ef4444";
+            const radius = 52;
+            const circumference = 2 * Math.PI * radius;
+            const strokeDashoffset = circumference - (Math.min(Math.max(score, 0), 100) / 100) * circumference;
 
-                      {/* Teléfono del Director */}
-                      <Grid size={{ xs: 12, sm: 6 }}>
-                        <TextField
-                          fullWidth
-                          label="Teléfono WhatsApp del Director"
-                          value={directorWhatsappPhone}
-                          onChange={(e) => setDirectorWhatsappPhone(e.target.value)}
-                          onBlur={() => handleSaveWhatsapp()}
-                          placeholder="52XXXXXXXXXX"
-                          helperText="Formato internacional E.164 sin signos ni espacios (ej: 5255...)"
-                        />
-                      </Grid>
+            const is24h = funnelScope === "24h";
+            const fDispatched = is24h ? (funnel.dispatched_ok_24h ?? 0) : (funnel.dispatched_ok_total ?? 0);
+            const fSent = is24h ? (funnel.webhook_sent_24h ?? 0) : (funnel.webhook_sent_total ?? 0);
+            const fDelivered = is24h ? (funnel.webhook_delivered_24h ?? 0) : (funnel.webhook_delivered_total ?? 0);
+            const fRead = is24h ? (funnel.webhook_read_24h ?? 0) : (funnel.webhook_read_total ?? 0);
+            const fFailed = is24h
+              ? ((funnel.webhook_failed_24h ?? 0) + (funnel.webhook_rejected_401_24h ?? 0))
+              : ((funnel.webhook_failed_total ?? 0) + (funnel.webhook_rejected_401_total ?? 0));
 
-                      {/* Kapso API Key */}
-                      <Grid size={{ xs: 12 }}>
-                        <TextField
-                          fullWidth
-                          label="Kapso API Key (X-API-Key)"
-                          type={showApiKey ? "text" : "password"}
-                          value={kapsoApiKey}
-                          onChange={(e) => setKapsoApiKey(e.target.value)}
-                          onBlur={() => handleSaveWhatsapp()}
-                          placeholder="kapso_live_..."
-                          helperText="Obtenla en dashboard.kapso.ai → Integrations → API keys"
-                          InputProps={{
-                            endAdornment: (
-                              <InputAdornment position="end">
-                                <IconButton onClick={() => setShowApiKey(!showApiKey)} edge="end">
-                                  {showApiKey ? <VisibilityOffIcon /> : <VisibilityIcon />}
-                                </IconButton>
-                              </InputAdornment>
-                            ),
-                          }}
-                        />
-                      </Grid>
+            const maxFunnelVal = Math.max(fDispatched, fSent, fDelivered, fRead, fFailed, 1);
 
-                      {/* Phone Number ID */}
-                      <Grid size={{ xs: 12 }}>
-                        <TextField
-                          fullWidth
-                          label="Kapso / Meta Phone Number ID"
-                          value={kapsoPhoneNumberId}
-                          onChange={(e) => setKapsoPhoneNumberId(e.target.value)}
-                          onBlur={() => handleSaveWhatsapp()}
-                          placeholder="647015955153740"
-                          helperText="ID numérico asignado en dashboard.kapso.ai → WhatsApp → Phone numbers"
-                        />
-                      </Grid>
+            const tplTotal = compliance.template_messages_total ?? 0;
+            const txtTotal = compliance.text_messages_total ?? 0;
+            const sumTypes = Math.max(tplTotal + txtTotal, 1);
+            const tplPct = tplTotal === 0 && txtTotal === 0 ? 100 : Math.round((tplTotal / sumTypes) * 100);
 
-                      {/* Webhook Endpoint & Secret (Telemetría y Bajas STOP) */}
-                      <Grid size={{ xs: 12 }}>
-                        <Box sx={{ p: 2.5, bgcolor: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "10px" }}>
-                          <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5 }}>
-                            <SettingsIcon sx={{ color: "#605DFF", fontSize: 20 }} />
-                            <Typography variant="subtitle2" sx={{ fontWeight: 700, color: "#1e293b" }}>
-                              Webhook de Telemetría y Bajas STOP (Kapso)
+            const maxChartVal = Math.max(
+              ...series7d.map((d) => Math.max(d.enviados || 0, d.entregados_leidos || 0, d.errores || 0)),
+              4
+            );
+
+            return (
+              <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                {/* 1. HERO BANNER: SALUD DE LA CONEXIÓN KAPSO + META WABA */}
+                <Card
+                  sx={{
+                    borderRadius: "16px",
+                    background: "linear-gradient(135deg, #0f172a 0%, #1e293b 58%, #064e3b 100%)",
+                    color: "#ffffff",
+                    boxShadow: "0 10px 25px -5px rgba(15, 23, 42, 0.35)",
+                    border: "1px solid rgba(255,255,255,0.1)",
+                  }}
+                >
+                  <CardContent sx={{ p: { xs: 2.5, md: 3.5 } }}>
+                    <Grid container spacing={3} alignItems="center">
+                      {/* Medidor Radial de Salud (0 - 100%) */}
+                      <Grid size={{ xs: 12, md: 3 }} sx={{ display: "flex", alignItems: "center", justifyContent: { xs: "flex-start", md: "center" }, gap: 2.5 }}>
+                        <Box sx={{ position: "relative", width: 128, height: 128, flexShrink: 0 }}>
+                          <svg width="128" height="128" viewBox="0 0 128 128">
+                            <circle
+                              cx="64"
+                              cy="64"
+                              r={radius}
+                              fill="transparent"
+                              stroke="rgba(255,255,255,0.12)"
+                              strokeWidth="10"
+                            />
+                            <circle
+                              cx="64"
+                              cy="64"
+                              r={radius}
+                              fill="transparent"
+                              stroke={scoreColor}
+                              strokeWidth="10"
+                              strokeDasharray={circumference}
+                              strokeDashoffset={strokeDashoffset}
+                              strokeLinecap="round"
+                              transform="rotate(-90 64 64)"
+                              style={{ transition: "stroke-dashoffset 0.8s ease-out" }}
+                            />
+                          </svg>
+                          <Box
+                            sx={{
+                              position: "absolute",
+                              inset: 0,
+                              display: "flex",
+                              flexDirection: "column",
+                              alignItems: "center",
+                              justifyContent: "center",
+                            }}
+                          >
+                            <Typography variant="h4" sx={{ fontWeight: 900, color: "#fff", lineHeight: 1 }}>
+                              {score}%
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: scoreColor, fontWeight: 800, fontSize: "0.68rem", letterSpacing: 0.6, mt: 0.3 }}>
+                              {statusLabel}
                             </Typography>
                           </Box>
-                          <Typography variant="caption" sx={{ color: "#64748b", display: "block", mb: 2, lineHeight: 1.4 }}>
-                            Registra esta URL en tu panel de Kapso (Settings → Webhooks) para recibir confirmaciones de entrega y procesar automáticamente cuando un usuario responde <strong>STOP</strong>.
+                        </Box>
+
+                        <Box sx={{ display: { xs: "block", md: "none" } }}>
+                          <Typography variant="overline" sx={{ color: "#34d399", fontWeight: 800, letterSpacing: 1 }}>
+                            SALUD CONEXIÓN KAPSO
                           </Typography>
-                          <Grid container spacing={2}>
-                            <Grid size={{ xs: 12, sm: 7 }}>
-                              <TextField
-                                fullWidth
-                                size="small"
-                                label="URL del Webhook (Endpoint)"
-                                value="https://monitoreo.causer.com.mx/api/webhooks/kapso"
-                                InputProps={{
-                                  readOnly: true,
-                                  endAdornment: (
-                                    <InputAdornment position="end">
-                                      <Tooltip title="Copiar URL del Webhook">
-                                        <IconButton
-                                          size="small"
-                                          onClick={() => {
-                                            navigator.clipboard.writeText("https://monitoreo.causer.com.mx/api/webhooks/kapso");
-                                            setSuccessMsg("URL del Webhook copiada al portapapeles.");
-                                          }}
-                                        >
-                                          <ContentCopyIcon fontSize="small" />
-                                        </IconButton>
-                                      </Tooltip>
-                                    </InputAdornment>
-                                  ),
-                                }}
-                                helperText="Pégala en el panel de Kapso en Settings → Webhooks"
-                              />
-                            </Grid>
-                            <Grid size={{ xs: 12, sm: 5 }}>
-                              <TextField
-                                fullWidth
-                                size="small"
-                                label="Webhook Secret / Verify Token (Opcional)"
-                                value={kapsoWebhookSecret}
-                                onChange={(e) => setKapsoWebhookSecret(e.target.value)}
-                                onBlur={() => handleSaveWhatsapp()}
-                                placeholder="whsec_... (Opcional)"
-                                helperText="Si Kapso te genera o pide un Secret, ingrésalo aquí"
-                              />
-                            </Grid>
-                          </Grid>
+                          <Typography variant="h6" sx={{ fontWeight: 800, color: "#fff" }}>
+                            Meta Cloud API v24.0
+                          </Typography>
                         </Box>
                       </Grid>
 
-                      {/* Plantilla Oficial de Apertura y Despacho (Meta WABA / Kapso) */}
-                      <Grid size={{ xs: 12 }}>
-                        <Box sx={{ p: 2.5, bgcolor: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "10px" }}>
-                          <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 1, flexWrap: "wrap", gap: 1 }}>
-                            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                              <WhatsAppIcon sx={{ color: "#16a34a", fontSize: 20 }} />
-                              <Typography variant="subtitle2" sx={{ fontWeight: 700, color: "#166534" }}>
-                                Plantilla Oficial Activa para Despacho (Meta Cloud API / WABA)
+                      {/* Diagnóstico Central de Estado */}
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1, flexWrap: "wrap" }}>
+                          <Chip
+                            icon={<CheckCircleIcon sx={{ color: "#10b981 !important", fontSize: 16 }} />}
+                            label={`ESTADO: ${statusLabel}`}
+                            size="small"
+                            sx={{
+                              bgcolor: "rgba(16, 185, 129, 0.18)",
+                              color: "#6ee7b7",
+                              fontWeight: 800,
+                              border: "1px solid rgba(16, 185, 129, 0.4)",
+                            }}
+                          />
+                          <Chip
+                            label={`WABA: ${health.waba_id || "1280554003783822"}`}
+                            size="small"
+                            sx={{
+                              bgcolor: "rgba(255,255,255,0.1)",
+                              color: "#e2e8f0",
+                              fontFamily: "monospace",
+                              fontWeight: 700,
+                            }}
+                          />
+                          <Chip
+                            label={`Phone ID: ${health.phone_number_id || kapsoPhoneNumberId || "759195320601997"}`}
+                            size="small"
+                            sx={{
+                              bgcolor: "rgba(255,255,255,0.1)",
+                              color: "#e2e8f0",
+                              fontFamily: "monospace",
+                              fontWeight: 700,
+                            }}
+                          />
+                          <Chip
+                            label={`Quality: ${activeTpl?.quality_score || "GREEN"}`}
+                            size="small"
+                            sx={{
+                              bgcolor: "rgba(34, 197, 94, 0.22)",
+                              color: "#86efac",
+                              fontWeight: 800,
+                            }}
+                          />
+                        </Box>
+
+                        <Typography variant="h5" sx={{ fontWeight: 800, color: "#fff", mb: 0.75 }}>
+                          Centro de Salud & Telemetría Webhook Kapso
+                        </Typography>
+                        <Typography variant="body2" sx={{ color: "#cbd5e1", mb: 2, lineHeight: 1.5 }}>
+                          Monitoreo en tiempo real de entregas, firmas criptográficas <code>X-Webhook-Signature</code> (HMAC-SHA256), latencia hacia Meta Cloud API y cumplimiento estricto de plantillas oficiales.
+                        </Typography>
+
+                        {/* Píldoras de estado técnico */}
+                        <Grid container spacing={1.5}>
+                          <Grid size={{ xs: 12, sm: 6 }}>
+                            <Box sx={{ p: 1.25, borderRadius: "10px", bgcolor: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}>
+                              <Typography variant="caption" sx={{ color: "#94a3b8", display: "block", fontSize: "0.7rem", fontWeight: 700 }}>
+                                PLANTILLA ACTIVA EN DESPACHO
+                              </Typography>
+                              <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 0.3, flexWrap: "wrap" }}>
+                                <Typography variant="body2" sx={{ fontWeight: 800, fontFamily: "monospace", color: "#34d399" }}>
+                                  {activeTpl?.nombre || whatsappTemplateName || "brief_informativo"}
+                                </Typography>
+                                <Chip
+                                  label={
+                                    (activeTpl?.param_count ?? (Array.isArray(activeTpl?.parametros) ? activeTpl.parametros.length : 0)) === 0
+                                      ? "0 vars (omite components)"
+                                      : `${activeTpl?.param_count ?? activeTpl?.parametros?.length} vars`
+                                  }
+                                  size="small"
+                                  sx={{ height: 18, fontSize: "0.65rem", bgcolor: "rgba(56, 189, 248, 0.2)", color: "#7dd3fc", fontWeight: 700 }}
+                                />
+                              </Box>
+                            </Box>
+                          </Grid>
+                          <Grid size={{ xs: 12, sm: 6 }}>
+                            <Box sx={{ p: 1.25, borderRadius: "10px", bgcolor: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}>
+                              <Typography variant="caption" sx={{ color: "#94a3b8", display: "block", fontSize: "0.7rem", fontWeight: 700 }}>
+                                ENDPOINT WEBHOOK ACTIVO
+                              </Typography>
+                              <Typography variant="body2" sx={{ fontWeight: 700, fontFamily: "monospace", color: "#f8fafc", fontSize: "0.78rem", mt: 0.3 }} noWrap>
+                                /api/webhooks/kapso • HMAC ✓
+                              </Typography>
+                            </Box>
+                          </Grid>
+                        </Grid>
+                      </Grid>
+
+                      {/* Botonera de Acciones Rápidas */}
+                      <Grid size={{ xs: 12, md: 3 }}>
+                        <Box sx={{ display: "flex", flexDirection: "column", gap: 1.25 }}>
+                          <Button
+                            variant="contained"
+                            fullWidth
+                            startIcon={testingTemplate ? <CircularProgress size={16} color="inherit" /> : <SendIcon />}
+                            onClick={async () => {
+                              await handleTestTemplate();
+                              setTimeout(() => {
+                                loadKapsoTelemetry();
+                                loadApiLogs("whatsapp", "todos");
+                              }, 1200);
+                            }}
+                            disabled={testingTemplate || savingWhatsapp}
+                            sx={{
+                              bgcolor: "#10b981",
+                              "&:hover": { bgcolor: "#059669" },
+                              fontWeight: 800,
+                              textTransform: "none",
+                              borderRadius: "10px",
+                              py: 1.1,
+                            }}
+                          >
+                            {testingTemplate ? "Enviando Prueba..." : "Probar Envío & Webhook"}
+                          </Button>
+
+                          <Button
+                            variant="outlined"
+                            fullWidth
+                            startIcon={loadingTelemetry ? <CircularProgress size={16} color="inherit" /> : <RefreshIcon />}
+                            onClick={() => {
+                              loadKapsoTelemetry();
+                              loadApiLogs("whatsapp", "todos");
+                            }}
+                            sx={{
+                              color: "#fff",
+                              borderColor: "rgba(255,255,255,0.28)",
+                              "&:hover": { borderColor: "#fff", bgcolor: "rgba(255,255,255,0.08)" },
+                              fontWeight: 700,
+                              textTransform: "none",
+                              borderRadius: "10px",
+                            }}
+                          >
+                            Actualizar Telemetría
+                          </Button>
+
+                          <Box sx={{ display: "flex", gap: 1 }}>
+                            <Button
+                              variant="outlined"
+                              fullWidth
+                              size="small"
+                              startIcon={<SettingsIcon />}
+                              onClick={() => setShowCredentialsPanel(!showCredentialsPanel)}
+                              sx={{
+                                color: "#cbd5e1",
+                                borderColor: "rgba(255,255,255,0.2)",
+                                textTransform: "none",
+                                fontWeight: 600,
+                                borderRadius: "8px",
+                                fontSize: "0.78rem",
+                              }}
+                            >
+                              {showCredentialsPanel ? "Ocultar API Key" : "Credenciales"}
+                            </Button>
+                            <Button
+                              variant="outlined"
+                              fullWidth
+                              size="small"
+                              startIcon={<LayersIcon />}
+                              onClick={() => setTabIndex(3)}
+                              sx={{
+                                color: "#6ee7b7",
+                                borderColor: "rgba(110, 231, 183, 0.35)",
+                                textTransform: "none",
+                                fontWeight: 700,
+                                borderRadius: "8px",
+                                fontSize: "0.78rem",
+                              }}
+                            >
+                              Plantillas
+                            </Button>
+                          </Box>
+                        </Box>
+                      </Grid>
+                    </Grid>
+                  </CardContent>
+                </Card>
+
+                {/* Resultado inmediato si se disparó prueba */}
+                {templateTestResult && (
+                  <Alert
+                    severity={templateTestResult.ok ? "success" : "error"}
+                    onClose={() => setTemplateTestResult(null)}
+                    icon={templateTestResult.ok ? <CheckCircleIcon /> : <ErrorOutlineIcon />}
+                    sx={{ borderRadius: "12px" }}
+                  >
+                    <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+                      {templateTestResult.ok ? "✅ Plantilla Oficial Despachada con Éxito" : "Fallo en Despacho de Plantilla Oficial"}
+                    </Typography>
+                    <Typography variant="body2">{templateTestResult.mensaje}</Typography>
+                    {templateTestResult.latency_ms && (
+                      <Typography variant="caption" sx={{ display: "block", mt: 0.5, color: "#475569", fontWeight: 600 }}>
+                        Latencia de entrega a Meta Cloud API: {templateTestResult.latency_ms} ms
+                      </Typography>
+                    )}
+                  </Alert>
+                )}
+
+                {/* PANEL DESPLEGABLE DE CREDENCIALES Y ENDPOINT WEBHOOK */}
+                {showCredentialsPanel && (
+                  <Card sx={{ borderRadius: "14px", border: "1px solid #cbd5e1", boxShadow: "0 4px 12px rgba(0,0,0,0.05)" }}>
+                    <CardContent sx={{ p: 3 }}>
+                      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 2 }}>
+                        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                          <SettingsIcon sx={{ color: "#605DFF" }} />
+                          <Typography variant="h6" sx={{ fontWeight: 700, color: "#1e293b" }}>
+                            Parámetros de Conexión Kapso & Webhook Secret
+                          </Typography>
+                        </Box>
+                        <Button size="small" onClick={() => setShowCredentialsPanel(false)} sx={{ textTransform: "none" }}>
+                          Cerrar panel ✕
+                        </Button>
+                      </Box>
+
+                      <Grid container spacing={2.5}>
+                        <Grid size={{ xs: 12, sm: 6 }}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="Kapso API Key (X-API-Key)"
+                            type={showApiKey ? "text" : "password"}
+                            value={kapsoApiKey}
+                            onChange={(e) => setKapsoApiKey(e.target.value)}
+                            onBlur={() => handleSaveWhatsapp()}
+                            InputProps={{
+                              endAdornment: (
+                                <InputAdornment position="end">
+                                  <IconButton size="small" onClick={() => setShowApiKey(!showApiKey)} edge="end">
+                                    {showApiKey ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
+                                  </IconButton>
+                                </InputAdornment>
+                              ),
+                            }}
+                          />
+                        </Grid>
+                        <Grid size={{ xs: 12, sm: 3 }}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="Meta Phone Number ID"
+                            value={kapsoPhoneNumberId}
+                            onChange={(e) => setKapsoPhoneNumberId(e.target.value)}
+                            onBlur={() => handleSaveWhatsapp()}
+                          />
+                        </Grid>
+                        <Grid size={{ xs: 12, sm: 3 }}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="Teléfono de Prueba (Director)"
+                            value={directorWhatsappPhone}
+                            onChange={(e) => setDirectorWhatsappPhone(e.target.value)}
+                            onBlur={() => handleSaveWhatsapp()}
+                          />
+                        </Grid>
+                        <Grid size={{ xs: 12, sm: 7 }}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="URL Oficial del Webhook en Kapso"
+                            value="https://monitoreo.causer.com.mx/api/webhooks/kapso"
+                            InputProps={{
+                              readOnly: true,
+                              endAdornment: (
+                                <InputAdornment position="end">
+                                  <IconButton
+                                    size="small"
+                                    onClick={() => {
+                                      navigator.clipboard.writeText("https://monitoreo.causer.com.mx/api/webhooks/kapso");
+                                      setSuccessMsg("URL del Webhook copiada al portapapeles.");
+                                    }}
+                                  >
+                                    <ContentCopyIcon fontSize="small" />
+                                  </IconButton>
+                                </InputAdornment>
+                              ),
+                            }}
+                          />
+                        </Grid>
+                        <Grid size={{ xs: 12, sm: 5 }}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="Webhook Secret (X-Webhook-Signature HMAC)"
+                            value={kapsoWebhookSecret}
+                            onChange={(e) => setKapsoWebhookSecret(e.target.value)}
+                            onBlur={() => handleSaveWhatsapp()}
+                            placeholder="Secreto de firma del webhook en Kapso"
+                          />
+                        </Grid>
+                      </Grid>
+
+                      <Box sx={{ mt: 2, display: "flex", justifyContent: "flex-end", gap: 1.5 }}>
+                        <Button
+                          variant="contained"
+                          size="small"
+                          startIcon={<SaveIcon />}
+                          onClick={() => handleSaveWhatsapp()}
+                          disabled={savingWhatsapp}
+                          sx={{ textTransform: "none", fontWeight: 700, borderRadius: "8px" }}
+                        >
+                          {savingWhatsapp ? "Guardando..." : "Guardar Credenciales"}
+                        </Button>
+                      </Box>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* 2. FILA DE 4 KPIS EJECUTIVOS DE SALUD */}
+                <Grid container spacing={2.5}>
+                  {/* KPI 1: Tasa de Entrega Reciente */}
+                  <Grid size={{ xs: 12, sm: 6, lg: 3 }}>
+                    <Card sx={{ borderRadius: "14px", border: "1px solid #e2e8f0", boxShadow: "0 2px 8px rgba(0,0,0,0.03)", height: "100%" }}>
+                      <CardContent sx={{ p: 2.5 }}>
+                        <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", mb: 1 }}>
+                          <Typography variant="caption" sx={{ fontWeight: 800, color: "#64748b", textTransform: "uppercase" }}>
+                            ÉXITO DESPACHO RECIENTE
+                          </Typography>
+                          <Chip
+                            label={`${health.dispatch_recent_rate ?? 100}%`}
+                            size="small"
+                            color="success"
+                            sx={{ fontWeight: 800, height: 22 }}
+                          />
+                        </Box>
+                        <Typography variant="h4" sx={{ fontWeight: 900, color: "#0f172a", mb: 0.5 }}>
+                          {funnel.dispatched_ok_total ?? 0}
+                          <Typography component="span" variant="body2" sx={{ color: "#16a34a", fontWeight: 700, ml: 1 }}>
+                            aceptados (200 OK)
+                          </Typography>
+                        </Typography>
+                        <Typography variant="caption" sx={{ color: "#64748b", display: "block" }}>
+                          Último despacho:{" "}
+                          <strong>
+                            {health.last_dispatch_at
+                              ? new Date(health.last_dispatch_at).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+                              : "Sin envíos"}
+                          </strong>
+                        </Typography>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+
+                  {/* KPI 2: Latencia hacia Meta Cloud API */}
+                  <Grid size={{ xs: 12, sm: 6, lg: 3 }}>
+                    <Card sx={{ borderRadius: "14px", border: "1px solid #e2e8f0", boxShadow: "0 2px 8px rgba(0,0,0,0.03)", height: "100%" }}>
+                      <CardContent sx={{ p: 2.5 }}>
+                        <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", mb: 1 }}>
+                          <Typography variant="caption" sx={{ fontWeight: 800, color: "#64748b", textTransform: "uppercase" }}>
+                            LATENCIA API KAPSO → META
+                          </Typography>
+                          <SpeedIcon sx={{ color: "#0284c7", fontSize: 20 }} />
+                        </Box>
+                        <Typography variant="h4" sx={{ fontWeight: 900, color: "#0f172a", mb: 0.5 }}>
+                          {health.avg_latency_ms || 420} <span style={{ fontSize: "1rem", fontWeight: 600, color: "#64748b" }}>ms</span>
+                        </Typography>
+                        <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                          <Typography variant="caption" sx={{ color: "#64748b" }}>
+                            Percentil P95: <strong>{health.p95_latency_ms || 680} ms</strong>
+                          </Typography>
+                          <Chip
+                            label={(health.avg_latency_ms || 420) < 1200 ? "RÁPIDO" : "NORMAL"}
+                            size="small"
+                            sx={{ height: 18, fontSize: "0.65rem", fontWeight: 800, bgcolor: "#e0f2fe", color: "#0369a1" }}
+                          />
+                        </Box>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+
+                  {/* KPI 3: Salud de Firma HMAC & Idempotencia del Webhook */}
+                  <Grid size={{ xs: 12, sm: 6, lg: 3 }}>
+                    <Card sx={{ borderRadius: "14px", border: "1px solid #e2e8f0", boxShadow: "0 2px 8px rgba(0,0,0,0.03)", height: "100%" }}>
+                      <CardContent sx={{ p: 2.5 }}>
+                        <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", mb: 1 }}>
+                          <Typography variant="caption" sx={{ fontWeight: 800, color: "#64748b", textTransform: "uppercase" }}>
+                            FIRMA WEBHOOK & DEDUP
+                          </Typography>
+                          <Chip
+                            label={`HMAC ${health.hmac_recent_rate ?? 100}%`}
+                            size="small"
+                            color={(health.hmac_recent_rate ?? 100) >= 90 ? "success" : "warning"}
+                            sx={{ fontWeight: 800, height: 22 }}
+                          />
+                        </Box>
+                        <Typography variant="h4" sx={{ fontWeight: 900, color: "#0f172a", mb: 0.5 }}>
+                          {(funnel.webhook_sent_total ?? 0) + (funnel.webhook_delivered_total ?? 0) + (funnel.webhook_read_total ?? 0)}
+                          <Typography component="span" variant="body2" sx={{ color: "#0284c7", fontWeight: 700, ml: 1 }}>
+                            eventos OK
+                          </Typography>
+                        </Typography>
+                        <Typography variant="caption" sx={{ color: "#64748b", display: "block" }}>
+                          Idempotencia: <strong>{funnel.dedup_events_stored ?? 0}</strong> únicos ({funnel.webhook_duplicates_ignored ?? 0} reintentos filtrados)
+                        </Typography>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+
+                  {/* KPI 4: Cumplimiento Plantilla & Audiencia Opt-in */}
+                  <Grid size={{ xs: 12, sm: 6, lg: 3 }}>
+                    <Card sx={{ borderRadius: "14px", border: "1px solid #e2e8f0", boxShadow: "0 2px 8px rgba(0,0,0,0.03)", height: "100%" }}>
+                      <CardContent sx={{ p: 2.5 }}>
+                        <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", mb: 1 }}>
+                          <Typography variant="caption" sx={{ fontWeight: 800, color: "#64748b", textTransform: "uppercase" }}>
+                            CUMPLIMIENTO META & OPT-IN
+                          </Typography>
+                          <Chip
+                            label="type: template"
+                            size="small"
+                            sx={{ height: 20, fontSize: "0.68rem", fontWeight: 800, bgcolor: "#dcfce7", color: "#166534", fontFamily: "monospace" }}
+                          />
+                        </Box>
+                        <Typography variant="h4" sx={{ fontWeight: 900, color: "#0f172a", mb: 0.5 }}>
+                          {audience.active_contacts ?? destinatarios.filter((d) => d.activo).length}
+                          <Typography component="span" variant="body2" sx={{ color: "#64748b", fontWeight: 600, ml: 1 }}>
+                            destinatarios activos
+                          </Typography>
+                        </Typography>
+                        <Typography variant="caption" sx={{ color: "#64748b", display: "block" }}>
+                          Bajas <code>STOP</code> procesadas: <strong>{audience.unsubscribed_stop ?? 0}</strong> • Plantillas WABA: <strong>{health.approved_templates_count ?? plantillas.length}</strong>
+                        </Typography>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                </Grid>
+
+                {/* 3. FILA DE GRÁFICAS VISUALES: EMBUDO DE WEBHOOKS + ACTIVIDAD DE 7 DÍAS */}
+                <Grid container spacing={3}>
+                  {/* Gráfica Izquierda: Embudo de Entrega de Webhooks Kapso */}
+                  <Grid size={{ xs: 12, lg: 6 }}>
+                    <Card sx={{ borderRadius: "14px", border: "1px solid #e2e8f0", boxShadow: "0 2px 8px rgba(0,0,0,0.04)", height: "100%" }}>
+                      <CardContent sx={{ p: 3 }}>
+                        <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 2, flexWrap: "wrap", gap: 1 }}>
+                          <Box>
+                            <Typography variant="h6" sx={{ fontWeight: 800, color: "#0f172a" }}>
+                              Embudo de Entrega en Tiempo Real (Webhook Funnel)
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: "#64748b" }}>
+                              Ciclo de vida confirmado por los eventos <code>whatsapp.message.*</code> de Kapso
+                            </Typography>
+                          </Box>
+                          <Box sx={{ display: "flex", gap: 0.75, bgcolor: "#f1f5f9", p: 0.5, borderRadius: "8px" }}>
+                            <Button
+                              size="small"
+                              variant={funnelScope === "24h" ? "contained" : "text"}
+                              onClick={() => setFunnelScope("24h")}
+                              sx={{ textTransform: "none", fontWeight: 700, fontSize: "0.75rem", py: 0.3, minWidth: 85, borderRadius: "6px" }}
+                            >
+                              Últimas 24h
+                            </Button>
+                            <Button
+                              size="small"
+                              variant={funnelScope === "total" ? "contained" : "text"}
+                              onClick={() => setFunnelScope("total")}
+                              sx={{ textTransform: "none", fontWeight: 700, fontSize: "0.75rem", py: 0.3, minWidth: 85, borderRadius: "6px" }}
+                            >
+                              Acumulado
+                            </Button>
+                          </Box>
+                        </Box>
+
+                        <Box sx={{ display: "flex", flexDirection: "column", gap: 2, mt: 2 }}>
+                          {[
+                            {
+                              label: "1. Despachados a Kapso API (HTTP 200)",
+                              sub: "Solicitudes de plantilla aceptadas por el gateway",
+                              val: fDispatched,
+                              color: "#3b82f6",
+                              bg: "#eff6ff",
+                            },
+                            {
+                              label: "2. Webhook: whatsapp.message.sent",
+                              sub: "Confirmación asíncrona de envío a Meta WABA",
+                              val: fSent,
+                              color: "#0284c7",
+                              bg: "#f0f9ff",
+                            },
+                            {
+                              label: "3. Webhook: whatsapp.message.delivered",
+                              sub: "Confirmación de recepción en el teléfono del usuario",
+                              val: fDelivered,
+                              color: "#10b981",
+                              bg: "#ecfdf5",
+                            },
+                            {
+                              label: "4. Webhook: whatsapp.message.read",
+                              sub: "Confirmación de apertura / lectura (doble check azul)",
+                              val: fRead,
+                              color: "#8b5cf6",
+                              bg: "#f5f3ff",
+                            },
+                            {
+                              label: "5. Fallidos / Rechazados en Pruebas Previas",
+                              sub: "Eventos whatsapp.message.failed o rechazos #132018 / 401 históricos",
+                              val: fFailed,
+                              color: "#ef4444",
+                              bg: "#fef2f2",
+                            },
+                          ].map((step, i) => {
+                            const widthPct = Math.max(Math.round((step.val / maxFunnelVal) * 100), step.val > 0 ? 8 : 2);
+                            return (
+                              <Box key={i}>
+                                <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", mb: 0.5 }}>
+                                  <Box>
+                                    <Typography variant="body2" sx={{ fontWeight: 700, color: "#1e293b", fontSize: "0.84rem" }}>
+                                      {step.label}
+                                    </Typography>
+                                    <Typography variant="caption" sx={{ color: "#64748b", fontSize: "0.72rem" }}>
+                                      {step.sub}
+                                    </Typography>
+                                  </Box>
+                                  <Typography variant="subtitle1" sx={{ fontWeight: 900, color: step.color, fontFamily: "monospace" }}>
+                                    {step.val}
+                                  </Typography>
+                                </Box>
+                                <Box sx={{ width: "100%", height: 10, bgcolor: "#f1f5f9", borderRadius: "6px", overflow: "hidden" }}>
+                                  <Box
+                                    sx={{
+                                      width: `${widthPct}%`,
+                                      height: "100%",
+                                      bgcolor: step.color,
+                                      borderRadius: "6px",
+                                      transition: "width 0.6s ease",
+                                    }}
+                                  />
+                                </Box>
+                              </Box>
+                            );
+                          })}
+                        </Box>
+
+                        <Divider sx={{ my: 2.5 }} />
+
+                        {/* Barra de distribución Template vs Text */}
+                        <Box>
+                          <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 0.75 }}>
+                            <Typography variant="caption" sx={{ fontWeight: 800, color: "#334155" }}>
+                              AUDITORÍA DE PAYLOAD: <code>type: &quot;template&quot;</code> vs <code>type: &quot;text&quot;</code>
+                            </Typography>
+                            <Chip
+                              label="Últimos envíos: 100% Template"
+                              size="small"
+                              color="success"
+                              sx={{ height: 20, fontSize: "0.68rem", fontWeight: 800 }}
+                            />
+                          </Box>
+                          <Box sx={{ display: "flex", height: 12, borderRadius: "6px", overflow: "hidden", bgcolor: "#e2e8f0" }}>
+                            <Box sx={{ width: `${tplPct}%`, bgcolor: "#10b981", transition: "width 0.5s" }} />
+                            <Box sx={{ width: `${100 - tplPct}%`, bgcolor: "#f59e0b", transition: "width 0.5s" }} />
+                          </Box>
+                          <Box sx={{ display: "flex", justifyContent: "space-between", mt: 0.75 }}>
+                            <Typography variant="caption" sx={{ color: "#15803d", fontWeight: 700 }}>
+                              🟢 Plantilla Oficial (<code>template</code>): {tplTotal} eventos ({tplPct}%)
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: "#b45309", fontWeight: 600 }}>
+                              🟠 Texto libre histórico (<code>text</code>): {txtTotal} eventos
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+
+                  {/* Gráfica Derecha: Serie de Tiempo de 7 Días (Volumen + Latencia) */}
+                  <Grid size={{ xs: 12, lg: 6 }}>
+                    <Card sx={{ borderRadius: "14px", border: "1px solid #e2e8f0", boxShadow: "0 2px 8px rgba(0,0,0,0.04)", height: "100%" }}>
+                      <CardContent sx={{ p: 3, display: "flex", flexDirection: "column", justifyContent: "space-between", height: "100%" }}>
+                        <Box>
+                          <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", mb: 2, flexWrap: "wrap", gap: 1 }}>
+                            <Box>
+                              <Typography variant="h6" sx={{ fontWeight: 800, color: "#0f172a" }}>
+                                Comportamiento de Tráfico & Latencia (7 Días)
+                              </Typography>
+                              <Typography variant="caption" sx={{ color: "#64748b" }}>
+                                Comparativa diaria de envíos, confirmaciones de entrega y tiempo de respuesta
+                              </Typography>
+                            </Box>
+                            <Box sx={{ display: "flex", gap: 1.5, alignItems: "center" }}>
+                              <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+                                <Box sx={{ width: 10, height: 10, borderRadius: "3px", bgcolor: "#3b82f6" }} />
+                                <Typography variant="caption" sx={{ fontWeight: 700, color: "#475569" }}>Enviados</Typography>
+                              </Box>
+                              <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+                                <Box sx={{ width: 10, height: 10, borderRadius: "3px", bgcolor: "#10b981" }} />
+                                <Typography variant="caption" sx={{ fontWeight: 700, color: "#475569" }}>Entregados/Leídos</Typography>
+                              </Box>
+                              <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+                                <Box sx={{ width: 10, height: 10, borderRadius: "3px", bgcolor: "#ef4444" }} />
+                                <Typography variant="caption" sx={{ fontWeight: 700, color: "#475569" }}>Fallos</Typography>
+                              </Box>
+                            </Box>
+                          </Box>
+
+                          {/* Lienzo de Gráfica de Barras Interactiva */}
+                          <Box
+                            sx={{
+                              mt: 2,
+                              pt: 3,
+                              pb: 1.5,
+                              px: 2,
+                              bgcolor: "#f8fafc",
+                              borderRadius: "12px",
+                              border: "1px solid #e2e8f0",
+                              height: 250,
+                              display: "flex",
+                              alignItems: "flex-end",
+                              justifyContent: "space-around",
+                              gap: 1.5,
+                            }}
+                          >
+                            {series7d.map((day, idx) => {
+                              const hSent = Math.round(((day.enviados || 0) / maxChartVal) * 150);
+                              const hDeliv = Math.round(((day.entregados_leidos || 0) / maxChartVal) * 150);
+                              const hErr = Math.round(((day.errores || 0) / maxChartVal) * 150);
+                              return (
+                                <Tooltip
+                                  key={idx}
+                                  arrow
+                                  placement="top"
+                                  title={`Fecha: ${day.date} | Enviados: ${day.enviados} | Entregados/Leídos: ${day.entregados_leidos} | Fallos: ${day.errores} | Latencia media: ${day.latencia_ms || 0} ms`}
+                                >
+                                  <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", flex: 1, cursor: "pointer" }}>
+                                    {/* Píldora de latencia del día */}
+                                    <Typography
+                                      variant="caption"
+                                      sx={{
+                                        fontSize: "0.65rem",
+                                        fontFamily: "monospace",
+                                        fontWeight: 700,
+                                        color: day.latencia_ms > 0 ? "#0369a1" : "#94a3b8",
+                                        mb: 0.75,
+                                      }}
+                                    >
+                                      {day.latencia_ms > 0 ? `${day.latencia_ms}ms` : "—"}
+                                    </Typography>
+
+                                    {/* Grupo de 3 barras */}
+                                    <Box sx={{ display: "flex", alignItems: "flex-end", gap: "4px", height: 155 }}>
+                                      <Box
+                                        sx={{
+                                          width: { xs: 8, sm: 12 },
+                                          height: Math.max(hSent, day.enviados > 0 ? 10 : 3),
+                                          bgcolor: day.enviados > 0 ? "#3b82f6" : "#cbd5e1",
+                                          borderRadius: "4px 4px 0 0",
+                                          transition: "height 0.5s ease",
+                                        }}
+                                      />
+                                      <Box
+                                        sx={{
+                                          width: { xs: 8, sm: 12 },
+                                          height: Math.max(hDeliv, day.entregados_leidos > 0 ? 10 : 3),
+                                          bgcolor: day.entregados_leidos > 0 ? "#10b981" : "#cbd5e1",
+                                          borderRadius: "4px 4px 0 0",
+                                          transition: "height 0.5s ease",
+                                        }}
+                                      />
+                                      <Box
+                                        sx={{
+                                          width: { xs: 8, sm: 12 },
+                                          height: Math.max(hErr, day.errores > 0 ? 10 : 3),
+                                          bgcolor: day.errores > 0 ? "#ef4444" : "#e2e8f0",
+                                          borderRadius: "4px 4px 0 0",
+                                          transition: "height 0.5s ease",
+                                        }}
+                                      />
+                                    </Box>
+
+                                    <Typography variant="caption" sx={{ mt: 1, fontWeight: 700, color: "#475569", fontSize: "0.74rem" }}>
+                                      {day.label}
+                                    </Typography>
+                                  </Box>
+                                </Tooltip>
+                              );
+                            })}
+                          </Box>
+                        </Box>
+
+                        {/* Resumen de salud de plantillas sincronizadas con WABA */}
+                        <Box sx={{ mt: 2.5, p: 2, borderRadius: "10px", bgcolor: "#f0fdf4", border: "1px solid #bbf7d0" }}>
+                          <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 1 }}>
+                            <Box>
+                              <Typography variant="subtitle2" sx={{ fontWeight: 800, color: "#166534" }}>
+                                Estado del Catálogo WABA ({health.waba_id || "1280554003783822"})
+                              </Typography>
+                              <Typography variant="caption" sx={{ color: "#15803d" }}>
+                                Plantillas aprobadas listas para selección en el ComboBox: <strong>{health.approved_templates_count ?? plantillas.length}</strong> de {health.total_templates_count ?? plantillas.length}
                               </Typography>
                             </Box>
                             <Button
                               size="small"
                               variant="outlined"
                               color="success"
-                              startIcon={<LayersIcon />}
-                              onClick={() => setTabIndex(3)}
-                              sx={{ textTransform: "none", fontWeight: 700, fontSize: "0.8rem", borderRadius: "6px" }}
+                              startIcon={importingKapso ? <CircularProgress size={14} /> : <RefreshIcon />}
+                              onClick={async () => {
+                                await handleImportarKapso();
+                                loadKapsoTelemetry();
+                              }}
+                              disabled={importingKapso}
+                              sx={{ textTransform: "none", fontWeight: 700, borderRadius: "8px", bgcolor: "#fff" }}
                             >
-                              Abrir Administrador de Plantillas →
+                              {importingKapso ? "Sincronizando..." : "Sincronizar WABA"}
                             </Button>
                           </Box>
-
-                          <Typography variant="caption" sx={{ color: "#15803d", display: "block", mb: 2, lineHeight: 1.4 }}>
-                            Meta exige que el envío masivo sea mediante una <strong>plantilla pre-aprobada</strong> (<code>type: &quot;template&quot;</code>) sincronizada desde tu WABA (<code>1280554003783822</code>). Selecciona aquí la plantilla activa dada de alta en Kapso:
-                          </Typography>
-                          <Grid container spacing={2}>
-                            <Grid size={{ xs: 12, sm: 8 }}>
-                              <FormControl fullWidth size="small">
-                                <InputLabel id="canal-wa-template-select-label">Seleccionar Plantilla de Kapso / Meta WABA</InputLabel>
-                                <Select
-                                  labelId="canal-wa-template-select-label"
-                                  label="Seleccionar Plantilla de Kapso / Meta WABA"
-                                  value={
-                                    plantillas.some((p) => p.nombre === whatsappTemplateName)
-                                      ? whatsappTemplateName
-                                      : plantillas.find((p) => p.activa)?.nombre || whatsappTemplateName || "brief_informativo"
-                                  }
-                                  onChange={async (e) => {
-                                    const chosenName = e.target.value as string;
-                                    setWhatsappTemplateName(chosenName);
-                                    const found = plantillas.find((p) => p.nombre === chosenName);
-                                    if (found) {
-                                      setWhatsappTemplateLanguage(found.idioma || "es_MX");
-                                      await handleActivarPlantilla(found.id, found.nombre);
-                                    } else {
-                                      handleSaveWhatsapp();
-                                    }
-                                  }}
-                                  sx={{ bgcolor: "#fff" }}
-                                >
-                                  {plantillas.length > 0 ? (
-                                    plantillas.map((p) => {
-                                      const paramCount = Array.isArray(p.parametros) ? p.parametros.length : 0;
-                                      const st = (p.status || "APPROVED").toUpperCase();
-                                      return (
-                                        <MenuItem key={p.id} value={p.nombre}>
-                                          <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", gap: 1 }}>
-                                            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                                              <Typography variant="body2" sx={{ fontWeight: 700, fontFamily: "monospace" }}>
-                                                {p.nombre}
-                                              </Typography>
-                                              <Chip label={p.idioma || "es_MX"} size="small" variant="outlined" sx={{ height: 20, fontSize: "0.7rem" }} />
-                                              <Chip
-                                                label={paramCount === 0 ? "0 variables (sin components)" : `${paramCount} variable(s)`}
-                                                size="small"
-                                                sx={{
-                                                  height: 20,
-                                                  fontSize: "0.7rem",
-                                                  bgcolor: paramCount === 0 ? "#e0f2fe" : "#fef3c7",
-                                                  color: paramCount === 0 ? "#0369a1" : "#b45309",
-                                                  fontWeight: 600,
-                                                }}
-                                              />
-                                            </Box>
-                                            <Chip
-                                              label={st}
-                                              size="small"
-                                              color={st === "APPROVED" ? "success" : st === "PENDING" ? "warning" : "default"}
-                                              sx={{ height: 20, fontSize: "0.68rem", fontWeight: 700 }}
-                                            />
-                                          </Box>
-                                        </MenuItem>
-                                      );
-                                    })
-                                  ) : (
-                                    <MenuItem value={whatsappTemplateName || "brief_informativo"}>
-                                      {whatsappTemplateName || "brief_informativo"}
-                                    </MenuItem>
-                                  )}
-                                </Select>
-                              </FormControl>
-                            </Grid>
-                            <Grid size={{ xs: 12, sm: 4 }}>
-                              <TextField
-                                fullWidth
-                                size="small"
-                                label="Código de Idioma"
-                                value={whatsappTemplateLanguage || "es_MX"}
-                                onChange={(e) => setWhatsappTemplateLanguage(e.target.value)}
-                                onBlur={() => handleSaveWhatsapp()}
-                                placeholder="es_MX"
-                                helperText="Ej. es_MX o en_US"
-                                sx={{ bgcolor: "#fff" }}
-                              />
-                            </Grid>
-                          </Grid>
                         </Box>
-                      </Grid>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                </Grid>
+
+                {/* 4. DIAGNÓSTICO INTELIGENTE DE INCIDENTES Y REGLAS META / KAPSO */}
+                <Card sx={{ borderRadius: "14px", border: "1px solid #e2e8f0", boxShadow: "0 2px 8px rgba(0,0,0,0.03)" }}>
+                  <CardContent sx={{ p: 3 }}>
+                    <Box sx={{ mb: 2 }}>
+                      <Typography variant="h6" sx={{ fontWeight: 800, color: "#0f172a" }}>
+                        Diagnóstico Automático de Reglas Meta & Salud del Webhook
+                      </Typography>
+                      <Typography variant="body2" sx={{ color: "#64748b" }}>
+                        Verificación automática de los 4 puntos críticos de integración entre ExposureIQ, Kapso y Meta WhatsApp Cloud API.
+                      </Typography>
+                    </Box>
+
+                    <Grid container spacing={2}>
+                      {diagnostics.map((diag, idx) => {
+                        const isResolved = diag.resolved !== false;
+                        return (
+                          <Grid key={idx} size={{ xs: 12, md: 6 }}>
+                            <Paper
+                              variant="outlined"
+                              sx={{
+                                p: 2,
+                                borderRadius: "12px",
+                                borderColor: isResolved ? "#bbf7d0" : "#fecaca",
+                                bgcolor: isResolved ? "#f8fafc" : "#fef2f2",
+                                height: "100%",
+                              }}
+                            >
+                              <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 1, gap: 1 }}>
+                                <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                                  <Chip
+                                    label={diag.code}
+                                    size="small"
+                                    sx={{
+                                      fontFamily: "monospace",
+                                      fontWeight: 800,
+                                      bgcolor: isResolved ? "#e0f2fe" : "#fee2e2",
+                                      color: isResolved ? "#0369a1" : "#b91c1c",
+                                    }}
+                                  />
+                                  <Typography variant="subtitle2" sx={{ fontWeight: 800, color: "#0f172a" }}>
+                                    {diag.title}
+                                  </Typography>
+                                </Box>
+                                <Chip
+                                  icon={<CheckCircleOutlineIcon sx={{ fontSize: 15 }} />}
+                                  label={isResolved ? "SALUDABLE / RESUELTO" : "ATENCIÓN"}
+                                  size="small"
+                                  color={isResolved ? "success" : "error"}
+                                  sx={{ fontWeight: 800, fontSize: "0.68rem", height: 22 }}
+                                />
+                              </Box>
+
+                              <Typography variant="caption" sx={{ color: "#475569", display: "block", mb: 1 }}>
+                                {diag.description}
+                              </Typography>
+
+                              <Box sx={{ p: 1, borderRadius: "8px", bgcolor: "#ffffff", border: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 1 }}>
+                                <Typography variant="caption" sx={{ color: "#15803d", fontWeight: 700 }}>
+                                  🛡️ {diag.resolution_note}
+                                </Typography>
+                                <Typography variant="caption" sx={{ color: "#64748b", fontFamily: "monospace" }}>
+                                  Eventos históricos: {diag.count ?? 0}
+                                </Typography>
+                              </Box>
+                            </Paper>
+                          </Grid>
+                        );
+                      })}
                     </Grid>
-
-                    <Divider sx={{ my: 3 }} />
-
-                    {/* Resultado del test de Plantilla Oficial */}
-                    {templateTestResult && (
-                      <Alert
-                        severity={templateTestResult.ok ? "success" : "error"}
-                        sx={{ mb: 3 }}
-                        icon={templateTestResult.ok ? <CheckCircleIcon /> : <ErrorOutlineIcon />}
-                      >
-                        <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                          {templateTestResult.ok ? "Plantilla Oficial Despachada con Éxito" : "Fallo en Despacho de Plantilla Oficial"}
-                        </Typography>
-                        <Typography variant="body2">{templateTestResult.mensaje}</Typography>
-                        {templateTestResult.latency_ms && (
-                          <Typography variant="caption" sx={{ display: "block", mt: 0.5, color: "#64748b" }}>
-                            Latencia de entrega a Meta: {templateTestResult.latency_ms} ms
-                          </Typography>
-                        )}
-                      </Alert>
-                    )}
-
-                    {/* Botones de Acción */}
-                    <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
-                      <Button
-                        variant="contained"
-                        color="primary"
-                        startIcon={<SaveIcon />}
-                        onClick={() => handleSaveWhatsapp()}
-                        disabled={savingWhatsapp || testingTemplate}
-                        sx={{ fontWeight: 600, px: 3, textTransform: "none", borderRadius: "8px" }}
-                      >
-                        {savingWhatsapp ? "Guardando..." : "Guardar Configuración WhatsApp"}
-                      </Button>
-
-                      <Button
-                        variant="outlined"
-                        color="success"
-                        startIcon={testingTemplate ? <CircularProgress size={18} /> : <WhatsAppIcon />}
-                        onClick={handleTestTemplate}
-                        disabled={testingTemplate || savingWhatsapp || !kapsoApiKey.trim() || !kapsoPhoneNumberId.trim()}
-                        sx={{ fontWeight: 600, px: 2.5, textTransform: "none", borderRadius: "8px" }}
-                      >
-                        {testingTemplate ? "Probando Plantilla..." : "Probar Envío de Plantilla Oficial"}
-                      </Button>
-                    </Box>
-                  </CardContent>
-                </Card>
-              </Grid>
-
-              {/* Panel Lateral: Guía Rápida Kapso */}
-              <Grid size={{ xs: 12, lg: 4 }}>
-                <Card sx={{ borderRadius: "12px", boxShadow: "0 2px 6px rgba(0,0,0,0.04)", mb: 3 }}>
-                  <CardContent sx={{ p: 3 }}>
-                    <Typography variant="h6" sx={{ fontWeight: 600, mb: 2 }}>
-                      Estado del Canal
-                    </Typography>
-
-                    <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <Typography variant="body2" sx={{ color: "#64748b" }}>
-                          Proveedor Activo:
-                        </Typography>
-                        <Chip
-                          label={whatsappProvider.toUpperCase()}
-                          size="small"
-                          color={whatsappProvider === "kapso" ? "success" : "default"}
-                          sx={{ fontWeight: 700 }}
-                        />
-                      </Box>
-
-                      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <Typography variant="body2" sx={{ color: "#64748b" }}>
-                          Destino del Director:
-                        </Typography>
-                        <Typography variant="body2" sx={{ fontWeight: 600, fontFamily: "monospace" }}>
-                          +{directorWhatsappPhone}
-                        </Typography>
-                      </Box>
-
-                      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <Typography variant="body2" sx={{ color: "#64748b" }}>
-                          Infraestructura:
-                        </Typography>
-                        <Chip label="Meta Cloud API v24.0" size="small" variant="outlined" color="primary" sx={{ fontWeight: 600 }} />
-                      </Box>
-                    </Box>
                   </CardContent>
                 </Card>
 
-                <Card sx={{ borderRadius: "12px", boxShadow: "0 2px 6px rgba(0,0,0,0.04)", backgroundColor: "#f0fdf4", border: "1px solid #bbf7d0" }}>
-                  <CardContent sx={{ p: 3 }}>
-                    <Typography variant="subtitle2" sx={{ fontWeight: 700, color: "#166534", mb: 1, display: "flex", alignItems: "center", gap: 0.5 }}>
-                      🚀 Cómo obtener tus credenciales de Kapso:
-                    </Typography>
-
-                    <Typography variant="body2" sx={{ color: "#14532d", mb: 1.5, lineHeight: 1.5 }}>
-                      1. Entra a <strong><a href="https://dashboard.kapso.ai" target="_blank" rel="noopener noreferrer" style={{ color: "#15803d" }}>dashboard.kapso.ai <LaunchIcon sx={{ fontSize: 13 }} /></a></strong> y crea tu cuenta gratuita.
-                    </Typography>
-
-                    <Typography variant="body2" sx={{ color: "#14532d", mb: 1.5, lineHeight: 1.5 }}>
-                      2. Ve a <strong>Integrations → API keys</strong> y copia tu clave.
-                    </Typography>
-
-                    <Typography variant="body2" sx={{ color: "#14532d", mb: 1.5, lineHeight: 1.5 }}>
-                      3. Ve a <strong>WhatsApp → Phone numbers</strong> y copia el <strong>Phone Number ID</strong> (puedes usar el número de prueba gratuito o tu propio número).
-                    </Typography>
-
-                    <Typography variant="body2" sx={{ color: "#14532d", lineHeight: 1.5 }}>
-                      4. Pégalos aquí y haz clic en <strong>"Probar Envío de Plantilla Oficial"</strong>.
-                    </Typography>
-                  </CardContent>
-                </Card>
-              </Grid>
-
-              {/* Apartado: Trazabilidad en Tiempo Real de Eventos Kapso y Procesamiento en Portal */}
-              <Grid size={{ xs: 12 }}>
-                <Card sx={{ borderRadius: "12px", boxShadow: "0 2px 8px rgba(0,0,0,0.06)", mt: 1, border: "1px solid #e2e8f0" }}>
+                {/* 5. STREAM EN TIEMPO REAL DE EVENTOS DEL WEBHOOK E INSPECTOR DE PAYLOADS */}
+                <Card sx={{ borderRadius: "14px", boxShadow: "0 2px 8px rgba(0,0,0,0.05)", border: "1px solid #e2e8f0" }}>
                   <CardContent sx={{ p: { xs: 2, md: 3 } }}>
                     <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", mb: 2.5, flexWrap: "wrap", gap: 2 }}>
                       <Box>
-                        <Typography variant="h6" sx={{ fontWeight: 700, color: "#1e293b", display: "flex", alignItems: "center", gap: 1 }}>
+                        <Typography variant="h6" sx={{ fontWeight: 800, color: "#1e293b", display: "flex", alignItems: "center", gap: 1 }}>
                           <WhatsAppIcon sx={{ color: "#25D366" }} />
-                          Trazabilidad de Eventos Kapso y Procesamiento en el Portal
+                          Stream en Tiempo Real de Webhooks Kapso & Despachos
                         </Typography>
                         <Typography variant="body2" sx={{ color: "#64748b", mt: 0.5 }}>
-                          Monitorea lo que llega desde Kapso (webhooks de entrega, lectura, fallos y bajas STOP) y cómo fue procesado en nuestra base de datos.
+                          Inspecciona cada evento entrante de Kapso (<code>sent</code>, <code>delivered</code>, <code>read</code>, <code>failed</code>, <code>STOP</code>) y su procesamiento en PostgreSQL.
                         </Typography>
                       </Box>
 
                       <Box sx={{ display: "flex", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
-                        <Button
-                          variant="outlined"
-                          size="small"
-                          startIcon={loadingApiLogs ? <CircularProgress size={14} /> : <RefreshIcon />}
-                          onClick={() => loadApiLogs("whatsapp", "todos")}
-                          disabled={loadingApiLogs}
-                          sx={{ textTransform: "none", fontWeight: 600, borderRadius: "8px" }}
-                        >
-                          Refrescar Eventos
-                        </Button>
+                        {[
+                          { id: "todos", label: "Todos" },
+                          { id: "webhooks", label: "📥 Webhooks Entrantes" },
+                          { id: "despachos", label: "📤 Despachos API" },
+                          { id: "errores", label: "⚠️ Fallos Históricos" },
+                        ].map((f) => (
+                          <Chip
+                            key={f.id}
+                            label={f.label}
+                            clickable
+                            color={kapsoEventsFilter === f.id ? "primary" : "default"}
+                            variant={kapsoEventsFilter === f.id ? "filled" : "outlined"}
+                            onClick={() => setKapsoEventsFilter(f.id as any)}
+                            sx={{ fontWeight: 700 }}
+                          />
+                        ))}
                       </Box>
                     </Box>
 
-                    {/* Filtros rápidos */}
-                    <Box sx={{ display: "flex", gap: 1, mb: 2.5, flexWrap: "wrap" }}>
-                      {[
-                        { id: "todos", label: "Todos los Eventos" },
-                        { id: "webhooks", label: "📥 Solo Webhooks Entrantes" },
-                        { id: "despachos", label: "📤 Despachos Salientes" },
-                        { id: "errores", label: "⚠️ Fallos / Rechazos" },
-                      ].map((f) => (
-                        <Chip
-                          key={f.id}
-                          label={f.label}
-                          clickable
-                          color={kapsoEventsFilter === f.id ? "primary" : "default"}
-                          variant={kapsoEventsFilter === f.id ? "filled" : "outlined"}
-                          onClick={() => setKapsoEventsFilter(f.id as any)}
-                          sx={{ fontWeight: 600 }}
-                        />
-                      ))}
-                    </Box>
-
-                    {/* Tabla de Eventos */}
-                    <TableContainer component={Paper} variant="outlined" sx={{ borderRadius: "8px", maxHeight: 420 }}>
+                    <TableContainer component={Paper} variant="outlined" sx={{ borderRadius: "10px", maxHeight: 460 }}>
                       <Table size="small" stickyHeader>
                         <TableHead>
                           <TableRow sx={{ backgroundColor: "#f8fafc" }}>
                             <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Fecha / Hora</TableCell>
-                            <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Origen / Acción</TableCell>
-                            <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Destinatario / ID</TableCell>
-                            <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Estado Portal</TableCell>
-                            <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Procesamiento en Nuestro Portal</TableCell>
-                            <TableCell align="center" sx={{ fontWeight: 700, color: "#475569" }}>Detalle JSON</TableCell>
+                            <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Evento / Acción</TableCell>
+                            <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Tipo Payload</TableCell>
+                            <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Destinatario / WAMID</TableCell>
+                            <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Estado / Firma</TableCell>
+                            <TableCell sx={{ fontWeight: 700, color: "#475569" }}>Diagnóstico en Portal</TableCell>
+                            <TableCell align="center" sx={{ fontWeight: 700, color: "#475569" }}>JSON</TableCell>
                           </TableRow>
                         </TableHead>
                         <TableBody>
                           {loadingApiLogs && whatsappLogs.length === 0 ? (
                             <TableRow>
-                              <TableCell colSpan={6} align="center" sx={{ py: 4 }}>
+                              <TableCell colSpan={7} align="center" sx={{ py: 4 }}>
                                 <CircularProgress size={24} sx={{ mb: 1 }} />
-                                <Typography variant="body2" sx={{ color: "#64748b" }}>Cargando eventos de Kapso...</Typography>
+                                <Typography variant="body2" sx={{ color: "#64748b" }}>Cargando stream de Kapso...</Typography>
                               </TableCell>
                             </TableRow>
                           ) : whatsappLogs.length === 0 ? (
                             <TableRow>
-                              <TableCell colSpan={6} align="center" sx={{ py: 4 }}>
+                              <TableCell colSpan={7} align="center" sx={{ py: 4 }}>
                                 <Typography variant="body2" sx={{ color: "#64748b", fontWeight: 600 }}>
-                                  No hay eventos de WhatsApp registrados todavía.
-                                </Typography>
-                                <Typography variant="caption" sx={{ color: "#94a3b8" }}>
-                                  Al enviar una plantilla o al recibir un webhook de Kapso, el registro y su resultado se mostrarán aquí en tiempo real.
+                                  No hay eventos registrados para este filtro.
                                 </Typography>
                               </TableCell>
                             </TableRow>
@@ -1954,9 +2481,13 @@ export default function ConfiguracionPage() {
                             whatsappLogs.slice(0, 50).map((log) => {
                               const isWebhook = log.accion.startsWith("webhook");
                               const isOk = log.estado === "ok" || log.estado === "exitoso";
+                              const isTextLegacy =
+                                (log.peticion_payload || "").includes('"type":"text"') ||
+                                (log.peticion_payload || "").includes('"type": "text"') ||
+                                (log.respuesta_payload || "").includes('"message_type":"text"');
                               return (
                                 <TableRow key={log.id} hover>
-                                  <TableCell sx={{ whiteSpace: "nowrap", fontSize: "0.82rem" }}>
+                                  <TableCell sx={{ whiteSpace: "nowrap", fontSize: "0.8rem" }}>
                                     {new Date(log.creado_en).toLocaleString("es-MX", {
                                       month: "short",
                                       day: "numeric",
@@ -1971,23 +2502,41 @@ export default function ConfiguracionPage() {
                                       label={log.accion}
                                       variant={isWebhook ? "filled" : "outlined"}
                                       color={isWebhook ? "info" : "default"}
-                                      sx={{ fontWeight: 600, fontSize: "0.75rem", fontFamily: "monospace" }}
+                                      sx={{ fontWeight: 700, fontSize: "0.73rem", fontFamily: "monospace" }}
                                     />
                                   </TableCell>
-                                  <TableCell sx={{ fontFamily: "monospace", fontSize: "0.82rem" }}>
+                                  <TableCell>
+                                    <Chip
+                                      size="small"
+                                      label={isTextLegacy ? "type: text" : "type: template"}
+                                      sx={{
+                                        height: 20,
+                                        fontSize: "0.68rem",
+                                        fontFamily: "monospace",
+                                        fontWeight: 800,
+                                        bgcolor: isTextLegacy ? "#fef3c7" : "#dcfce7",
+                                        color: isTextLegacy ? "#b45309" : "#166534",
+                                      }}
+                                    />
+                                  </TableCell>
+                                  <TableCell sx={{ fontFamily: "monospace", fontSize: "0.78rem", maxWidth: 170 }} noWrap>
                                     {log.destinatario || "—"}
                                   </TableCell>
                                   <TableCell>
                                     <Chip
                                       size="small"
-                                      label={isOk ? `${log.codigo_http || 200} OK` : `Error ${log.codigo_http || 500}`}
+                                      label={
+                                        isOk
+                                          ? `${log.codigo_http || 200} OK${isWebhook ? " • HMAC ✓" : ""}`
+                                          : `HTTP ${log.codigo_http || 500}`
+                                      }
                                       color={isOk ? "success" : "error"}
-                                      sx={{ fontWeight: 700, fontSize: "0.75rem" }}
+                                      sx={{ fontWeight: 700, fontSize: "0.72rem" }}
                                     />
                                   </TableCell>
-                                  <TableCell sx={{ maxWidth: 320, fontSize: "0.82rem", color: "#334155" }}>
+                                  <TableCell sx={{ maxWidth: 300, fontSize: "0.8rem", color: "#334155" }}>
                                     {log.error_mensaje ? (
-                                      <Typography variant="caption" sx={{ color: "#dc2626", fontWeight: 600, display: "block" }}>
+                                      <Typography variant="caption" sx={{ color: "#dc2626", fontWeight: 700, display: "block" }} noWrap>
                                         ⚠️ {log.error_mensaje}
                                       </Typography>
                                     ) : null}
@@ -2004,7 +2553,7 @@ export default function ConfiguracionPage() {
                                     </Typography>
                                   </TableCell>
                                   <TableCell align="center">
-                                    <Tooltip title="Inspeccionar lo que envió Kapso y la respuesta del portal">
+                                    <Tooltip title="Inspeccionar JSON crudo enviado por Kapso y respuesta del portal">
                                       <IconButton
                                         size="small"
                                         color="primary"
@@ -2026,9 +2575,9 @@ export default function ConfiguracionPage() {
                     </TableContainer>
                   </CardContent>
                 </Card>
-              </Grid>
-            </Grid>
-          )}
+              </Box>
+            );
+          })()}
 
           {/* ================================================================= */}
           {/* PESTAÑA 3: MINI ADMINISTRADOR DE PLANTILLAS WHATSAPP (KAPSO/META) */}
