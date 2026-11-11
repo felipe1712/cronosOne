@@ -2519,7 +2519,7 @@ export default function ConfiguracionPage() {
                                       }}
                                     />
                                   </TableCell>
-                                  <TableCell sx={{ fontFamily: "monospace", fontSize: "0.78rem", maxWidth: 170 }} noWrap>
+                                  <TableCell sx={{ fontFamily: "monospace", fontSize: "0.78rem", maxWidth: 170, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                                     {log.destinatario || "—"}
                                   </TableCell>
                                   <TableCell>
