@@ -1761,16 +1761,27 @@ pub async fn clear_api_logs(
 pub async fn list_plantillas(
     State((pool, _)): State<(DbPool, Arc<Config>)>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    let mut rows = sqlx::query_as::<_, WhatsappPlantilla>(
-        "SELECT id, nombre, idioma, activa, texto_fijo_body, tope_extracto, parametros, kapso_template_id, creado_en, actualizado_en
-         FROM whatsapp_plantillas
-         ORDER BY activa DESC, creado_en DESC"
+    let _ = sqlx::query(
+        "UPDATE whatsapp_plantillas
+         SET nombre = 'brief_informativo_cp_v2', actualizado_en = now()
+         WHERE nombre = 'brief_informativo'
+           AND NOT EXISTS (SELECT 1 FROM whatsapp_plantillas WHERE nombre = 'brief_informativo_cp_v2')"
     )
-    .fetch_all(&pool)
-    .await
-    .unwrap_or_default();
+    .execute(&pool)
+    .await;
 
-    if rows.is_empty() {
+    let exists_v2: Option<bool> = sqlx::query_scalar(
+        "SELECT true FROM whatsapp_plantillas WHERE nombre = 'brief_informativo_cp_v2' LIMIT 1"
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap_or(None);
+
+    if !exists_v2.unwrap_or(false) {
+        let _ = sqlx::query("UPDATE whatsapp_plantillas SET activa = false WHERE activa = true")
+            .execute(&pool)
+            .await;
+
         let _ = sqlx::query(
             "INSERT INTO whatsapp_plantillas (nombre, idioma, activa, texto_fijo_body, tope_extracto, parametros)
              VALUES ('brief_informativo_cp_v2', 'es_MX', true, 'PRIMERAS PLANAS \\n\\n {{primeras_planas}} .\\n\\n Si no deseas seguir recibiendo estos mensajes manda la palabra \"STOP\"', 900,
@@ -1779,16 +1790,16 @@ pub async fn list_plantillas(
         )
         .execute(&pool)
         .await;
-
-        rows = sqlx::query_as::<_, WhatsappPlantilla>(
-            "SELECT id, nombre, idioma, activa, texto_fijo_body, tope_extracto, parametros, kapso_template_id, creado_en, actualizado_en
-             FROM whatsapp_plantillas
-             ORDER BY activa DESC, creado_en DESC"
-        )
-        .fetch_all(&pool)
-        .await
-        .unwrap_or_default();
     }
+
+    let rows = sqlx::query_as::<_, WhatsappPlantilla>(
+        "SELECT id, nombre, idioma, activa, texto_fijo_body, tope_extracto, parametros, kapso_template_id, creado_en, actualizado_en
+         FROM whatsapp_plantillas
+         ORDER BY activa DESC, creado_en DESC"
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
 
     Ok((StatusCode::OK, Json(json!(rows))))
 }
@@ -1970,7 +1981,22 @@ pub async fn importar_plantillas_kapso(
     use crate::services::kapso::get_whatsapp_config;
     let cfg = get_whatsapp_config(&pool).await;
 
-    // 1. Asegurar siempre que la plantilla oficial brief_informativo_cp_v2 exista en la tabla
+    // 1. Migrar 'brief_informativo' -> 'brief_informativo_cp_v2' y liberar activa=true antes de insertar
+    let _ = sqlx::query(
+        "UPDATE whatsapp_plantillas
+         SET nombre = 'brief_informativo_cp_v2', actualizado_en = now()
+         WHERE nombre = 'brief_informativo'
+           AND NOT EXISTS (SELECT 1 FROM whatsapp_plantillas WHERE nombre = 'brief_informativo_cp_v2')"
+    )
+    .execute(&pool)
+    .await;
+
+    let _ = sqlx::query(
+        "UPDATE whatsapp_plantillas SET activa = false WHERE nombre != 'brief_informativo_cp_v2' AND activa = true"
+    )
+    .execute(&pool)
+    .await;
+
     let _ = sqlx::query(
         "INSERT INTO whatsapp_plantillas (nombre, idioma, activa, texto_fijo_body, tope_extracto, parametros, creado_en, actualizado_en)
          VALUES (
@@ -1984,7 +2010,7 @@ pub async fn importar_plantillas_kapso(
              now()
          )
          ON CONFLICT (nombre, idioma) DO UPDATE
-         SET actualizado_en = now()"
+         SET activa = true, actualizado_en = now()"
     )
     .execute(&pool)
     .await;

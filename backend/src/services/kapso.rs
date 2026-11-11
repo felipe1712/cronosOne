@@ -94,7 +94,12 @@ impl KapsoClient {
     /// Normaliza cualquier texto de parámetro de plantilla para cumplir estrictamente con la regla #132018 de Meta:
     /// "Param text cannot have new-line/tab characters or more than 4 consecutive spaces"
     pub fn sanitize_template_param(text: &str, max_chars: usize) -> String {
-        let lines: Vec<String> = text
+        let unescaped = text
+            .replace("\\r\\n", "\n")
+            .replace("\\n", "\n")
+            .replace("\\t", " ");
+
+        let lines: Vec<String> = unescaped
             .lines()
             .map(|line| {
                 line.chars()
@@ -192,7 +197,11 @@ impl KapsoClient {
         let start = std::time::Instant::now();
         let clean_phone = Self::sanitize_phone(to);
         let raw_name = template_name.trim();
-        let t_name = if raw_name.is_empty() || raw_name == "hello_world" || raw_name == "servicio_monitoreo" {
+        let t_name = if raw_name.is_empty()
+            || raw_name == "hello_world"
+            || raw_name == "servicio_monitoreo"
+            || raw_name == "brief_informativo"
+        {
             "brief_informativo_cp_v2"
         } else {
             raw_name

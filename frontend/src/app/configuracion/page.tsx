@@ -845,9 +845,9 @@ export default function ConfiguracionPage() {
     setTestPlantillaTarget(p);
     setTestPlantillaTelefono(directorWhatsappPhone || "");
     setTestPlantillaExtracto(
-      "🇲🇽 *PRIMERAS PLANAS NACIONALES*\\n\\n" +
-      "🔴 *Reforma Judicial:* SCJN define criterios para comités de evaluación y ternas.\\n\\n" +
-      "💼 *Economía:* Banxico analiza expectativas inflacionarias y tasa objetivo.\\n\\n" +
+      "🇲🇽 *PRIMERAS PLANAS NACIONALES*\n\n" +
+      "🔴 *Reforma Judicial:* SCJN define criterios para comités de evaluación y ternas.\n\n" +
+      "💼 *Economía:* Banxico analiza expectativas inflacionarias y tasa objetivo.\n\n" +
       "📌 *Coparmex:* Llama al diálogo constructivo en el sector productivo."
     );
     setModalTestPlantillaOpen(true);
