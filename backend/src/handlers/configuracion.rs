@@ -609,20 +609,22 @@ pub async fn test_whatsapp(
     }
 
     let test_body = payload.message.unwrap_or_else(|| {
-        "🔔 *Prueba de Conexión ExposureIQ — WhatsApp Cloud API via Kapso*\n\nEste es un mensaje de prueba para validar la integración oficial en tiempo real.".to_string()
+        "🔔 *Prueba Oficial ExposureIQ — WhatsApp Cloud API via Kapso*\n\nValidación en tiempo real de la plantilla oficial brief_informativo_cp_v2.".to_string()
     });
 
     let client = KapsoClient::new(api_key.to_string(), phone_number_id.to_string());
     let start = Instant::now();
+    let today = chrono::Utc::now().date_naive();
 
-    match client.send_text_with_log(Some(&pool), target_phone, &test_body, "test_whatsapp").await {
+    // Enviar utilizando la plantilla oficial aprobada por Meta para evitar el error de ventana de 24h
+    match client.send_brief_template(Some(&pool), target_phone, today, &test_body, "test_whatsapp").await {
         Ok(msg_id) => {
             let latency_ms = start.elapsed().as_millis();
             Ok((
                 StatusCode::OK,
                 Json(json!({
                     "ok": true,
-                    "mensaje": format!("Mensaje entregado exitosamente a {} ({}) en {}ms", target_phone, msg_id, latency_ms),
+                    "mensaje": format!("Plantilla oficial entregada exitosamente a {} ({}) en {}ms", target_phone, msg_id, latency_ms),
                     "message_id": msg_id,
                     "latency_ms": latency_ms
                 })),
@@ -714,8 +716,16 @@ pub async fn test_template(
 
     let client = KapsoClient::new(api_key.to_string(), phone_number_id.to_string());
     let start = Instant::now();
+    let today = chrono::Utc::now().date_naive();
 
-    match client.send_template_with_log(Some(&pool), target_phone, tpl_name, tpl_lang, vars, "test_plantilla").await {
+    let res = if tpl_name.contains("brief") || tpl_name == "servicio_monitoreo" || tpl_name == "brief_informativo_cp_v2" {
+        let sample = "🇲🇽 *PRIMERAS PLANAS NACIONALES*\n🔴 SCJN y comités de evaluación definen ternas.\n💼 Estabilidad financiera y cambiaria en mercados locales.".to_string();
+        client.send_brief_template(Some(&pool), target_phone, today, &sample, "test_plantilla").await
+    } else {
+        client.send_template_with_log(Some(&pool), target_phone, tpl_name, tpl_lang, vars, "test_plantilla").await
+    };
+
+    match res {
         Ok(msg_id) => {
             let latency_ms = start.elapsed().as_millis();
             Ok((
